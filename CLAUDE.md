@@ -47,7 +47,7 @@ Summer 2027 is the active cycle. Summer 2026 is archived.
 - Python for fetching/parsing/scoring; `requests` to pull the repo README.
 - Local storage in SQLite or JSON (no database server).
 - Flask for the local dashboard.
-- Heavily commented — this is a learning project.
+- Heavily commented, with design decisions documented inline.
 
 ## Constraints
 

@@ -301,9 +301,8 @@ OUT_OF_SCOPE_KEYWORDS = {
 # Advanced-degree adjustment.
 #
 # The repo marks roles requiring a Master's/PhD/MBA with a 🎓 emoji. Those
-# aren't open to an undergrad applicant, so they sort down rather than being
-# hidden. SET THIS TO 0 if you're a grad student, or if you'd rather see them
-# ranked normally.
+# are outside the scope of this search, so they sort down rather than being
+# hidden entirely. SET THIS TO 0 to rank them normally.
 ADVANCED_DEGREE_PENALTY = -15
 
 # The repo marks FAANG+ companies with 🔥. No score effect by default — it's

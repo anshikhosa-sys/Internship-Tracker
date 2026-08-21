@@ -16,8 +16,8 @@ internships.db
 *.backup
 
 # The virtual environment. Never commit this — it's hundreds of files, it's
-# specific to your machine and OS, and anyone can recreate it from
-# requirements.txt. This is the single most common beginner mistake on GitHub.
+# specific to one machine and OS, and it's fully reproducible from
+# requirements.txt.
 .venv/
 venv/
 env/
