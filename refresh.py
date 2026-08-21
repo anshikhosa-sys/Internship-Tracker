@@ -30,6 +30,7 @@ import traceback
 
 import requests
 
+import notify
 import scorer
 import storage
 from sources import SimplifyReadmeSource
@@ -41,8 +42,14 @@ SOURCES = [
 ]
 
 
-def refresh(verbose: bool = True) -> dict:
-    """Run the full pipeline once. Returns a summary dict."""
+def refresh(verbose: bool = True, notifications: bool = True) -> dict:
+    """
+    Run the full pipeline once. Returns a summary dict.
+
+    `notifications` is False when called from the dashboard's Refresh button —
+    you're already looking at the results, so a pop-up would be noise. The
+    scheduled job leaves it True.
+    """
 
     run_time = storage.now_iso()
     conn = storage.connect()
@@ -71,7 +78,7 @@ def refresh(verbose: bool = True) -> dict:
         print("\nNo postings fetched. Nothing was changed in the database.")
         print("Check your internet connection, then try again.")
         conn.close()
-        return {"total": 0, "new": 0, "failed": True}
+        return {"total": 0, "new": 0, "notified": False, "failed": True}
 
     # -- 2. SCORE -----------------------------------------------------------
     # Scores are always recomputed from scratch, so editing config.py and
@@ -92,10 +99,18 @@ def refresh(verbose: bool = True) -> dict:
     if verbose:
         _print_report(scored, result, conn)
 
+    # Notify about strong new matches. This is best-effort: notify.py never
+    # raises, so a notification problem can't stop the data from updating.
+    notified = False
+    if notifications and result["new_ids"]:
+        new_postings = [p for p in scored if p.id in result["new_ids"]]
+        notified = notify.notify_strong_matches(new_postings)
+
     conn.close()
     return {
         "total": result["total"],
         "new": len(result["new_ids"]),
+        "notified": notified,
         "failed": False,
     }
 

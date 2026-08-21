@@ -353,3 +353,27 @@ LOW_FIT_THRESHOLD = 20
 
 # Where the local database file lives (created automatically on first run).
 DATABASE_PATH = "internships.db"
+
+
+# =============================================================================
+# 8. AUTOMATION — the scheduled daily refresh
+# =============================================================================
+
+# How long a "visit" to the dashboard lasts, in minutes.
+#
+# NEW badges mean "arrived since you last looked". To stop badges vanishing
+# while you're mid-browse, page loads within this many minutes of your last
+# activity count as the same visit and leave the badges alone. Come back after
+# a longer gap and it counts as a new visit, so the badges then show
+# everything that arrived since your previous one.
+#
+# Raise it if badges clear sooner than you'd like; lower it to have them clear
+# more eagerly.
+VISIT_SESSION_MINUTES = 30
+
+# Show a macOS notification when a refresh finds NEW postings scoring at or
+# above STRONG_FIT_THRESHOLD. Set to False for silent refreshes.
+#
+# Only affects the scheduled job and the command line — it never fires from
+# the dashboard's Refresh button, since you're already looking at the results.
+NOTIFY_ON_STRONG_FIT = True

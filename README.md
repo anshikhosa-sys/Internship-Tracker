@@ -29,10 +29,49 @@ python3 refresh.py    # fetch the latest listings, score them, show what's new
 python3 app.py        # open the dashboard at http://127.0.0.1:5000
 ```
 
-Run `refresh.py` whenever you want fresh data — the source updates daily. The
-dashboard also has a **Refresh listings** button that does the same thing.
+Run `refresh.py` whenever you want fresh data. The dashboard also has a
+**Refresh listings** button that does the same thing.
 
 Run the tests any time with `python3 tests.py`.
+
+## Daily automatic updates
+
+The source repo updates daily, but this tool only pulls when something runs it.
+To have that happen on its own:
+
+```bash
+./scripts/schedule.sh install     # run refresh.py every day at 08:00
+./scripts/schedule.sh status      # check it's installed and what it last did
+./scripts/schedule.sh run-now     # trigger it immediately, to test
+./scripts/schedule.sh uninstall   # turn it off and remove it
+```
+
+This installs a macOS **LaunchAgent** in `~/Library/LaunchAgents/`. No admin
+rights needed — it lives in your home folder and runs as you.
+
+**Why launchd rather than cron:** if the Mac is asleep at the scheduled time,
+cron skips that day silently and you'd get no update. launchd notices the
+missed run and fires it when the machine next wakes — which matters for a
+morning schedule on a laptop that's closed overnight.
+
+To change the time, edit `RUN_HOUR` / `RUN_MINUTE` at the top of
+`scripts/schedule.sh` and re-run `install`. Output goes to `logs/refresh.log`.
+
+When a scheduled run finds new postings scoring at or above
+`STRONG_FIT_THRESHOLD`, macOS shows a notification. Set
+`NOTIFY_ON_STRONG_FIT = False` in `config.py` for silent runs. The dashboard's
+Refresh button never notifies — you're already looking at the results.
+
+### What "NEW" means
+
+**NEW = arrived since you last opened the dashboard**, not since the last
+refresh. Those are different questions once refreshes are automatic: "since
+the last run" would mean "in the last 24 hours", so skipping a few days would
+silently stop flagging everything older than yesterday.
+
+Page loads within `VISIT_SESSION_MINUTES` (default 30) count as the same
+visit, so badges don't vanish while you're browsing. Coming back later starts
+a new visit. **Mark all as seen** clears them on demand.
 
 ---
 
@@ -50,6 +89,8 @@ numbers or keywords exist anywhere else in the codebase.
 | Include Quant / Hardware roles | Add them to `INGEST_CATEGORIES` |
 | See advanced-degree roles ranked normally | Set `ADVANCED_DEGREE_PENALTY = 0` |
 | Change the fit badges | Adjust `STRONG_FIT_THRESHOLD` / `GOOD_FIT_THRESHOLD` |
+| Turn off notifications | Set `NOTIFY_ON_STRONG_FIT = False` |
+| Change how long badges persist | Adjust `VISIT_SESSION_MINUTES` |
 
 After editing, just run `python3 refresh.py` again. Scores are recomputed from
 scratch every run, so changes take effect immediately and you never need to
@@ -81,11 +122,14 @@ config.py       ★ all keywords and weights — the only file you normally edit
 refresh.py      the command: fetch → score → store → report what's new
 app.py          the Flask dashboard
 scorer.py       applies config.py's weights (contains no numbers itself)
-storage.py      SQLite: postings, first_seen timestamps, applied marks
+storage.py      SQLite: postings, first_seen, applied marks, visit tracking
+notify.py       macOS notifications for strong new matches
 tests.py        checks the logic that's easy to get quietly wrong
 sources/
   base.py             what every source must provide (the Posting shape)
   simplify_readme.py  fetching + parsing this particular repo
+scripts/
+  schedule.sh         install/remove the daily automatic refresh
 templates/      the dashboard's HTML
 static/         the dashboard's CSS
 ```

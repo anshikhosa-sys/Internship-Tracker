@@ -44,7 +44,9 @@ surfaced in the dashboard so a score is never an unexplained number.
   date posted.
 - Score and rank postings, highest fit first.
 - Internship-level filtering.
-- Flag postings that are new since the previous run.
+- Flag postings that are new since the user last viewed the dashboard.
+- Refresh automatically once a day via a macOS LaunchAgent, with a notification
+  when strong matches appear.
 - A local Flask dashboard showing ranked postings with fit score, company,
   role, location, and apply link, plus an applied-to tracker.
 
@@ -58,6 +60,9 @@ surfaced in the dashboard so a score is never an unexplained number.
 ## Constraints
 
 - Runs locally, no hosting. Single user, no login.
+- Automation is opt-in and self-contained: installing or removing the daily
+  refresh touches only the user's own LaunchAgents folder, needs no admin
+  rights, and never modifies the database.
 - Reliable core first; structured so more sources can be added later
   (e.g. `SimplifyJobs/New-Grad-Positions`).
 
@@ -70,6 +75,11 @@ surfaced in the dashboard so a score is never an unexplained number.
 - **Quantitative Finance and Hardware Engineering are filtered out at parse
   time.** Only Software Engineering, Product Management, and Data Science/AI
   are ingested. One-line change — see `INGEST_CATEGORIES` in `config.py`.
+- **"New" is measured against the last dashboard visit, not the last refresh.**
+  Once refreshes became automatic, "since the last run" would have meant "in
+  the last 24 hours", so skipping a few days would silently stop flagging
+  anything older than yesterday. Page loads within `VISIT_SESSION_MINUTES`
+  count as one visit so badges don't vanish mid-browse.
 - **Tier values are chosen to guarantee ordering, not just suggest it.** The
   top tier is weighted so its worst-case score still exceeds the best case of
   the tier below, since category and focus bonuses would otherwise let a lower

@@ -36,3 +36,6 @@ __pycache__/
 # Claude Code's machine-local settings (your own permission choices).
 # By convention, .claude/settings.json IS shared and settings.local.json isn't.
 .claude/settings.local.json
+
+# Logs from the scheduled daily refresh.
+logs/

@@ -84,6 +84,13 @@ CREATE TABLE IF NOT EXISTS runs (
     new_count     INTEGER
 );
 
+-- Small key/value store for app state. Currently holds the two timestamps
+-- that decide what counts as "new to you" — see register_visit().
+CREATE TABLE IF NOT EXISTS app_state (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
 -- Indexes: make sorting by score and filtering by active fast.
 CREATE INDEX IF NOT EXISTS idx_postings_score ON postings(fit_score DESC);
 CREATE INDEX IF NOT EXISTS idx_postings_active ON postings(is_active);
@@ -282,12 +289,11 @@ def load_postings(conn, include_inactive: bool = False) -> list:
 
 def new_posting_ids(conn) -> set:
     """
-    IDs first seen during the most recent run — what the dashboard badges NEW.
+    IDs first seen during the most recent run.
 
-    We fetch the last TWO runs. If there's only one, this is the baseline run
-    and nothing should be badged (everything would be "new", which tells you
-    nothing). Otherwise, new means first_seen equals the latest run's
-    timestamp — the same rule save_postings() uses.
+    This is "new since the last REFRESH", which is what refresh.py reports on
+    the command line. The dashboard uses new_since_last_visit() instead — see
+    register_visit() for why those need to be different questions.
     """
     runs = conn.execute(
         "SELECT ran_at FROM runs ORDER BY id DESC LIMIT 2"
@@ -301,6 +307,116 @@ def new_posting_ids(conn) -> set:
         (runs[0]["ran_at"],),
     ).fetchall()
     return {r["id"] for r in rows}
+
+
+# =============================================================================
+# "New to YOU" — tracking when you last looked
+# =============================================================================
+#
+# WHY THIS EXISTS
+# ---------------
+# Before the daily scheduled refresh, "new" could safely mean "arrived in the
+# last run", because you triggered every run yourself. Once a job refreshes
+# every morning, that definition quietly breaks: "since the last run" becomes
+# "since 6am today", so if you don't check for five days, five days of
+# postings stop being flagged and you never see them.
+#
+# So we track two different things:
+#
+#   last_run     when the DATA was last updated   (the runs table)
+#   last_visit   when YOU last looked             (here)
+#
+# NEW in the dashboard means "arrived since you last looked".
+#
+# THE SESSION IDEA
+# ----------------
+# If we advanced "last visit" on every page load, badges would vanish the
+# moment you refreshed the page or clicked a filter — you'd see them once and
+# lose them mid-browse.
+#
+# Instead we treat a burst of activity as one visit. Loading the page within
+# VISIT_SESSION_MINUTES of your last activity continues the current visit and
+# leaves the badges alone. Coming back later starts a new visit, and the
+# badges then reflect everything that arrived since your previous one ended.
+
+def _get_state(conn, key: str):
+    row = conn.execute(
+        "SELECT value FROM app_state WHERE key = ?", (key,)
+    ).fetchone()
+    return row["value"] if row else None
+
+
+def _set_state(conn, key: str, value: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO app_state (key, value) VALUES (?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """,
+        (key, value),
+    )
+
+
+def register_visit(conn) -> str:
+    """
+    Record that the dashboard was opened, and return the timestamp that NEW
+    badges should be measured against.
+
+    Returns the "visit basis": postings first seen after this moment are new
+    to you. See the section comment above for the session logic.
+    """
+    now = now_iso()
+    last_activity = _get_state(conn, "last_activity")
+    visit_basis = _get_state(conn, "visit_basis")
+
+    if last_activity is None:
+        # First time the dashboard has ever been opened. Everything currently
+        # stored is pre-existing, not new — so measure from now.
+        visit_basis = now
+        _set_state(conn, "visit_basis", visit_basis)
+    else:
+        gap = _minutes_between(last_activity, now)
+        if gap >= config.VISIT_SESSION_MINUTES:
+            # Enough time has passed that this is a fresh visit. Anything that
+            # arrived since your last visit ENDED is new to you.
+            visit_basis = last_activity
+            _set_state(conn, "visit_basis", visit_basis)
+        # Otherwise: same visit still in progress, leave visit_basis alone so
+        # the badges you're looking at don't disappear underneath you.
+
+    _set_state(conn, "last_activity", now)
+    conn.commit()
+
+    return visit_basis or now
+
+
+def _minutes_between(earlier_iso: str, later_iso: str) -> float:
+    """Minutes between two ISO timestamps. Returns a huge number if unparseable
+    so that a corrupt value starts a new visit rather than freezing badges."""
+    try:
+        earlier = datetime.fromisoformat(earlier_iso)
+        later = datetime.fromisoformat(later_iso)
+    except (TypeError, ValueError):
+        return float("inf")
+    return (later - earlier).total_seconds() / 60.0
+
+
+def new_since_last_visit(conn, visit_basis: str) -> set:
+    """IDs of active postings first seen after `visit_basis`."""
+    if not visit_basis:
+        return set()
+    rows = conn.execute(
+        "SELECT id FROM postings WHERE first_seen > ? AND is_active = 1",
+        (visit_basis,),
+    ).fetchall()
+    return {r["id"] for r in rows}
+
+
+def mark_all_seen(conn) -> None:
+    """Clear all NEW badges — the 'Mark all as seen' button."""
+    now = now_iso()
+    _set_state(conn, "visit_basis", now)
+    _set_state(conn, "last_activity", now)
+    conn.commit()
 
 
 # =============================================================================

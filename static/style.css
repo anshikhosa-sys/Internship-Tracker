@@ -66,6 +66,21 @@ h1 { margin: 0; font-size: 20px; }
 .sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
 .new-count { color: var(--new); }
 
+.topbar-actions { display: flex; gap: 8px; align-items: center; }
+
+.btn-secondary {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-secondary:hover { color: var(--text); border-color: var(--muted); }
+
 .btn-refresh {
   background: var(--accent);
   color: #fff;

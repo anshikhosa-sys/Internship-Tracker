@@ -18,7 +18,10 @@
       <p class="sub">
         {{ total_count }} active postings
         {% if new_count %}
-          · <strong class="new-count">{{ new_count }} new</strong>
+          · <strong class="new-count"
+                    title="Arrived since you last opened this dashboard">
+              {{ new_count }} new since your last visit
+            </strong>
         {% endif %}
         {% if applied_total %}
           · {{ applied_total }} applied
@@ -29,11 +32,18 @@
       </p>
     </div>
 
-    <!-- A form, not a link: refreshing changes data, and changes belong in
-         a POST. Links should never have side effects. -->
-    <form method="post" action="{{ url_for('refresh_route') }}">
-      <button type="submit" class="btn-refresh">Refresh listings</button>
-    </form>
+    <!-- Forms, not links: these change data, and changes belong in a POST.
+         Links should never have side effects. -->
+    <div class="topbar-actions">
+      {% if new_count %}
+        <form method="post" action="{{ url_for('mark_seen_route') }}">
+          <button type="submit" class="btn-secondary">Mark all as seen</button>
+        </form>
+      {% endif %}
+      <form method="post" action="{{ url_for('refresh_route') }}">
+        <button type="submit" class="btn-refresh">Refresh listings</button>
+      </form>
+    </div>
   </div>
 </header>
 
@@ -60,7 +70,7 @@
       <option value="">All postings</option>
       <option value="new"
               {% if filters.get('status') == 'new' %}selected{% endif %}>
-        New since last run
+        New since my last visit
       </option>
       <option value="not_applied"
               {% if filters.get('status') == 'not_applied' %}selected{% endif %}>

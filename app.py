@@ -18,12 +18,13 @@ complete, rather than being assembled by JavaScript afterwards.
 THE ROUTES HERE
     GET  /               the dashboard
     POST /api/applied    mark a posting applied/not (called by JavaScript)
+    POST /mark-seen      clear all NEW badges
     POST /refresh        re-fetch listings, then bounce back to the dashboard
 
 WHY THERE'S NO LOGIN
-Your spec says single user, local only. The server binds to 127.0.0.1, which
-means it only accepts connections from your own machine — nothing outside can
-reach it. That's why there's no password: there's no one else to keep out.
+Single user, local only. The server binds to 127.0.0.1, which means it accepts
+connections only from this machine — nothing outside can reach it. That's why
+there's no password: there's no one else to keep out.
 """
 
 from flask import (
@@ -96,7 +97,14 @@ def index():
     conn = storage.connect()
 
     postings = storage.load_postings(conn)
-    new_ids = storage.new_posting_ids(conn)
+
+    # Record that you've opened the dashboard, and find out what counts as new
+    # to you. NEW means "arrived since you last looked", not "arrived in the
+    # last refresh" — the two stopped being the same thing once refreshes
+    # became automatic. See storage.register_visit().
+    visit_basis = storage.register_visit(conn)
+    new_ids = storage.new_since_last_visit(conn, visit_basis)
+
     last_run = storage.last_run_time(conn)
     applied_total = storage.applied_count(conn)
 
@@ -152,6 +160,15 @@ def api_applied():
     return jsonify({"ok": True, "applied": applied, "applied_total": total})
 
 
+@app.route("/mark-seen", methods=["POST"])
+def mark_seen_route():
+    """Clear every NEW badge."""
+    conn = storage.connect()
+    storage.mark_all_seen(conn)
+    conn.close()
+    return redirect(url_for("index", **request.args))
+
+
 @app.route("/refresh", methods=["POST"])
 def refresh_route():
     """
@@ -161,7 +178,9 @@ def refresh_route():
     the browser waits the few seconds it takes. For a single-user local tool
     that's fine; a hosted app would push this to a background job.
     """
-    run_refresh(verbose=False)
+    # notifications=False: you're looking at the dashboard already, so a
+    # macOS pop-up about what you're about to see would just be noise.
+    run_refresh(verbose=False, notifications=False)
     # Redirect after a POST so refreshing the browser doesn't re-submit it.
     return redirect(url_for("index", **request.args))
 
@@ -176,7 +195,7 @@ if __name__ == "__main__":
 
     print("  Dashboard: http://127.0.0.1:5000\n")
 
-    # host="127.0.0.1" keeps this reachable only from your own machine.
-    # debug=True auto-reloads when you edit a file, which is handy while
-    # you're learning. Turn it off if you ever expose this beyond localhost.
+    # host="127.0.0.1" keeps this reachable only from this machine.
+    # debug=True auto-reloads on file changes. Turn it off if this is ever
+    # exposed beyond localhost.
     app.run(host="127.0.0.1", port=5000, debug=True)

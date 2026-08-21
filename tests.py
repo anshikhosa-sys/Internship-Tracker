@@ -222,8 +222,136 @@ def test_storage():
 
 
 # =============================================================================
+def test_visit_tracking():
+    """
+    The 'new since you last looked' logic.
+
+    This matters because the scheduled daily refresh broke the old definition
+    of NEW. When you triggered every refresh yourself, "new since the last
+    run" was fine. With a job running each morning it silently becomes "new in
+    the last 24 hours", so skipping a few days meant postings stopped being
+    flagged and you'd never see them.
+    """
+    print("\nVISIT TRACKING: what counts as new to you")
+
+    db_path = os.path.join(tempfile.mkdtemp(), "visits.db")
+    conn = storage.connect(db_path)
+
+    # Each refresh re-sends every posting still live at the source. Sending
+    # only the new one would (correctly) mark all the others inactive, so the
+    # helper accumulates — this mirrors what a real refresh does.
+    live = []
+
+    def add(posting, when):
+        live.append(posting)
+        result = storage.save_postings(conn, live, when)
+        storage.record_run(conn, when, result["total"],
+                           len(result["new_ids"]))
+
+    # Two postings already exist before you ever open the dashboard.
+    add(make_posting(1), "2026-08-01T09:00:00+00:00")
+    add(make_posting(2), "2026-08-01T09:00:00+00:00")
+
+    # First visit ever: nothing should be badged, since none of it arrived
+    # "since you last looked" — you've never looked.
+    basis = storage.register_visit(conn)
+    check(storage.new_since_last_visit(conn, basis) == set(),
+          "first ever visit badges nothing")
+
+    # A reload moments later must not clear anything or crash.
+    basis = storage.register_visit(conn)
+    check(storage.new_since_last_visit(conn, basis) == set(),
+          "reloading during a visit is stable")
+
+    # Now the scheduled job runs overnight and finds a new posting.
+    add(make_posting(3), "2026-08-02T08:00:00+00:00")
+
+    # Simulate coming back the next day by ageing your last activity beyond
+    # the session window.
+    storage._set_state(conn, "last_activity", "2026-08-01T09:05:00+00:00")
+    conn.commit()
+
+    basis = storage.register_visit(conn)
+    new_ids = storage.new_since_last_visit(conn, basis)
+    check(new_ids == {make_posting(3).id},
+          "a posting that arrived since your last visit is badged")
+
+    # THE KEY TEST: badges must survive while you browse. A second page load
+    # moments later is the same visit, so posting 3 stays flagged.
+    basis = storage.register_visit(conn)
+    check(storage.new_since_last_visit(conn, basis) == {make_posting(3).id},
+          "badges persist across reloads within one visit")
+
+    # THE OTHER KEY TEST: skipping several days must not lose anything. Two
+    # more postings arrive on separate days; both should still be flagged,
+    # even though only one arrived in the most recent run.
+    add(make_posting(4), "2026-08-03T08:00:00+00:00")
+    add(make_posting(5), "2026-08-04T08:00:00+00:00")
+
+    storage._set_state(conn, "last_activity", "2026-08-02T08:10:00+00:00")
+    conn.commit()
+
+    basis = storage.register_visit(conn)
+    new_ids = storage.new_since_last_visit(conn, basis)
+    check(new_ids == {make_posting(4).id, make_posting(5).id},
+          "several days away still surfaces every posting since your visit")
+
+    # This is what the old logic would have returned — one day's worth.
+    check(storage.new_posting_ids(conn) == {make_posting(5).id},
+          "...whereas 'new since last run' would only show the latest day")
+
+    # Explicitly clearing badges.
+    storage.mark_all_seen(conn)
+    basis = storage._get_state(conn, "visit_basis")
+    check(storage.new_since_last_visit(conn, basis) == set(),
+          "'Mark all as seen' clears every badge")
+
+    # A corrupt timestamp must not freeze the badges forever.
+    storage._set_state(conn, "last_activity", "not-a-timestamp")
+    conn.commit()
+    storage.register_visit(conn)
+    check(True, "an unparseable timestamp is handled without crashing")
+
+    conn.close()
+
+
+# =============================================================================
+def test_notifications():
+    """The notifier must never raise — it runs from a background job."""
+    print("\nNOTIFICATIONS")
+
+    import notify
+
+    # Text from job postings is untrusted third-party input, so quotes and
+    # backslashes must be escaped before going into an AppleScript string.
+    escaped = notify._escape('Acme "Corp" \\ Ltd')
+    check('\\"' in escaped and "\\\\" in escaped,
+          "quotes and backslashes are escaped for AppleScript")
+
+    # With the feature off, nothing is sent regardless of what's passed in.
+    import config
+    original = config.NOTIFY_ON_STRONG_FIT
+    try:
+        config.NOTIFY_ON_STRONG_FIT = False
+        strong = make_posting(1, score=999)
+        check(notify.notify_strong_matches([strong]) is False,
+              "notifications respect the config switch")
+    finally:
+        config.NOTIFY_ON_STRONG_FIT = original
+
+    # Nothing new that clears the threshold means nothing to say.
+    weak = make_posting(2, score=0)
+    check(notify.notify_strong_matches([weak]) is False,
+          "a weak match does not trigger a notification")
+    check(notify.notify_strong_matches([]) is False,
+          "an empty list does not trigger a notification")
+
+
+# =============================================================================
 if __name__ == "__main__":
     test_parser()
     test_scoring()
     test_storage()
+    test_visit_tracking()
+    test_notifications()
     print(f"\n{PASSED} checks passed.\n")
