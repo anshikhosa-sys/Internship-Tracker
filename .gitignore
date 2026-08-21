@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------------------
+# Files git should ignore.
+#
+# Two rules of thumb for what belongs here:
+#   1. Anything rebuildable from the code (caches, compiled files, the venv).
+#   2. Anything personal or machine-specific (your database, editor settings).
+#
+# Everything else — the code that defines the project — gets committed.
+# ---------------------------------------------------------------------------
+
+# Your database. Contains your applied marks, and is otherwise rebuildable
+# with `python3 refresh.py`. Back it up separately if you've been tracking
+# applications for a while:  cp internships.db internships.db.backup
+internships.db
+*.db-journal
+*.backup
+
+# The virtual environment. Never commit this — it's hundreds of files, it's
+# specific to your machine and OS, and anyone can recreate it from
+# requirements.txt. This is the single most common beginner mistake on GitHub.
+.venv/
+venv/
+env/
+
+# Python's compiled bytecode cache. Regenerated automatically.
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Editor and OS clutter
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Claude Code's machine-local settings (your own permission choices).
+# By convention, .claude/settings.json IS shared and settings.local.json isn't.
+.claude/settings.local.json

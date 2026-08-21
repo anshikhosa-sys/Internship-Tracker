@@ -1,0 +1,182 @@
+"""
+app.py — the local Flask dashboard.
+
+    python3 app.py     then open http://127.0.0.1:5000
+
+HOW A FLASK APP IS PUT TOGETHER (the short version)
+---------------------------------------------------
+Flask maps URLs to Python functions. The @app.route("/") decorator above a
+function means "when a browser asks for /, run this function and send back
+whatever it returns".
+
+A function that ends in render_template("index.html", ...) hands its data to a
+template in templates/. The template is HTML with placeholders — {{ value }}
+prints something, {% for %} loops. Flask fills them in and sends the finished
+HTML to the browser. This is called server-side rendering: the page arrives
+complete, rather than being assembled by JavaScript afterwards.
+
+THE ROUTES HERE
+    GET  /               the dashboard
+    POST /api/applied    mark a posting applied/not (called by JavaScript)
+    POST /refresh        re-fetch listings, then bounce back to the dashboard
+
+WHY THERE'S NO LOGIN
+Your spec says single user, local only. The server binds to 127.0.0.1, which
+means it only accepts connections from your own machine — nothing outside can
+reach it. That's why there's no password: there's no one else to keep out.
+"""
+
+from flask import (
+    Flask, jsonify, redirect, render_template, request, url_for
+)
+
+import config
+import scorer
+import storage
+from refresh import refresh as run_refresh
+
+app = Flask(__name__)
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+def _filtered(postings, new_ids, args):
+    """
+    Apply the search box and filter dropdowns.
+
+    Filtering happens in Python rather than SQL. With a few hundred postings
+    that's instant, and it keeps the SQL in storage.py simple. If this ever
+    grew to hundreds of thousands of rows, this is the piece you'd push down
+    into the database query.
+    """
+    query = (args.get("q") or "").strip().lower()
+    category = args.get("category") or ""
+    status = args.get("status") or ""
+    show_low = args.get("show_low") == "1"
+
+    results = []
+    for posting in postings:
+        # Hide low-fit postings unless asked for. They're still in the
+        # database and still scored — just collapsed by default.
+        if not show_low and posting["fit_score"] < config.LOW_FIT_THRESHOLD:
+            continue
+
+        if category and posting["category"] != category:
+            continue
+
+        if status == "new" and posting["id"] not in new_ids:
+            continue
+        if status == "applied" and not posting["applied"]:
+            continue
+        if status == "not_applied" and posting["applied"]:
+            continue
+
+        if query:
+            haystack = " ".join([
+                posting["company"], posting["role"],
+                posting["location"], posting["category"],
+            ]).lower()
+            if query not in haystack:
+                continue
+
+        results.append(posting)
+
+    return results
+
+
+# =============================================================================
+# Routes
+# =============================================================================
+
+@app.route("/")
+def index():
+    """The dashboard: ranked postings, best fit first."""
+    conn = storage.connect()
+
+    postings = storage.load_postings(conn)
+    new_ids = storage.new_posting_ids(conn)
+    last_run = storage.last_run_time(conn)
+    applied_total = storage.applied_count(conn)
+
+    conn.close()
+
+    # Decorate each posting with the display-only bits the template needs.
+    for posting in postings:
+        posting["is_new"] = posting["id"] in new_ids
+        posting["fit"] = scorer.fit_label(posting["fit_score"])
+
+    visible = _filtered(postings, new_ids, request.args)
+
+    # Categories for the filter dropdown, taken from the data itself so it
+    # stays correct if you change INGEST_CATEGORIES in config.py.
+    categories = sorted({p["category"] for p in postings})
+
+    return render_template(
+        "index.html",
+        postings=visible,
+        categories=categories,
+        total_count=len(postings),
+        new_count=len(new_ids),
+        applied_total=applied_total,
+        last_run=last_run,
+        filters=request.args,
+        config=config,
+    )
+
+
+@app.route("/api/applied", methods=["POST"])
+def api_applied():
+    """
+    Toggle a posting's applied status.
+
+    The page calls this with JavaScript rather than submitting a form, so
+    ticking a checkbox doesn't reload the page and lose your scroll position.
+    It returns JSON because the caller is code, not a person.
+    """
+    data = request.get_json(silent=True) or {}
+    posting_id = data.get("id")
+    applied = bool(data.get("applied"))
+
+    if not posting_id:
+        # 400 = "the request was malformed". Returning a status code rather
+        # than a cheerful 200 means the JavaScript can actually detect failure.
+        return jsonify({"ok": False, "error": "missing id"}), 400
+
+    conn = storage.connect()
+    storage.set_applied(conn, posting_id, applied)
+    total = storage.applied_count(conn)
+    conn.close()
+
+    return jsonify({"ok": True, "applied": applied, "applied_total": total})
+
+
+@app.route("/refresh", methods=["POST"])
+def refresh_route():
+    """
+    Re-fetch listings from the button in the header.
+
+    This runs the same pipeline as `python3 refresh.py`. It's synchronous —
+    the browser waits the few seconds it takes. For a single-user local tool
+    that's fine; a hosted app would push this to a background job.
+    """
+    run_refresh(verbose=False)
+    # Redirect after a POST so refreshing the browser doesn't re-submit it.
+    return redirect(url_for("index", **request.args))
+
+
+if __name__ == "__main__":
+    conn = storage.connect()
+    has_data = storage.last_run_time(conn) is not None
+    conn.close()
+
+    if not has_data:
+        print("\n  No data yet — run `python3 refresh.py` first.\n")
+
+    print("  Dashboard: http://127.0.0.1:5000\n")
+
+    # host="127.0.0.1" keeps this reachable only from your own machine.
+    # debug=True auto-reloads when you edit a file, which is handy while
+    # you're learning. Turn it off if you ever expose this beyond localhost.
+    app.run(host="127.0.0.1", port=5000, debug=True)

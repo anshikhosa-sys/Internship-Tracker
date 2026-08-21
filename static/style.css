@@ -1,0 +1,270 @@
+/* ==========================================================================
+   style.css — the dashboard's looks.
+
+   Two things here are worth stealing for future projects:
+
+   1. CSS custom properties (the --name: value pairs in :root). They're
+      variables: define a colour once, use it everywhere, change it in one
+      place. The dark-mode block near the bottom works by redefining the same
+      variables — no rules are duplicated.
+
+   2. The score colour comes from a class on the row (fit-strong, fit-good…)
+      set by Python, not from the number itself. Deciding "what counts as a
+      strong fit" belongs in config.py, and CSS just renders the answer.
+   ========================================================================== */
+
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --text: #1a1d23;
+  --muted: #6b7280;
+  --border: #e3e6ea;
+  --accent: #2563eb;
+
+  --strong: #16a34a;
+  --good: #2563eb;
+  --fair: #9ca3af;
+  --low: #cbd5e1;
+  --warn: #b45309;
+  --new: #dc2626;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.45;
+}
+
+/* ---------------------------------------------------------------- header */
+
+.topbar {
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  position: sticky;   /* stays put while you scroll the list */
+  top: 0;
+  z-index: 10;
+}
+
+.topbar-inner {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+h1 { margin: 0; font-size: 20px; }
+
+.sub { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.new-count { color: var(--new); }
+
+.btn-refresh {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  padding: 9px 16px;
+  border-radius: 7px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-refresh:hover { filter: brightness(1.08); }
+
+/* --------------------------------------------------------------- layout */
+
+main { max-width: 1000px; margin: 0 auto; padding: 20px; }
+
+/* -------------------------------------------------------------- filters */
+
+.filters {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.filters input[type="search"] {
+  flex: 1 1 240px;   /* grows to fill, but never below 240px */
+  min-width: 0;
+}
+
+.filters input, .filters select, .filters button {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 14px;
+  background: var(--card);
+  color: var(--text);
+}
+
+.filters button {
+  background: var(--text);
+  color: var(--card);
+  border: 0;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.clear { color: var(--muted); font-size: 14px; text-decoration: none; }
+.clear:hover { text-decoration: underline; }
+
+.result-count { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+.empty { color: var(--muted); padding: 40px 0; text-align: center; }
+
+/* ------------------------------------------------------------- postings */
+
+.postings { list-style: none; margin: 0; padding: 0; }
+
+.posting {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--low);   /* recoloured per fit band below */
+  border-radius: 10px;
+  padding: 14px;
+  margin-bottom: 10px;
+}
+
+.posting.fit-strong { border-left-color: var(--strong); }
+.posting.fit-good   { border-left-color: var(--good); }
+.posting.fit-fair   { border-left-color: var(--fair); }
+
+/* Applied rows fade back so your eye skips them. */
+.posting.is-applied { opacity: 0.55; }
+
+.score {
+  min-width: 58px;
+  text-align: center;
+  flex-shrink: 0;   /* stop long role titles squashing the score */
+}
+
+.score-value { display: block; font-size: 22px; font-weight: 700; }
+
+.score-label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+
+.fit-strong .score-value { color: var(--strong); }
+.fit-good   .score-value { color: var(--good); }
+
+.details { flex: 1; min-width: 0; }   /* min-width:0 lets text wrap properly */
+
+.role-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.company { font-weight: 700; font-size: 15px; }
+.role { font-size: 14px; margin-top: 1px; }
+.meta { color: var(--muted); font-size: 12.5px; margin-top: 3px; }
+
+.tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--border);
+  color: var(--muted);
+}
+
+.tag-new  { background: var(--new); color: #fff; }
+.tag-warn { background: #fef3c7; color: var(--warn); }
+
+/* ------------------------------------------------------ score breakdown */
+
+.why { margin-top: 6px; }
+
+.why summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  user-select: none;
+}
+
+.why ul { margin: 6px 0 0; padding-left: 4px; list-style: none; font-size: 12.5px; }
+.why li { padding: 1px 0; }
+
+.pts {
+  display: inline-block;
+  min-width: 34px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;   /* keeps the numbers aligned */
+  color: var(--strong);
+}
+.pts.neg { color: var(--new); }
+
+/* ------------------------------------------------------------- actions */
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+
+.btn-apply {
+  background: var(--accent);
+  color: #fff;
+  text-decoration: none;
+  padding: 7px 14px;
+  border-radius: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.btn-apply:hover { filter: brightness(1.08); }
+
+/* ------------------------------------------------------------ dark mode */
+/* Only the variables change — every rule above is reused as-is. */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14161a;
+    --card: #1c1f25;
+    --text: #e8eaed;
+    --muted: #9aa1ab;
+    --border: #2c313a;
+    --accent: #3b82f6;
+    --strong: #22c55e;
+    --good: #60a5fa;
+    --fair: #6b7280;
+    --low: #374151;
+    --new: #f87171;
+  }
+  .tag-warn { background: #422006; color: #fbbf24; }
+}
+
+/* ----------------------------------------------------------- small screens */
+
+@media (max-width: 640px) {
+  .posting { flex-wrap: wrap; }
+  .actions { flex-direction: row; width: 100%; justify-content: flex-start; }
+}

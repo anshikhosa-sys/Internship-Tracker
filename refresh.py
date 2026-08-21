@@ -1,0 +1,145 @@
+"""
+refresh.py — the command you run to update your listings.
+
+    python3 refresh.py
+
+It does four things, in order:
+
+    1. FETCH    ask each source for its postings
+    2. SCORE    rank them using the weights in config.py
+    3. STORE    save to SQLite, preserving first_seen and your applied marks
+    4. REPORT   print what's new since last time
+
+Run this whenever you want fresh data (the source repo updates daily). Then
+run `python3 app.py` to browse the results.
+
+ADDING A SECOND SOURCE LATER
+---------------------------
+When you graduate and want SimplifyJobs/New-Grad-Positions too:
+
+    1. Add a file in sources/ that returns Posting objects.
+    2. Add it to the SOURCES list below.
+
+That's the whole change. Scoring, storage, and the dashboard don't need to know
+a second source exists — they only ever deal with Posting objects. This is why
+the fetch logic was isolated behind the Source class in the first place.
+"""
+
+import sys
+import traceback
+
+import requests
+
+import scorer
+import storage
+from sources import SimplifyReadmeSource
+
+
+# Every source to pull from. Add new ones here.
+SOURCES = [
+    SimplifyReadmeSource(),
+]
+
+
+def refresh(verbose: bool = True) -> dict:
+    """Run the full pipeline once. Returns a summary dict."""
+
+    run_time = storage.now_iso()
+    conn = storage.connect()
+
+    # -- 1. FETCH -----------------------------------------------------------
+    all_postings = []
+    for source in SOURCES:
+        if verbose:
+            print(f"Fetching from {source.name}...")
+        try:
+            postings = source.fetch()
+            all_postings.extend(postings)
+            if verbose:
+                print(f"  got {len(postings)} postings")
+        except requests.RequestException as exc:
+            # A network failure in ONE source shouldn't kill the whole run —
+            # that matters more once you have several sources. We report it
+            # clearly and carry on with whatever else succeeded.
+            print(f"  ERROR fetching {source.name}: {exc}", file=sys.stderr)
+        except Exception:
+            print(f"  UNEXPECTED ERROR parsing {source.name}:",
+                  file=sys.stderr)
+            traceback.print_exc()
+
+    if not all_postings:
+        print("\nNo postings fetched. Nothing was changed in the database.")
+        print("Check your internet connection, then try again.")
+        conn.close()
+        return {"total": 0, "new": 0, "failed": True}
+
+    # -- 2. SCORE -----------------------------------------------------------
+    # Scores are always recomputed from scratch, so editing config.py and
+    # re-running is all it takes to change your rankings.
+    if verbose:
+        print("\nScoring...")
+    scored = scorer.score_all(all_postings)
+
+    dropped = len(all_postings) - len(scored)
+    if verbose and dropped:
+        print(f"  filtered out {dropped} non-internship postings")
+
+    # -- 3. STORE -----------------------------------------------------------
+    result = storage.save_postings(conn, scored, run_time)
+    storage.record_run(conn, run_time, result["total"], len(result["new_ids"]))
+
+    # -- 4. REPORT ----------------------------------------------------------
+    if verbose:
+        _print_report(scored, result, conn)
+
+    conn.close()
+    return {
+        "total": result["total"],
+        "new": len(result["new_ids"]),
+        "failed": False,
+    }
+
+
+def _print_report(scored, result, conn) -> None:
+    """Print a human-readable summary of the run."""
+
+    print(f"\n{'=' * 66}")
+    print(f"  {result['total']} active postings stored")
+
+    if result["deactivated"]:
+        print(f"  {result['deactivated']} postings dropped off the source "
+              f"(filled or closed) — marked inactive, not deleted")
+
+    # -- what's new ---------------------------------------------------------
+    if result["is_first_run"]:
+        print("\n  First run — baseline saved.")
+        print("  Postings added before your next run will be flagged NEW.")
+    elif result["new_ids"]:
+        new_ones = [p for p in scored if p.id in result["new_ids"]]
+        new_ones.sort(key=lambda p: -p.fit_score)
+        print(f"\n  {len(new_ones)} NEW since your last run:")
+        for posting in new_ones[:15]:
+            print(f"    {posting.fit_score:4d}  {posting.company[:22]:22s} "
+                  f"{posting.role[:46]}")
+        if len(new_ones) > 15:
+            print(f"    ...and {len(new_ones) - 15} more")
+    else:
+        print("\n  No new postings since your last run.")
+
+    # -- top matches --------------------------------------------------------
+    print("\n  Your top 10 matches right now:")
+    for posting in scored[:10]:
+        flag = "NEW " if posting.id in result["new_ids"] else "    "
+        print(f"    {flag}{posting.fit_score:4d}  {posting.company[:22]:22s} "
+              f"{posting.role[:44]}")
+
+    applied = storage.applied_count(conn)
+    if applied:
+        print(f"\n  You've marked {applied} as applied.")
+
+    print(f"{'=' * 66}")
+    print("\nRun `python3 app.py` to open the dashboard.")
+
+
+if __name__ == "__main__":
+    refresh()

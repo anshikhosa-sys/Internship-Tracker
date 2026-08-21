@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Internship Finder</title>
+  <!-- url_for() builds the correct path to files in static/. Writing
+       "/static/style.css" by hand would also work, but this keeps working
+       if the app ever moves to a sub-path. -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <h1>Internship Finder</h1>
+      <p class="sub">
+        {{ total_count }} active postings
+        {% if new_count %}
+          · <strong class="new-count">{{ new_count }} new</strong>
+        {% endif %}
+        {% if applied_total %}
+          · {{ applied_total }} applied
+        {% endif %}
+        {% if last_run %}
+          · updated {{ last_run[:10] }}
+        {% endif %}
+      </p>
+    </div>
+
+    <!-- A form, not a link: refreshing changes data, and changes belong in
+         a POST. Links should never have side effects. -->
+    <form method="post" action="{{ url_for('refresh_route') }}">
+      <button type="submit" class="btn-refresh">Refresh listings</button>
+    </form>
+  </div>
+</header>
+
+<main>
+
+  <!-- ==================== FILTERS ==================== -->
+  <!-- method="get" puts the filters in the URL, so a filtered view can be
+       bookmarked and survives a page reload. -->
+  <form class="filters" method="get">
+    <input type="search" name="q" placeholder="Search company, role, location…"
+           value="{{ filters.get('q', '') }}">
+
+    <select name="category">
+      <option value="">All categories</option>
+      {% for category in categories %}
+        <option value="{{ category }}"
+                {% if filters.get('category') == category %}selected{% endif %}>
+          {{ category }}
+        </option>
+      {% endfor %}
+    </select>
+
+    <select name="status">
+      <option value="">All postings</option>
+      <option value="new"
+              {% if filters.get('status') == 'new' %}selected{% endif %}>
+        New since last run
+      </option>
+      <option value="not_applied"
+              {% if filters.get('status') == 'not_applied' %}selected{% endif %}>
+        Not yet applied
+      </option>
+      <option value="applied"
+              {% if filters.get('status') == 'applied' %}selected{% endif %}>
+        Applied
+      </option>
+    </select>
+
+    <label class="checkbox">
+      <input type="checkbox" name="show_low" value="1"
+             {% if filters.get('show_low') == '1' %}checked{% endif %}>
+      Show low-fit
+    </label>
+
+    <button type="submit">Apply</button>
+    <a class="clear" href="{{ url_for('index') }}">Clear</a>
+  </form>
+
+  <!-- ==================== RESULTS ==================== -->
+  {% if not postings %}
+    <p class="empty">
+      No postings match these filters.
+      {% if total_count == 0 %}
+        Run <code>python3 refresh.py</code> to fetch listings.
+      {% endif %}
+    </p>
+  {% else %}
+
+    <p class="result-count">Showing {{ postings|length }} postings</p>
+
+    <ol class="postings">
+      {% for posting in postings %}
+        <li class="posting fit-{{ posting.fit }}
+                   {% if posting.applied %}is-applied{% endif %}">
+
+          <!-- Score badge. The title attribute shows the full breakdown on
+               hover, so a score is never an unexplained number. -->
+          <div class="score" title="{% for reason in posting.score_reasons %}{{ reason.points }} — {{ reason.label }}&#10;{% endfor %}">
+            <span class="score-value">{{ posting.fit_score }}</span>
+            <span class="score-label">{{ posting.fit }}</span>
+          </div>
+
+          <div class="details">
+            <div class="role-line">
+              <span class="company">{{ posting.company }}</span>
+              {% if posting.is_new %}<span class="tag tag-new">NEW</span>{% endif %}
+              {% if posting.is_faang %}<span class="tag">FAANG+</span>{% endif %}
+              {% if posting.needs_advanced_degree %}
+                <span class="tag tag-warn">Adv. degree</span>
+              {% endif %}
+            </div>
+
+            <div class="role">{{ posting.role }}</div>
+
+            <div class="meta">
+              {{ posting.location }}
+              · {{ posting.category }}
+              {% if posting.age_text %} · posted {{ posting.age_text }} ago{% endif %}
+            </div>
+
+            <!-- Why it scored what it did — the same data as the tooltip,
+                 but visible on click for anyone not using a mouse. -->
+            <details class="why">
+              <summary>Why this score?</summary>
+              <ul>
+                {% for reason in posting.score_reasons %}
+                  <li>
+                    <span class="pts {% if reason.points < 0 %}neg{% endif %}">
+                      {{ '%+d' % reason.points }}
+                    </span>
+                    {{ reason.label }}
+                  </li>
+                {% else %}
+                  <li>No scoring signals matched this posting.</li>
+                {% endfor %}
+              </ul>
+            </details>
+          </div>
+
+          <div class="actions">
+            <!-- rel="noopener" is a security habit worth keeping: without it,
+                 the page you open can reach back and redirect this tab. -->
+            <a class="btn-apply" href="{{ posting.apply_url }}"
+               target="_blank" rel="noopener noreferrer">Apply</a>
+
+            <label class="checkbox applied-toggle">
+              <input type="checkbox"
+                     data-id="{{ posting.id }}"
+                     {% if posting.applied %}checked{% endif %}>
+              Applied
+            </label>
+          </div>
+        </li>
+      {% endfor %}
+    </ol>
+  {% endif %}
+</main>
+
+<script>
+// ===========================================================================
+// Ticking "Applied" saves immediately, without reloading the page.
+//
+// Without this, the checkbox would need to be inside a form you submit, and
+// every tick would reload and throw away your scroll position. Instead we
+// POST to /api/applied in the background and just restyle the row.
+// ===========================================================================
+document.querySelectorAll('.applied-toggle input').forEach(function (box) {
+  box.addEventListener('change', async function () {
+    const row = box.closest('.posting');
+
+    // Show the change straight away so the UI feels instant.
+    row.classList.toggle('is-applied', box.checked);
+
+    try {
+      const response = await fetch('/api/applied', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: box.dataset.id, applied: box.checked}),
+      });
+      if (!response.ok) throw new Error('save failed');
+    } catch (err) {
+      // If the save failed, put the checkbox back rather than leaving the
+      // page showing something the database doesn't agree with.
+      box.checked = !box.checked;
+      row.classList.toggle('is-applied', box.checked);
+      alert('Could not save that — is the server still running?');
+    }
+  });
+});
+</script>
+
+</body>
+</html>
