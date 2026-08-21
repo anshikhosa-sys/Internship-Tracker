@@ -25,29 +25,41 @@ the system, so installing something here can't break another project.
 ## Everyday use
 
 ```bash
-python3 refresh.py    # fetch the latest listings, score them, show what's new
-python3 app.py        # open the dashboard at http://127.0.0.1:5000
+python3 refresh.py         # fetch the latest listings and show what's new
+python3 app.py             # serve the dashboard at http://127.0.0.1:5000
+python3 app.py --debug     # same, with auto-reload while editing code
 ```
+
+Both are optional once the background jobs are installed — see below.
 
 Run `refresh.py` whenever you want fresh data. The dashboard also has a
 **Refresh listings** button that does the same thing.
 
 Run the tests any time with `python3 tests.py`.
 
-## Daily automatic updates
-
-The source repo updates daily, but this tool only pulls when something runs it.
-To have that happen on its own:
+## Running it hands-off
 
 ```bash
-./scripts/schedule.sh install     # run refresh.py every day at 08:00
-./scripts/schedule.sh status      # check it's installed and what it last did
-./scripts/schedule.sh run-now     # trigger it immediately, to test
-./scripts/schedule.sh uninstall   # turn it off and remove it
+./scripts/schedule.sh install     # set up both background jobs
+./scripts/schedule.sh status      # what's running, what it last did
+./scripts/schedule.sh run-now     # force a refresh immediately, to test
+./scripts/schedule.sh restart     # reload after editing code
+./scripts/schedule.sh uninstall   # remove both
 ```
 
-This installs a macOS **LaunchAgent** in `~/Library/LaunchAgents/`. No admin
-rights needed — it lives in your home folder and runs as you.
+That installs two macOS **LaunchAgents** in `~/Library/LaunchAgents/`:
+
+| Job | What it does |
+|---|---|
+| `com.internship-finder.daily` | Runs `refresh.py` at 08:00 every day |
+| `com.internship-finder.dashboard` | Keeps the dashboard alive at `127.0.0.1:5000` |
+
+Together they mean there's nothing to type: listings update each morning, and
+the dashboard is always there — bookmark it like any other site. The dashboard
+job uses `KeepAlive`, so it restarts itself after a crash, a reboot, or a
+logout.
+
+No admin rights needed — LaunchAgents live in your home folder and run as you.
 
 **Why launchd rather than cron:** if the Mac is asleep at the scheduled time,
 cron skips that day silently and you'd get no update. launchd notices the
@@ -57,10 +69,20 @@ morning schedule on a laptop that's closed overnight.
 To change the time, edit `RUN_HOUR` / `RUN_MINUTE` at the top of
 `scripts/schedule.sh` and re-run `install`. Output goes to `logs/refresh.log`.
 
+### Notifications
+
 When a scheduled run finds new postings scoring at or above
-`STRONG_FIT_THRESHOLD`, macOS shows a notification. Set
-`NOTIFY_ON_STRONG_FIT = False` in `config.py` for silent runs. The dashboard's
-Refresh button never notifies — you're already looking at the results.
+`NOTIFY_THRESHOLD` (default 60), macOS shows **one** notification summarizing
+them — not one per posting. Set `NOTIFY_ON_STRONG_FIT = False` for silent runs.
+The dashboard's Refresh button never notifies, since you're already looking at
+the results.
+
+`NOTIFY_THRESHOLD` is deliberately separate from `STRONG_FIT_THRESHOLD`. The
+badge threshold answers "what deserves a green highlight"; the notify
+threshold answers "what deserves interrupting me". Measured against real data,
+about 55 postings arrive daily, ~7 score 60+, and almost none score 100+ — so
+tying notifications to the badge threshold left it silent for days while
+relevant roles went by unannounced.
 
 ### What "NEW" means
 
@@ -90,6 +112,7 @@ numbers or keywords exist anywhere else in the codebase.
 | See advanced-degree roles ranked normally | Set `ADVANCED_DEGREE_PENALTY = 0` |
 | Change the fit badges | Adjust `STRONG_FIT_THRESHOLD` / `GOOD_FIT_THRESHOLD` |
 | Turn off notifications | Set `NOTIFY_ON_STRONG_FIT = False` |
+| Get notified more or less often | Adjust `NOTIFY_THRESHOLD` |
 | Change how long badges persist | Adjust `VISIT_SESSION_MINUTES` |
 
 After editing, just run `python3 refresh.py` again. Scores are recomputed from

@@ -1,59 +1,69 @@
 #!/bin/bash
 #
-# schedule.sh — install, remove, or inspect the daily automatic refresh.
+# schedule.sh — set up (or remove) the background jobs.
 #
-#   ./scripts/schedule.sh install     turn on the daily refresh
-#   ./scripts/schedule.sh uninstall   turn it off and remove it
-#   ./scripts/schedule.sh status      is it installed? did it run?
-#   ./scripts/schedule.sh run-now     trigger it immediately (to test)
+#   ./scripts/schedule.sh install     turn both on
+#   ./scripts/schedule.sh uninstall   turn both off and remove them
+#   ./scripts/schedule.sh status      what's installed, did it work
+#   ./scripts/schedule.sh run-now     force a refresh right now, to test
+#   ./scripts/schedule.sh restart     reload both (after editing code)
 #
-# WHAT THIS SETS UP
-# -----------------
-# A macOS "LaunchAgent" — a small XML file describing a job for launchd, the
-# system's scheduler. Once installed it runs refresh.py once a day, in the
-# background, whether or not the dashboard is open.
+# WHAT GETS INSTALLED
+# -------------------
+# Two macOS "LaunchAgents" — small XML files describing jobs for launchd, the
+# system's scheduler and process supervisor:
+#
+#   com.internship-finder.daily      runs refresh.py once a day
+#   com.internship-finder.dashboard  keeps the Flask dashboard running
+#
+# Together they mean you never type a command: listings update each morning,
+# and http://127.0.0.1:5000 is always there when you want to look.
 #
 # WHY launchd AND NOT cron
 # ------------------------
-# If your Mac is asleep at the scheduled time, cron simply skips that day and
-# you'd silently get no update. launchd notices the missed run and fires it as
-# soon as the machine wakes. For a laptop that's closed overnight — which is
-# exactly when a morning refresh would be scheduled — that difference matters.
+# If your Mac is asleep at the scheduled time, cron skips that day and you
+# silently get no update. launchd notices the missed run and fires it when the
+# machine wakes. For a morning schedule on a laptop closed overnight, that's
+# the difference between working and quietly not.
 #
-# NOTHING HERE NEEDS ADMIN RIGHTS. A LaunchAgent lives in your own home
-# folder and runs as you. Uninstalling removes the file completely.
+# cron also can't do the second job at all — keeping a process alive and
+# restarting it after a reboot or crash is exactly what launchd's KeepAlive is
+# for.
+#
+# NOTHING HERE NEEDS ADMIN RIGHTS. LaunchAgents live in your own home folder
+# and run as you. Uninstalling removes them completely.
 
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Work out where everything lives.
-#
-# The plist needs ABSOLUTE paths — launchd runs with a bare environment and no
-# notion of a working directory, so relative paths would silently fail. We
-# derive them from this script's own location so it works wherever the project
-# is moved to.
+# Absolute paths. launchd runs with a bare environment and no working
+# directory, so relative paths would silently fail. Derived from this script's
+# own location, so moving the project doesn't break anything.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 
-LABEL="com.internship-finder.daily"
+REFRESH_LABEL="com.internship-finder.daily"
+DASH_LABEL="com.internship-finder.dashboard"
+
 PLIST_DIR="$HOME/Library/LaunchAgents"
-PLIST_PATH="$PLIST_DIR/$LABEL.plist"
+REFRESH_PLIST="$PLIST_DIR/$REFRESH_LABEL.plist"
+DASH_PLIST="$PLIST_DIR/$DASH_LABEL.plist"
 
 LOG_DIR="$PROJECT_DIR/logs"
-LOG_OUT="$LOG_DIR/refresh.log"
-LOG_ERR="$LOG_DIR/refresh.error.log"
 
-# What time of day to run (24-hour clock). Change these two, then re-run
+# What time the daily refresh runs (24-hour clock). Change these, then re-run
 # `./scripts/schedule.sh install` to apply.
 RUN_HOUR=8
 RUN_MINUTE=0
 
+DASH_PORT=5000
+
 # ---------------------------------------------------------------------------
 
 usage() {
-  echo "Usage: $0 {install|uninstall|status|run-now}"
+  echo "Usage: $0 {install|uninstall|status|run-now|restart}"
   exit 1
 }
 
@@ -70,23 +80,16 @@ require_venv() {
   fi
 }
 
-do_install() {
-  require_venv
-  mkdir -p "$PLIST_DIR" "$LOG_DIR"
-
-  # If it's already loaded, unload first so we cleanly replace it.
-  launchctl unload "$PLIST_PATH" 2>/dev/null || true
-
-  cat > "$PLIST_PATH" <<PLIST
+write_refresh_plist() {
+  cat > "$REFRESH_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>$LABEL</string>
+    <string>$REFRESH_LABEL</string>
 
-    <!-- What to run. First item is the program, the rest are arguments. -->
     <key>ProgramArguments</key>
     <array>
         <string>$PYTHON_BIN</string>
@@ -94,12 +97,11 @@ do_install() {
     </array>
 
     <!-- refresh.py writes internships.db relative to the working directory,
-         so this must be set or the database would land somewhere unexpected. -->
+         so this must be set or the database lands somewhere unexpected. -->
     <key>WorkingDirectory</key>
     <string>$PROJECT_DIR</string>
 
-    <!-- Run once a day at the configured time. If the Mac is asleep then,
-         launchd runs it when the machine next wakes. -->
+    <!-- Once a day. If the Mac is asleep, launchd runs it on wake. -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
@@ -108,82 +110,166 @@ do_install() {
         <integer>$RUN_MINUTE</integer>
     </dict>
 
-    <!-- Don't fire on login/install — only on the schedule. -->
+    <!-- Don't fire on install/login — only on the schedule. -->
     <key>RunAtLoad</key>
     <false/>
 
-    <!-- Keep output so you can check what happened. -->
     <key>StandardOutPath</key>
-    <string>$LOG_OUT</string>
+    <string>$LOG_DIR/refresh.log</string>
     <key>StandardErrorPath</key>
-    <string>$LOG_ERR</string>
+    <string>$LOG_DIR/refresh.error.log</string>
 </dict>
 </plist>
 PLIST
+}
 
-  launchctl load "$PLIST_PATH"
+write_dashboard_plist() {
+  cat > "$DASH_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$DASH_LABEL</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>$PYTHON_BIN</string>
+        <string>$PROJECT_DIR/app.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>$PROJECT_DIR</string>
+
+    <!-- Start as soon as it's installed, and again at every login. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart it if it ever stops. This is what makes the dashboard
+         "always there" rather than something you have to remember. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/dashboard.log</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/dashboard.error.log</string>
+</dict>
+</plist>
+PLIST
+}
+
+do_install() {
+  require_venv
+  mkdir -p "$PLIST_DIR" "$LOG_DIR"
+
+  # Unload first so we cleanly replace anything already there.
+  launchctl unload "$REFRESH_PLIST" 2>/dev/null || true
+  launchctl unload "$DASH_PLIST" 2>/dev/null || true
+
+  write_refresh_plist
+  write_dashboard_plist
+
+  launchctl load "$REFRESH_PLIST"
+  launchctl load "$DASH_PLIST"
+
+  # Give Flask a moment to bind the port before we report success.
+  sleep 3
 
   printf '%s\n' \
-    "Daily refresh installed." \
+    "Installed. Nothing to run by hand from now on." \
     "" \
-    "  runs at:  $(printf '%02d:%02d' "$RUN_HOUR" "$RUN_MINUTE") every day" \
-    "  project:  $PROJECT_DIR" \
-    "  log:      $LOG_OUT" \
-    "" \
-    "Test it immediately with:  $0 run-now" \
-    "Turn it off with:          $0 uninstall"
+    "  Daily refresh:  $(printf '%02d:%02d' "$RUN_HOUR" "$RUN_MINUTE") every day" \
+    "  Dashboard:      http://127.0.0.1:$DASH_PORT  (always on)" \
+    "  Logs:           $LOG_DIR/" \
+    ""
+
+  if curl -sf -o /dev/null "http://127.0.0.1:$DASH_PORT/"; then
+    echo "  Dashboard is up. Bookmark http://127.0.0.1:$DASH_PORT"
+  else
+    echo "  NOTE: the dashboard didn't answer yet. Check with:"
+    echo "    $0 status"
+  fi
 }
 
 do_uninstall() {
-  if [ ! -f "$PLIST_PATH" ]; then
-    echo "Not installed — nothing to remove."
-    exit 0
+  local found=0
+  for plist in "$REFRESH_PLIST" "$DASH_PLIST"; do
+    if [ -f "$plist" ]; then
+      launchctl unload "$plist" 2>/dev/null || true
+      rm -f "$plist"
+      found=1
+    fi
+  done
+  if [ "$found" -eq 0 ]; then
+    echo "Nothing installed."
+  else
+    echo "Both jobs removed. Your database and logs were left alone."
   fi
-  launchctl unload "$PLIST_PATH" 2>/dev/null || true
-  rm -f "$PLIST_PATH"
-  echo "Daily refresh removed. Your database and logs were left alone."
+}
+
+do_restart() {
+  require_venv
+  launchctl unload "$DASH_PLIST" 2>/dev/null || true
+  launchctl load "$DASH_PLIST" 2>/dev/null || true
+  sleep 2
+  echo "Dashboard restarted."
+}
+
+report_job() {
+  local label="$1" plist="$2" desc="$3"
+  if [ ! -f "$plist" ]; then
+    echo "  $desc: NOT INSTALLED"
+    return
+  fi
+  if launchctl list | grep -q "$label"; then
+    local line exit_code
+    line="$(launchctl list | grep "$label")"
+    exit_code="$(echo "$line" | awk '{print $2}')"
+    echo "  $desc: loaded (last exit status: $exit_code)"
+  else
+    echo "  $desc: installed but NOT loaded — try '$0 install'"
+  fi
 }
 
 do_status() {
-  if [ -f "$PLIST_PATH" ]; then
-    echo "Installed:  $PLIST_PATH"
-    echo "Scheduled:  $(printf '%02d:%02d' "$RUN_HOUR" "$RUN_MINUTE") daily"
+  echo "JOBS"
+  report_job "$REFRESH_LABEL" "$REFRESH_PLIST" "Daily refresh"
+  report_job "$DASH_LABEL" "$DASH_PLIST" "Dashboard    "
+
+  echo
+  echo "DASHBOARD"
+  if curl -sf -o /dev/null "http://127.0.0.1:$DASH_PORT/"; then
+    echo "  Responding at http://127.0.0.1:$DASH_PORT"
   else
-    echo "Not installed. Run:  $0 install"
-    exit 0
+    echo "  Not responding on port $DASH_PORT"
+    if [ -f "$LOG_DIR/dashboard.error.log" ]; then
+      echo "  Last error output:"
+      tail -n 8 "$LOG_DIR/dashboard.error.log" | sed 's/^/    /'
+    fi
   fi
 
   echo
-  if launchctl list | grep -q "$LABEL"; then
-    echo "Loaded in launchd: yes"
-    # Columns are: PID  LastExitStatus  Label
-    echo "  $(launchctl list | grep "$LABEL")"
-    echo "  (a '-' PID just means it isn't running this instant, which is"
-    echo "   normal; exit status 0 means the last run succeeded)"
+  echo "LAST REFRESH"
+  if [ -f "$LOG_DIR/refresh.log" ]; then
+    tail -n 12 "$LOG_DIR/refresh.log" | sed 's/^/  /'
   else
-    echo "Loaded in launchd: NO — try '$0 install' again"
-  fi
-
-  echo
-  if [ -f "$LOG_OUT" ]; then
-    echo "Last run output:"
-    tail -n 15 "$LOG_OUT" | sed 's/^/  /'
-  else
-    echo "No log yet — it hasn't run. Use '$0 run-now' to test."
+    echo "  Hasn't run yet. Test it with '$0 run-now'."
   fi
 }
 
 do_run_now() {
-  if [ ! -f "$PLIST_PATH" ]; then
+  if [ ! -f "$REFRESH_PLIST" ]; then
     echo "Not installed. Run '$0 install' first."
     exit 1
   fi
-  echo "Triggering a run..."
-  launchctl start "$LABEL"
-  sleep 6
+  echo "Triggering a refresh..."
+  launchctl start "$REFRESH_LABEL"
+  sleep 8
   echo
-  if [ -f "$LOG_OUT" ]; then
-    tail -n 20 "$LOG_OUT" | sed 's/^/  /'
+  if [ -f "$LOG_DIR/refresh.log" ]; then
+    tail -n 20 "$LOG_DIR/refresh.log" | sed 's/^/  /'
   else
     echo "  (no output yet — check again with '$0 status')"
   fi
@@ -194,5 +280,6 @@ case "${1:-}" in
   uninstall) do_uninstall ;;
   status)    do_status ;;
   run-now)   do_run_now ;;
+  restart)   do_restart ;;
   *)         usage ;;
 esac

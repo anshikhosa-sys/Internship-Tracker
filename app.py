@@ -27,6 +27,8 @@ connections only from this machine — nothing outside can reach it. That's why
 there's no password: there's no one else to keep out.
 """
 
+import sys
+
 from flask import (
     Flask, jsonify, redirect, render_template, request, url_for
 )
@@ -195,7 +197,14 @@ if __name__ == "__main__":
 
     print("  Dashboard: http://127.0.0.1:5000\n")
 
+    # Debug mode is OFF unless you ask for it with --debug.
+    #
+    # It's genuinely useful while editing — it reloads on every file change
+    # and shows tracebacks in the browser. But this app also runs as a
+    # background service, and there debug mode is wrong: the reloader spawns
+    # a second process launchd doesn't know about, and the interactive
+    # debugger it exposes has no business being left running.
+    debug = "--debug" in sys.argv
+
     # host="127.0.0.1" keeps this reachable only from this machine.
-    # debug=True auto-reloads on file changes. Turn it off if this is ever
-    # exposed beyond localhost.
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    app.run(host="127.0.0.1", port=5000, debug=debug)

@@ -346,6 +346,18 @@ def test_notifications():
     check(notify.notify_strong_matches([]) is False,
           "an empty list does not trigger a notification")
 
+    # The threshold boundary. Scoring one point under must stay silent —
+    # this is checked without sending anything.
+    just_under = make_posting(3, score=config.NOTIFY_THRESHOLD - 1)
+    check(notify.notify_strong_matches([just_under]) is False,
+          "a posting just below NOTIFY_THRESHOLD stays silent")
+
+    # The notify threshold must remain SEPARATE from the badge threshold.
+    # Tying them together is what kept notifications silent for days while
+    # relevant roles arrived — see the comment in config.py.
+    check(config.NOTIFY_THRESHOLD <= config.STRONG_FIT_THRESHOLD,
+          "notify threshold is not stricter than the strong-fit badge")
+
 
 # =============================================================================
 if __name__ == "__main__":

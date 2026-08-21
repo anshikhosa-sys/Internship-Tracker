@@ -78,32 +78,39 @@ def send(title: str, message: str, subtitle: str = "") -> bool:
 
 def notify_strong_matches(new_postings) -> bool:
     """
-    Given the postings that are new this run, notify about the strong ones.
+    Given the postings that are new this run, notify about the good ones.
+
+    "Good" means at or above config.NOTIFY_THRESHOLD — which is deliberately a
+    different number from STRONG_FIT_THRESHOLD. See the comment on
+    NOTIFY_THRESHOLD in config.py for why tying these together kept the
+    feature silent while relevant roles went by.
 
     Returns True if a notification was sent. Does nothing if notifications are
-    switched off in config.py, or if nothing new cleared the threshold.
+    switched off, or if nothing new cleared the threshold.
     """
     if not config.NOTIFY_ON_STRONG_FIT:
         return False
 
-    strong = [
+    matches = [
         posting for posting in new_postings
-        if posting.fit_score >= config.STRONG_FIT_THRESHOLD
+        if posting.fit_score >= config.NOTIFY_THRESHOLD
     ]
-    if not strong:
+    if not matches:
         return False
 
-    strong.sort(key=lambda p: -p.fit_score)
-    best = strong[0]
+    matches.sort(key=lambda p: -p.fit_score)
+    best = matches[0]
 
-    if len(strong) == 1:
-        title = "1 strong internship match"
+    # One notification per run, not one per posting — a morning that turns up
+    # seven matches should be a single alert, not seven.
+    if len(matches) == 1:
+        title = "1 new internship match"
     else:
-        title = f"{len(strong)} strong internship matches"
+        title = f"{len(matches)} new internship matches"
 
     # Lead with the best one, since a notification only has room for so much.
     message = f"{best.company} — {best.role}"
-    if len(strong) > 1:
-        message += f"  (+{len(strong) - 1} more)"
+    if len(matches) > 1:
+        message += f"  (+{len(matches) - 1} more)"
 
-    return send(title, message, subtitle=f"Fit score {best.fit_score}")
+    return send(title, message, subtitle=f"Best fit score: {best.fit_score}")

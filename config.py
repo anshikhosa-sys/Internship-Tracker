@@ -371,9 +371,26 @@ DATABASE_PATH = "internships.db"
 # more eagerly.
 VISIT_SESSION_MINUTES = 30
 
-# Show a macOS notification when a refresh finds NEW postings scoring at or
-# above STRONG_FIT_THRESHOLD. Set to False for silent refreshes.
+# Show a macOS notification when a refresh finds new postings worth knowing
+# about. Set to False for silent refreshes.
 #
 # Only affects the scheduled job and the command line — it never fires from
 # the dashboard's Refresh button, since you're already looking at the results.
 NOTIFY_ON_STRONG_FIT = True
+
+# The score a NEW posting must reach to be worth interrupting you for.
+#
+# THIS IS DELIBERATELY SEPARATE FROM STRONG_FIT_THRESHOLD, and the difference
+# matters. STRONG_FIT_THRESHOLD decides what gets a green badge in the
+# dashboard; this decides what's worth a notification. They answer different
+# questions and want different numbers.
+#
+# Measured against real data: of ~55 postings added on a typical day, roughly
+# 7 score 60+ and almost none score 100+. Tying notifications to 100 meant the
+# feature stayed silent for days at a time while genuinely relevant roles — a
+# 90-point Product Management internship among them — arrived unannounced.
+#
+# At 60 you get roughly one notification a morning, summarizing that day's
+# worthwhile matches. Raise it for fewer interruptions; lower it to hear about
+# everything.
+NOTIFY_THRESHOLD = GOOD_FIT_THRESHOLD
