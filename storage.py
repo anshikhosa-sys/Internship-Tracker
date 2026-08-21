@@ -91,6 +91,20 @@ CREATE TABLE IF NOT EXISTS app_state (
     value TEXT
 );
 
+-- Generated application drafts. Like `applications`, this is YOUR data, not
+-- fetched data — a refresh must never touch it. It's also the expensive kind:
+-- every row cost an API call, so we keep them rather than regenerating.
+CREATE TABLE IF NOT EXISTS packets (
+    posting_id     TEXT PRIMARY KEY,
+    cover_letter   TEXT,
+    talking_points TEXT,     -- JSON array
+    gaps           TEXT,     -- JSON array of {requirement, how_to_address}
+    fit_summary    TEXT,
+    model          TEXT,
+    file_path      TEXT,     -- the markdown copy in letters/
+    generated_at   TEXT
+);
+
 -- Indexes: make sorting by score and filtering by active fast.
 CREATE INDEX IF NOT EXISTS idx_postings_score ON postings(fit_score DESC);
 CREATE INDEX IF NOT EXISTS idx_postings_active ON postings(is_active);
@@ -443,4 +457,67 @@ def applied_count(conn) -> int:
     row = conn.execute(
         "SELECT COUNT(*) AS n FROM applications WHERE applied = 1"
     ).fetchone()
+    return row["n"] if row else 0
+
+
+# =============================================================================
+# Application packets (generated cover letters)
+# =============================================================================
+
+def save_packet(conn, posting_id: str, packet: dict, file_path: str) -> None:
+    """Store a generated packet, replacing any earlier one for this posting."""
+    conn.execute(
+        """
+        INSERT INTO packets (
+            posting_id, cover_letter, talking_points, gaps,
+            fit_summary, model, file_path, generated_at
+        ) VALUES (?,?,?,?,?,?,?,?)
+        ON CONFLICT(posting_id) DO UPDATE SET
+            cover_letter   = excluded.cover_letter,
+            talking_points = excluded.talking_points,
+            gaps           = excluded.gaps,
+            fit_summary    = excluded.fit_summary,
+            model          = excluded.model,
+            file_path      = excluded.file_path,
+            generated_at   = excluded.generated_at
+        """,
+        (
+            posting_id,
+            packet.get("cover_letter", ""),
+            json.dumps(packet.get("talking_points", [])),
+            json.dumps(packet.get("gaps", [])),
+            packet.get("fit_summary", ""),
+            packet.get("model", ""),
+            file_path,
+            now_iso(),
+        ),
+    )
+    conn.commit()
+
+
+def get_packet(conn, posting_id: str):
+    """Load one packet, or None. JSON columns come back already decoded."""
+    row = conn.execute(
+        "SELECT * FROM packets WHERE posting_id = ?", (posting_id,)
+    ).fetchone()
+    if not row:
+        return None
+
+    packet = dict(row)
+    for field in ("talking_points", "gaps"):
+        try:
+            packet[field] = json.loads(packet[field] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            packet[field] = []
+    return packet
+
+
+def packet_ids(conn) -> set:
+    """Which postings already have a draft — used to label the buttons."""
+    rows = conn.execute("SELECT posting_id FROM packets").fetchall()
+    return {r["posting_id"] for r in rows}
+
+
+def packet_count(conn) -> int:
+    row = conn.execute("SELECT COUNT(*) AS n FROM packets").fetchone()
     return row["n"] if row else 0

@@ -378,6 +378,37 @@ VISIT_SESSION_MINUTES = 30
 # the dashboard's Refresh button, since you're already looking at the results.
 NOTIFY_ON_STRONG_FIT = True
 
+# =============================================================================
+# 9. APPLICATION PREP — cover letter drafting
+# =============================================================================
+#
+# Your résumé, in the form the letter generator reads. Gitignored — it holds
+# your contact details and work history. Start from profile_example.md.
+#
+# The letters are only as specific as this file. Its "Notes for the letter
+# writer" section is the highest-leverage thing to keep adding to.
+PROFILE_PATH = "profile.md"
+
+# Where generated drafts are written. Also gitignored — they're in your name.
+LETTERS_DIR = "letters"
+
+# Which model drafts the letters.
+#
+# Cost, measured: roughly 2,000 input + 1,200 output tokens per letter, which
+# at Opus 5 rates works out to about 4 cents each. Prepping five roles a week
+# is well under a dollar. Switch to "claude-sonnet-5" to cut that by about
+# half if you're generating a lot.
+LETTER_MODEL = "claude-opus-5"
+
+# Reasoning effort. Picking WHICH of your experiences match a given posting —
+# and being honest about what doesn't — is a judgment call, so this is worth
+# more than the minimum. Drop to "medium" if you want faster, cheaper drafts.
+LETTER_EFFORT = "high"
+
+# Generous enough that a letter is never truncated mid-sentence.
+LETTER_MAX_TOKENS = 8000
+
+
 # The score a NEW posting must reach to be worth interrupting you for.
 #
 # THIS IS DELIBERATELY SEPARATE FROM STRONG_FIT_THRESHOLD, and the difference

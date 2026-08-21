@@ -23,6 +23,7 @@ Not everything needs a test, but two things here genuinely do:
 import os
 import tempfile
 
+import config
 import scorer
 import storage
 from sources.base import Posting
@@ -148,7 +149,6 @@ def test_scoring():
 
     # The focus cap.
     stuffed = score_of("AI ML Data Platform Infrastructure Systems Intern")
-    import config
     check(stuffed <= 40 + config.MAX_FOCUS_BONUS + 150,
           "keyword-stuffed titles are capped")
 
@@ -329,7 +329,6 @@ def test_notifications():
           "quotes and backslashes are escaped for AppleScript")
 
     # With the feature off, nothing is sent regardless of what's passed in.
-    import config
     original = config.NOTIFY_ON_STRONG_FIT
     try:
         config.NOTIFY_ON_STRONG_FIT = False
@@ -360,10 +359,181 @@ def test_notifications():
 
 
 # =============================================================================
+def test_letters():
+    """
+    Cover letter drafting — everything that can be checked without spending
+    an API call. The network path isn't tested here; what's tested is the
+    scaffolding around it, which is where the fixable bugs live.
+    """
+    print("\nLETTERS")
+
+    import letters
+
+    # -- the honesty constraint ------------------------------------------
+    # This is the single most important line in the prompt. A letter that
+    # invents experience goes out under a real name, so if this instruction
+    # ever gets edited away, a test should fail.
+    prompt = letters.SYSTEM_PROMPT.lower()
+    check("only what appears in the candidate profile" in prompt,
+          "system prompt restricts claims to the profile")
+    check("never invent" in prompt,
+          "system prompt forbids inventing experience")
+    check("gaps" in prompt,
+          "system prompt routes shortfalls to `gaps` instead of the letter")
+
+    # -- schema ----------------------------------------------------------
+    schema = letters.OUTPUT_SCHEMA
+    check(schema["additionalProperties"] is False,
+          "output schema is strict")
+    check(set(schema["required"]) == {"cover_letter", "talking_points",
+                                      "gaps", "fit_summary"},
+          "output schema requires all four fields")
+
+    # -- filenames -------------------------------------------------------
+    # Company names contain slashes, quotes, and emoji. A filename built
+    # naively from "TikTok / ByteDance" would try to write into a directory.
+    check("/" not in letters._safe_filename("TikTok / ByteDance"),
+          "slashes are stripped from filenames")
+    check(".." not in letters._safe_filename("../../etc/passwd"),
+          "path traversal is stripped from filenames")
+    check(letters._safe_filename("!!!") == "untitled",
+          "an all-punctuation name still yields a usable filename")
+    check(len(letters._safe_filename("x" * 200)) <= 60,
+          "very long names are truncated")
+
+    # -- error messages --------------------------------------------------
+    # Missing credentials arrive as a plain TypeError, not an SDK exception.
+    # This caught a real bug: the original code only handled
+    # anthropic.AuthenticationError, so a new setup got an unreadable dump.
+    auth_error = TypeError(
+        "Could not resolve authentication method. Expected one of api_key..."
+    )
+    explained = letters._explain_api_error(auth_error)
+    check("console.anthropic.com" in explained,
+          "a missing key explains where to get one")
+    check("ANTHROPIC_API_KEY" in explained,
+          "a missing key names the variable to set")
+
+    # -- profile loading -------------------------------------------------
+    original = config.PROFILE_PATH
+    try:
+        config.PROFILE_PATH = os.path.join(tempfile.mkdtemp(), "missing.md")
+        try:
+            letters.load_profile()
+            check(False, "a missing profile raises LetterError")
+        except letters.LetterError as exc:
+            check("profile_example.md" in str(exc),
+                  "a missing profile points at the template")
+
+        # A file that exists but is basically empty is its own failure mode:
+        # it would silently produce vague, useless letters.
+        thin = os.path.join(tempfile.mkdtemp(), "thin.md")
+        with open(thin, "w", encoding="utf-8") as handle:
+            handle.write("# Me\n")
+        config.PROFILE_PATH = thin
+        try:
+            letters.load_profile()
+            check(False, "a near-empty profile raises LetterError")
+        except letters.LetterError:
+            check(True, "a near-empty profile is rejected, not used")
+    finally:
+        config.PROFILE_PATH = original
+
+    # -- prompt assembly -------------------------------------------------
+    posting = {
+        "company": "Acme", "role": "Solutions Engineer Intern",
+        "category": "Software Engineering", "location": "Austin, TX",
+        "apply_url": "https://acme.com/apply", "fit_score": 160,
+        "score_reasons": [{"points": 150, "label": "Role type: Solutions"}],
+    }
+    built = letters._build_prompt(posting, "MY-UNIQUE-PROFILE-MARKER")
+
+    # Collapse whitespace before matching. The prompt is a wrapped f-string,
+    # so a phrase can straddle a newline — asserting on the raw text makes
+    # the test fail on reflowing rather than on meaning.
+    flat = " ".join(built.split())
+
+    check("Acme" in flat and "Solutions Engineer Intern" in flat,
+          "the prompt includes the posting")
+    check("MY-UNIQUE-PROFILE-MARKER" in flat,
+          "the prompt includes the profile")
+    check("keyword matches, not judgment" in flat,
+          "the prompt warns that scores are keyword hits, not facts")
+    check("don't invent specific requirements" in flat,
+          "the prompt says not to invent requirements it wasn't given")
+
+    # -- writing the draft to disk ---------------------------------------
+    original_dir = config.LETTERS_DIR
+    try:
+        config.LETTERS_DIR = tempfile.mkdtemp()
+        packet = {
+            "cover_letter": "Dear team,\n\nHello.",
+            "talking_points": ["Point one"],
+            "gaps": [{"requirement": "Go", "how_to_address": "No Go yet."}],
+            "fit_summary": "Strong match.",
+            "model": "claude-opus-5",
+        }
+        path = letters.save_markdown(posting, packet)
+        check(os.path.exists(path), "the draft is written to disk")
+        with open(path, encoding="utf-8") as handle:
+            written = handle.read()
+        check("Dear team," in written, "the letter body is written out")
+        check("No Go yet." in written, "the gaps are written out")
+        check("Read it before you send it" in written,
+              "the draft carries a review reminder")
+    finally:
+        config.LETTERS_DIR = original_dir
+
+
+# =============================================================================
+def test_packet_storage():
+    """Generated drafts must survive refreshes, like applied marks do."""
+    print("\nPACKET STORAGE")
+
+    db_path = os.path.join(tempfile.mkdtemp(), "packets.db")
+    conn = storage.connect(db_path)
+
+    posting = make_posting(1)
+    storage.save_postings(conn, [posting], "2026-08-01T00:00:00+00:00")
+    storage.record_run(conn, "2026-08-01T00:00:00+00:00", 1, 0)
+
+    packet = {
+        "cover_letter": "Body text.",
+        "talking_points": ["A", "B"],
+        "gaps": [{"requirement": "Rust", "how_to_address": "None yet."}],
+        "fit_summary": "Good match.",
+        "model": "claude-opus-5",
+    }
+    storage.save_packet(conn, posting.id, packet, "letters/x.md")
+
+    loaded = storage.get_packet(conn, posting.id)
+    check(loaded["cover_letter"] == "Body text.", "the packet round-trips")
+    check(loaded["talking_points"] == ["A", "B"],
+          "JSON columns are decoded on the way out")
+    check(loaded["gaps"][0]["requirement"] == "Rust",
+          "nested gap objects survive the round-trip")
+
+    # The thing that would actually hurt: a refresh wiping an expensive draft.
+    storage.save_postings(conn, [posting], "2026-08-02T00:00:00+00:00")
+    check(storage.get_packet(conn, posting.id) is not None,
+          "a refresh does not delete generated drafts")
+    check(storage.packet_count(conn) == 1, "the packet count is right")
+    check(storage.packet_ids(conn) == {posting.id},
+          "packet_ids reports which postings have drafts")
+
+    check(storage.get_packet(conn, "no-such-id") is None,
+          "an unknown posting returns None rather than raising")
+
+    conn.close()
+
+
+# =============================================================================
 if __name__ == "__main__":
     test_parser()
     test_scoring()
     test_storage()
     test_visit_tracking()
     test_notifications()
+    test_letters()
+    test_packet_storage()
     print(f"\n{PASSED} checks passed.\n")

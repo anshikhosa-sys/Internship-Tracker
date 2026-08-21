@@ -20,6 +20,8 @@ THE ROUTES HERE
     POST /api/applied    mark a posting applied/not (called by JavaScript)
     POST /mark-seen      clear all NEW badges
     POST /refresh        re-fetch listings, then bounce back to the dashboard
+    POST /prep/<id>      draft a cover letter for one posting
+    GET  /packet/<id>    view a generated draft
 
 WHY THERE'S NO LOGIN
 Single user, local only. The server binds to 127.0.0.1, which means it accepts
@@ -34,6 +36,7 @@ from flask import (
 )
 
 import config
+import letters
 import scorer
 import storage
 from refresh import refresh as run_refresh
@@ -109,6 +112,7 @@ def index():
 
     last_run = storage.last_run_time(conn)
     applied_total = storage.applied_count(conn)
+    prepped_ids = storage.packet_ids(conn)
 
     conn.close()
 
@@ -116,6 +120,7 @@ def index():
     for posting in postings:
         posting["is_new"] = posting["id"] in new_ids
         posting["fit"] = scorer.fit_label(posting["fit_score"])
+        posting["has_packet"] = posting["id"] in prepped_ids
 
     visible = _filtered(postings, new_ids, request.args)
 
@@ -130,6 +135,7 @@ def index():
         total_count=len(postings),
         new_count=len(new_ids),
         applied_total=applied_total,
+        prepped_total=len(prepped_ids),
         last_run=last_run,
         filters=request.args,
         config=config,
@@ -169,6 +175,59 @@ def mark_seen_route():
     storage.mark_all_seen(conn)
     conn.close()
     return redirect(url_for("index", **request.args))
+
+
+@app.route("/prep/<path:posting_id>", methods=["POST"])
+def prep_route(posting_id):
+    """
+    Draft an application packet for one posting.
+
+    Synchronous, and it takes 15-30 seconds — the model is reasoning about
+    which of your experiences match this specific role. For a single-user
+    local tool, making you wait is honest; a hosted app would queue it.
+    """
+    conn = storage.connect()
+    posting = next(
+        (p for p in storage.load_postings(conn) if p["id"] == posting_id),
+        None,
+    )
+
+    if posting is None:
+        conn.close()
+        return render_template("error.html",
+                               message="No such posting."), 404
+
+    try:
+        packet = letters.generate(posting)
+    except letters.LetterError as exc:
+        # LetterError messages are written to be read by a person — missing
+        # profile, missing API key, no credit. Show it rather than a 500.
+        conn.close()
+        return render_template("error.html", message=str(exc)), 400
+
+    path = letters.save_markdown(posting, packet)
+    storage.save_packet(conn, posting_id, packet, path)
+    conn.close()
+
+    return redirect(url_for("packet_route", posting_id=posting_id))
+
+
+@app.route("/packet/<path:posting_id>")
+def packet_route(posting_id):
+    """Show a generated draft."""
+    conn = storage.connect()
+    packet = storage.get_packet(conn, posting_id)
+    posting = next(
+        (p for p in storage.load_postings(conn) if p["id"] == posting_id),
+        None,
+    )
+    conn.close()
+
+    if packet is None or posting is None:
+        return render_template("error.html",
+                               message="No draft for that posting yet."), 404
+
+    return render_template("packet.html", packet=packet, posting=posting)
 
 
 @app.route("/refresh", methods=["POST"])

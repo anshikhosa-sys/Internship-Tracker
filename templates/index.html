@@ -23,6 +23,9 @@
               {{ new_count }} new since your last visit
             </strong>
         {% endif %}
+        {% if prepped_total %}
+          · {{ prepped_total }} drafted
+        {% endif %}
         {% if applied_total %}
           · {{ applied_total }} applied
         {% endif %}
@@ -158,6 +161,21 @@
                  the page you open can reach back and redirect this tab. -->
             <a class="btn-apply" href="{{ posting.apply_url }}"
                target="_blank" rel="noopener noreferrer">Apply</a>
+
+            <!-- Drafting takes 15-30s, so this is a form POST rather than a
+                 background fetch: the browser's own loading state is a more
+                 honest signal than a button that looks idle while working. -->
+            {% if posting.has_packet %}
+              <a class="btn-draft has-draft"
+                 href="{{ url_for('packet_route', posting_id=posting.id) }}">
+                View draft
+              </a>
+            {% else %}
+              <form method="post"
+                    action="{{ url_for('prep_route', posting_id=posting.id) }}">
+                <button type="submit" class="btn-draft">Draft letter</button>
+              </form>
+            {% endif %}
 
             <label class="checkbox applied-toggle">
               <input type="checkbox"

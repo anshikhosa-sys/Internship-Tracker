@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ posting.company }} — draft</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <h1>{{ posting.company }}</h1>
+      <p class="sub">
+        {{ posting.role }} · {{ posting.location }} ·
+        fit {{ posting.fit_score }}
+      </p>
+    </div>
+    <div class="topbar-actions">
+      <a class="btn-secondary" href="{{ url_for('index') }}">Back to list</a>
+      <a class="btn-refresh" href="{{ posting.apply_url }}"
+         target="_blank" rel="noopener noreferrer">Open application</a>
+    </div>
+  </div>
+</header>
+
+<main class="packet">
+
+  <!-- The honest one-liner first: it tells you whether to spend time here
+       at all, which is the most useful thing on the page. -->
+  {% if packet.fit_summary %}
+    <p class="fit-summary">{{ packet.fit_summary }}</p>
+  {% endif %}
+
+  <div class="warn-banner">
+    This is a draft written from your <code>profile.md</code>. Read it before
+    you send it — it goes out in your name.
+  </div>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Cover letter</h2>
+      <button class="btn-copy" data-copy="cover">Copy</button>
+    </div>
+    <!-- white-space: pre-wrap in the CSS preserves the paragraph breaks
+         without needing to convert them to <p> tags. -->
+    <div class="letter" id="cover">{{ packet.cover_letter }}</div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Talking points</h2>
+      <button class="btn-copy" data-copy="points">Copy</button>
+    </div>
+    <ul id="points">
+      {% for point in packet.talking_points %}
+        <li>{{ point }}</li>
+      {% else %}
+        <li class="muted">None generated.</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Gaps to be ready for</h2>
+    </div>
+    <p class="muted small">
+      What this role asks for that your profile doesn't show. Worth reading
+      before an interview, not something to hide.
+    </p>
+    <ul class="gaps">
+      {% for gap in packet.gaps %}
+        <li>
+          <strong>{{ gap.requirement }}</strong>
+          <div class="muted">{{ gap.how_to_address }}</div>
+        </li>
+      {% else %}
+        <li class="muted">No significant gaps identified.</li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <p class="muted small">
+    Drafted by {{ packet.model }}
+    {% if packet.generated_at %} on {{ packet.generated_at[:10] }}{% endif %}.
+    Saved to <code>{{ packet.file_path }}</code>.
+    <form method="post" action="{{ url_for('prep_route',
+                                           posting_id=posting.id) }}"
+          class="inline-form">
+      <button type="submit" class="btn-link">Regenerate</button>
+    </form>
+  </p>
+
+</main>
+
+<script>
+// Copy buttons. navigator.clipboard is async and can reject (denied
+// permission, insecure context), so the failure path has to be handled or the
+// button silently lies about having worked.
+document.querySelectorAll('.btn-copy').forEach(function (button) {
+  button.addEventListener('click', async function () {
+    const target = document.getElementById(button.dataset.copy);
+    if (!target) return;
+    const text = target.innerText.trim();
+    const original = button.textContent;
+    try {
+      await navigator.clipboard.writeText(text);
+      button.textContent = 'Copied';
+    } catch (err) {
+      button.textContent = 'Press Cmd+C';
+      // Select the text so the manual fallback actually works.
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    setTimeout(function () { button.textContent = original; }, 2000);
+  });
+});
+</script>
+
+</body>
+</html>

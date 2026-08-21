@@ -8,6 +8,23 @@
 # Everything else — the code that defines the project — gets committed.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# PERSONAL — never commit. This repo is public.
+# ---------------------------------------------------------------------------
+
+# Your résumé, in the form the letter generator reads. Contains your name,
+# contact details, and work history. profile_example.md is the committed
+# template; profile.md is yours and stays local.
+profile.md
+
+# Generated cover letter drafts. They quote your résumé and are written in
+# your name — keep them off the internet.
+letters/
+
+# Anything holding an API key.
+.env
+.env.*
+
 # Your database. Contains your applied marks, and is otherwise rebuildable
 # with `python3 refresh.py`. Back it up separately if you've been tracking
 # applications for a while:  cp internships.db internships.db.backup

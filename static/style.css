@@ -257,6 +257,103 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
 }
 .btn-apply:hover { filter: brightness(1.08); }
 
+/* ------------------------------------------- draft button + packet page */
+
+.btn-draft {
+  display: inline-block;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 6px 12px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.btn-draft:hover { color: var(--text); border-color: var(--muted); }
+.btn-draft.has-draft { color: var(--good); border-color: var(--good); }
+
+.packet { max-width: 760px; }
+
+.fit-summary {
+  font-size: 16px;
+  line-height: 1.5;
+  margin: 0 0 14px;
+  padding-left: 14px;
+  border-left: 3px solid var(--accent);
+  color: var(--text);
+}
+
+.warn-banner {
+  background: #fef3c7;
+  color: #78350f;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.card-head h2 { margin: 0; font-size: 15px; }
+
+.btn-copy {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-copy:hover { color: var(--text); }
+
+/* pre-wrap keeps the model's paragraph breaks without converting them. */
+.letter { white-space: pre-wrap; font-size: 14.5px; line-height: 1.6; }
+
+.packet ul { margin: 0; padding-left: 18px; font-size: 14px; line-height: 1.55; }
+.packet .gaps { list-style: none; padding-left: 0; }
+.packet .gaps li { margin-bottom: 10px; }
+
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+
+.inline-form { display: inline; }
+
+.btn-link {
+  background: none;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12.5px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.error-message {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+  color: var(--text);
+}
+
 /* ------------------------------------------------------------ dark mode */
 /* Only the variables change — every rule above is reused as-is. */
 
@@ -275,6 +372,7 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
     --new: #f87171;
   }
   .tag-warn { background: #422006; color: #fbbf24; }
+  .warn-banner { background: #422006; color: #fbbf24; }
 }
 
 /* ----------------------------------------------------------- small screens */

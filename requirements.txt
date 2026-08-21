@@ -1,3 +1,4 @@
-# Only two real dependencies — everything else is Python's standard library.
-requests==2.32.3   # fetching the README over HTTP
-Flask==3.1.0       # the local dashboard
+# Three dependencies — everything else is Python's standard library.
+requests==2.32.3    # fetching the README over HTTP
+Flask==3.1.0        # the local dashboard
+anthropic==1.0.0    # cover letter drafting via the Claude API

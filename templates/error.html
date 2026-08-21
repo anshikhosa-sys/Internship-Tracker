@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Something needs fixing</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <h1>Something needs fixing</h1>
+    <a class="btn-secondary" href="{{ url_for('index') }}">Back to list</a>
+  </div>
+</header>
+
+<main>
+  <!-- The message comes from a LetterError, which is written to be read by a
+       person and usually contains the exact command to run. Rendered in a
+       <pre> so those commands keep their formatting. -->
+  <div class="card">
+    <pre class="error-message">{{ message }}</pre>
+  </div>
+</main>
+
+</body>
+</html>
