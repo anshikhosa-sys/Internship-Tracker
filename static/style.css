@@ -345,6 +345,22 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
   text-decoration: underline;
 }
 
+.paste-prompt {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 10px 0 0;
+  max-height: 320px;   /* long prompt shouldn't swallow the page */
+  overflow-y: auto;
+  color: var(--muted);
+}
+
 .error-message {
   white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

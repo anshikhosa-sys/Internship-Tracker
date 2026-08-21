@@ -69,6 +69,33 @@ morning schedule on a laptop that's closed overnight.
 To change the time, edit `RUN_HOUR` / `RUN_MINUTE` at the top of
 `scripts/schedule.sh` and re-run `install`. Output goes to `logs/refresh.log`.
 
+## Cover letters
+
+Every posting has a **Cover letter** button. It offers two routes:
+
+**Free** — a ready-made prompt containing the posting and your profile. Copy
+it into claude.ai, ChatGPT, or anything else you already use, and paste the
+result back. Costs nothing, needs no API key.
+
+**One click** — generate the draft in the dashboard via the Claude API. Saved
+to the database and to `letters/` as markdown. Costs about 7¢ per letter and
+needs `ANTHROPIC_API_KEY` set.
+
+Both use the identical prompt, so the quality is the same. The difference is a
+copy-paste round trip versus a few cents. Per-model costs are tabulated in
+`config.py` above `LETTER_MODEL`.
+
+Either way it drafts; it never submits. Application portals prohibit automated
+submission, and an application can't be unsent — so the irreversible step stays
+yours.
+
+Letters are written from `profile.md` (gitignored — copy `profile_example.md`
+to start). The model is instructed to use only what that file states, and to
+list anything a posting wants that your profile lacks under "gaps" rather than
+smoothing it over. **The "Notes for the letter writer" section at the bottom of
+`profile.md` is the highest-leverage thing to keep adding to** — it's where
+context lives that a one-page résumé can't hold.
+
 ### Notifications
 
 When a scheduled run finds new postings scoring at or above

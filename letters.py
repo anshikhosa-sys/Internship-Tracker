@@ -216,6 +216,38 @@ invent specific requirements the posting never stated.
 Draft the application packet."""
 
 
+def build_paste_prompt(posting: dict, profile: str = None) -> str:
+    """
+    Assemble the same prompt as generate(), as one block to paste into any
+    chat interface — claude.ai, ChatGPT, whatever you already pay nothing for.
+
+    WHY THIS EXISTS
+    ---------------
+    generate() costs a few cents per letter and needs a funded API account.
+    This costs nothing and needs no key. The tradeoff is a copy-paste round
+    trip instead of one click.
+
+    For a student applying to a few dozen roles, the free path is usually the
+    right default — the automation you actually needed was the ranking and the
+    notification, both of which are free. Letter drafting is a convenience,
+    and it's worth being honest that it's optional rather than quietly
+    metering something you could do yourself.
+
+    The system prompt is folded into the message because chat interfaces have
+    no separate system field. Nothing else changes, so the output is the same
+    quality — you just paste rather than click.
+    """
+    profile = profile or load_profile()
+    return (
+        f"{SYSTEM_PROMPT}\n\n"
+        f"Return your answer as readable sections — cover letter, talking "
+        f"points, gaps, and a one-line fit summary. (The JSON schema the "
+        f"automated version uses isn't needed here.)\n\n"
+        f"{'=' * 70}\n\n"
+        f"{_build_prompt(posting, profile)}"
+    )
+
+
 def generate(posting: dict, profile: str = None) -> dict:
     """
     Generate a packet for one posting. Returns the parsed dict.

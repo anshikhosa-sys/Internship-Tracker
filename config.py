@@ -392,18 +392,37 @@ PROFILE_PATH = "profile.md"
 # Where generated drafts are written. Also gitignored — they're in your name.
 LETTERS_DIR = "letters"
 
-# Which model drafts the letters.
+# Which model drafts the letters, and how hard it thinks.
 #
-# Cost, measured: roughly 2,000 input + 1,200 output tokens per letter, which
-# at Opus 5 rates works out to about 4 cents each. Prepping five roles a week
-# is well under a dollar. Switch to "claude-sonnet-5" to cut that by about
-# half if you're generating a lot.
+# YOU DON'T HAVE TO PAY FOR THIS AT ALL. The dashboard's letter page always
+# offers a "copy this prompt" option that costs nothing — you paste it into
+# claude.ai, ChatGPT, or whatever you already use free, and paste the result
+# back. The settings below only affect the one-click "generate here" button.
+#
+# MEASURED COST per letter (~1,700 input tokens, ~2,300 output including
+# thinking tokens, which bill as output — easy to forget):
+#
+#     claude-opus-5     effort=high     $0.066     $3.31 per 50 letters
+#     claude-opus-5     effort=low      $0.039     $1.93 per 50
+#     claude-sonnet-5   effort=high     $0.026     $1.32 per 50
+#     claude-haiku-4-5  effort=high     $0.013     $0.66 per 50
+#     copy-paste prompt               free        free
+#
+# The per-letter cost is small either way; the real threshold is that the
+# Anthropic console has a minimum credit purchase. If you'd rather not fund an
+# account at all, use the copy-paste option and leave these alone.
 LETTER_MODEL = "claude-opus-5"
 
-# Reasoning effort. Picking WHICH of your experiences match a given posting —
-# and being honest about what doesn't — is a judgment call, so this is worth
-# more than the minimum. Drop to "medium" if you want faster, cheaper drafts.
+# Reasoning effort: "low" | "medium" | "high" | "xhigh" | "max".
+#
+# Picking WHICH of your experiences match a posting — and being honest about
+# what doesn't — is a judgment call, so this is set above the minimum. Dropping
+# to "low" roughly halves the cost by cutting thinking tokens.
 LETTER_EFFORT = "high"
+
+# Shown on the letter page so the price is visible at the moment you choose,
+# rather than buried in this file. Update it if you change the model above.
+LETTER_COST_ESTIMATE = "about 7¢"
 
 # Generous enough that a letter is never truncated mid-sentence.
 LETTER_MAX_TOKENS = 8000

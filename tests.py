@@ -462,6 +462,21 @@ def test_letters():
     check("don't invent specific requirements" in flat,
           "the prompt says not to invent requirements it wasn't given")
 
+    # -- the free copy-paste path ----------------------------------------
+    # This path needs no API key and no credit, so it has to be complete on
+    # its own: everything the assistant needs must be inside the one block
+    # you paste, since a chat window has no access to profile.md.
+    paste = letters.build_paste_prompt(posting, "MY-UNIQUE-PROFILE-MARKER")
+    flat_paste = " ".join(paste.split())
+    check("MY-UNIQUE-PROFILE-MARKER" in paste,
+          "the paste prompt carries the profile")
+    check("Acme" in paste, "the paste prompt carries the posting")
+    check("only what appears in the candidate profile" in flat_paste,
+          "the paste prompt keeps the same honesty constraint")
+    check("json schema" not in flat_paste.lower()
+          or "isn't needed here" in flat_paste,
+          "the paste prompt doesn't demand JSON from a chat window")
+
     # -- writing the draft to disk ---------------------------------------
     original_dir = config.LETTERS_DIR
     try:

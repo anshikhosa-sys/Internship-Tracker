@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{{ posting.company }} — draft</title>
+  <title>{{ posting.company }} — cover letter</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -27,15 +27,18 @@
 
 <main class="packet">
 
-  <!-- The honest one-liner first: it tells you whether to spend time here
-       at all, which is the most useful thing on the page. -->
+{# ===================================================================== #}
+{# STATE 1 — a draft exists. Show it.                                    #}
+{# ===================================================================== #}
+{% if packet %}
+
   {% if packet.fit_summary %}
     <p class="fit-summary">{{ packet.fit_summary }}</p>
   {% endif %}
 
   <div class="warn-banner">
-    This is a draft written from your <code>profile.md</code>. Read it before
-    you send it — it goes out in your name.
+    A draft written from your <code>profile.md</code>. Read it before you send
+    it — it goes out in your name.
   </div>
 
   <section class="card">
@@ -43,8 +46,6 @@
       <h2>Cover letter</h2>
       <button class="btn-copy" data-copy="cover">Copy</button>
     </div>
-    <!-- white-space: pre-wrap in the CSS preserves the paragraph breaks
-         without needing to convert them to <p> tags. -->
     <div class="letter" id="cover">{{ packet.cover_letter }}</div>
   </section>
 
@@ -63,9 +64,7 @@
   </section>
 
   <section class="card">
-    <div class="card-head">
-      <h2>Gaps to be ready for</h2>
-    </div>
+    <div class="card-head"><h2>Gaps to be ready for</h2></div>
     <p class="muted small">
       What this role asks for that your profile doesn't show. Worth reading
       before an interview, not something to hide.
@@ -86,12 +85,54 @@
     Drafted by {{ packet.model }}
     {% if packet.generated_at %} on {{ packet.generated_at[:10] }}{% endif %}.
     Saved to <code>{{ packet.file_path }}</code>.
-    <form method="post" action="{{ url_for('prep_route',
-                                           posting_id=posting.id) }}"
-          class="inline-form">
-      <button type="submit" class="btn-link">Regenerate</button>
-    </form>
   </p>
+
+{# ===================================================================== #}
+{# STATE 2 — no draft yet. Offer both routes, with the free one first.   #}
+{# ===================================================================== #}
+{% else %}
+
+  {% if profile_error %}
+    <div class="card"><pre class="error-message">{{ profile_error }}</pre></div>
+  {% else %}
+
+    <!-- The free option leads, because for most people it's the right one:
+         the ranking and notifications are what needed automating, and those
+         cost nothing. Letter drafting is a convenience worth paying for only
+         if the copy-paste round trip actually annoys you. -->
+    <section class="card">
+      <div class="card-head">
+        <h2>Option 1 — free</h2>
+        <button class="btn-copy" data-copy="paste-prompt">Copy prompt</button>
+      </div>
+      <p class="muted small">
+        Copy this and paste it into
+        <a href="https://claude.ai" target="_blank" rel="noopener">claude.ai</a>,
+        ChatGPT, or any assistant you already use. Everything it needs — the
+        posting and your profile — is included. Costs nothing.
+      </p>
+      <pre class="paste-prompt" id="paste-prompt">{{ paste_prompt }}</pre>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2>Option 2 — generate it here</h2>
+      </div>
+      <p class="muted small">
+        One click, no copy-paste, and the draft is saved to this dashboard and
+        to <code>letters/</code>. Costs {{ cost_estimate }} per letter and
+        needs an Anthropic API key. Identical prompt to Option 1.
+      </p>
+      <form method="post"
+            action="{{ url_for('prep_route', posting_id=posting.id) }}">
+        <button type="submit" class="btn-refresh">
+          Generate draft ({{ cost_estimate }})
+        </button>
+      </form>
+    </section>
+
+  {% endif %}
+{% endif %}
 
 </main>
 

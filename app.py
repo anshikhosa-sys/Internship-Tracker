@@ -214,7 +214,17 @@ def prep_route(posting_id):
 
 @app.route("/packet/<path:posting_id>")
 def packet_route(posting_id):
-    """Show a generated draft."""
+    """
+    The cover letter page for one posting.
+
+    Two states:
+      - a draft already exists  -> show it
+      - no draft yet            -> offer both ways to get one:
+          the free copy-paste prompt, or generating it here via the API
+
+    Putting both on the same page is deliberate. The cost tradeoff belongs at
+    the moment you're deciding, not buried in a config file.
+    """
     conn = storage.connect()
     packet = storage.get_packet(conn, posting_id)
     posting = next(
@@ -223,11 +233,28 @@ def packet_route(posting_id):
     )
     conn.close()
 
-    if packet is None or posting is None:
+    if posting is None:
         return render_template("error.html",
-                               message="No draft for that posting yet."), 404
+                               message="No such posting."), 404
 
-    return render_template("packet.html", packet=packet, posting=posting)
+    # Building the paste prompt needs profile.md but no API key. If the
+    # profile is missing we still render the page — with the error where the
+    # prompt would go, rather than failing the whole request.
+    paste_prompt, profile_error = None, None
+    if packet is None:
+        try:
+            paste_prompt = letters.build_paste_prompt(posting)
+        except letters.LetterError as exc:
+            profile_error = str(exc)
+
+    return render_template(
+        "packet.html",
+        packet=packet,
+        posting=posting,
+        paste_prompt=paste_prompt,
+        profile_error=profile_error,
+        cost_estimate=config.LETTER_COST_ESTIMATE,
+    )
 
 
 @app.route("/refresh", methods=["POST"])

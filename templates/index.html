@@ -162,20 +162,12 @@
             <a class="btn-apply" href="{{ posting.apply_url }}"
                target="_blank" rel="noopener noreferrer">Apply</a>
 
-            <!-- Drafting takes 15-30s, so this is a form POST rather than a
-                 background fetch: the browser's own loading state is a more
-                 honest signal than a button that looks idle while working. -->
-            {% if posting.has_packet %}
-              <a class="btn-draft has-draft"
-                 href="{{ url_for('packet_route', posting_id=posting.id) }}">
-                View draft
-              </a>
-            {% else %}
-              <form method="post"
-                    action="{{ url_for('prep_route', posting_id=posting.id) }}">
-                <button type="submit" class="btn-draft">Draft letter</button>
-              </form>
-            {% endif %}
+            <!-- One button either way. The letter page decides what to
+                 show: an existing draft, or the two ways to make one. -->
+            <a class="btn-draft {% if posting.has_packet %}has-draft{% endif %}"
+               href="{{ url_for('packet_route', posting_id=posting.id) }}">
+              {% if posting.has_packet %}View letter{% else %}Cover letter{% endif %}
+            </a>
 
             <label class="checkbox applied-toggle">
               <input type="checkbox"
