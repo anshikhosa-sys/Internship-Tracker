@@ -69,7 +69,7 @@ INGEST_CATEGORIES = [
 
 
 # =============================================================================
-# 2. ROLE TIERS — the heaviest weight, in your priority order
+# 2. ROLE TIERS — the heaviest weight in the model
 # =============================================================================
 #
 # Each tier is checked against the ROLE TITLE. A posting can match several
@@ -82,28 +82,32 @@ INGEST_CATEGORIES = [
 # priority, change the number.
 #
 # The gaps between tiers are what actually produce the ranking, so keep them
-# wide enough that a tier-1 role with no bonuses still beats a tier-4 role
-# stacked with bonuses.
+# wide enough that a top-tier role with no bonuses still beats a bottom-tier
+# role stacked with bonuses.
+#
+# The tiers below are a starting configuration, not a fixed part of the tool.
+# Rewrite the names, keywords, and values to match whatever roles you're
+# searching for — the scoring logic reads them generically.
 
 ROLE_TIERS = [
     {
-        "name": "Forward-Deployed / Solutions",   # your #1 priority
-        # WHY 150 AND NOT 100 (this is the one number with real thought in it):
+        "name": "Forward-Deployed / Solutions",
+        # WHY 150 AND NOT 100 — the one value here with real reasoning behind
+        # it, and a useful lesson in how weighted models go wrong:
         #
-        # Forward-deployed and solutions roles are listed in the *Software
-        # Engineering* section, which earns only the +10 category bonus, while
-        # Product Management roles earn +30. At 100 points, a bare "Forward
-        # Deployed Engineer Intern" scored 110, but a bonus-laden PM role could
-        # reach 155 — so priority #2 outranked priority #1, which is not what
-        # you asked for. (Tested against live data: the Palantir FDE
-        # internship was ranking 30th.)
+        # Roles in this tier are listed under Software Engineering, which
+        # earns only the +10 category bonus, while the tier below it earns
+        # +30. At 100 points, a bare top-tier match scored 110, but a
+        # bonus-laden second-tier match could reach 155 — so the lower tier
+        # systematically outranked the higher one. The tier gap said one
+        # thing; the bonuses quietly overrode it.
         #
         # 150 guarantees the ordering instead of hoping for it: the WORST a
-        # tier-1 role can score (150 + 10) still beats the BEST a tier-2 role
-        # can score (85 + 30 + 40 = 155).
+        # top-tier role can score (150 + 10) still beats the BEST the tier
+        # below can score (85 + 30 + 40 = 155).
         #
-        # To soften this — if you'd rather a heavily-matched PM role sometimes
-        # beat a generic solutions role — lower this toward 100.
+        # Lower this toward 100 if you'd rather a heavily-matched second-tier
+        # role sometimes place above a bare top-tier one.
         "points": 150,
         "keywords": [
             "forward deployed",
@@ -121,7 +125,7 @@ ROLE_TIERS = [
         ],
     },
     {
-        "name": "Technical PM / APM",             # your #2 priority
+        "name": "Technical PM / APM",
         "points": 85,
         "keywords": [
             "product manager",
@@ -134,7 +138,7 @@ ROLE_TIERS = [
         ],
     },
     {
-        "name": "Technical Consulting / Strategy",  # your #4 priority
+        "name": "Technical Consulting / Strategy",
         "points": 60,
         "keywords": [
             "technical consultant",
@@ -149,14 +153,14 @@ ROLE_TIERS = [
         ],
     },
     {
-        "name": "Software Engineering",           # your #3 priority
+        "name": "Software Engineering",
         "points": 40,
-        # Deliberately the LOWEST tier despite being priority #3, because the
-        # focus bonuses below are what lift the good SWE roles (systems, infra,
-        # data, AI) above the generic ones. A plain "Software Engineer Intern"
-        # scores 40; an "Infrastructure Engineer Intern" scores 40 + bonuses.
-        # That's the intended behavior — it's how you avoid a wall of generic
-        # SWE listings at the top.
+        # Deliberately the lowest tier, because the focus bonuses below are
+        # what lift the specialized SWE roles (systems, infra, data, AI) above
+        # the generic ones. A plain "Software Engineer Intern" scores 40; an
+        # "Infrastructure Engineer Intern" scores 40 + bonuses. That's the
+        # intended behavior — it's what prevents a wall of interchangeable SWE
+        # listings from filling the top of the list.
         "keywords": [
             "software engineer",
             "software engineering",
@@ -180,12 +184,12 @@ ROLE_TIERS = [
 # 3. CATEGORY BONUS — which section of the repo it came from
 # =============================================================================
 #
-# Being listed under Product Management is itself evidence of fit, independent
-# of what the title says. Matched as a case-insensitive substring against the
+# The section a posting is filed under is itself a signal, independent of what
+# the title says. Matched as a case-insensitive substring against the
 # section heading.
 
 CATEGORY_BONUS = {
-    "Product Management": 30,       # your #2 priority — small pool, boost it
+    "Product Management": 30,       # small pool, weighted up to surface it
     "Data Science, AI & Machine Learning": 15,
     "Software Engineering": 10,
 }

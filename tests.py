@@ -129,12 +129,12 @@ def test_scoring():
     check(score_of("Training Program Intern") < score_of("AI Engineer Intern"),
           "'Training' does not collect the AI bonus")
 
-    # Priority order must actually hold.
+    # Tier ordering must hold even against bonuses.
     fde = score_of("Forward Deployed Engineer Intern")
     pm = score_of("AI Data Platform Product Manager Intern",
                   "Product Management")
     check(fde > pm,
-          f"a bare priority-1 role ({fde}) outranks a loaded PM role ({pm})")
+          f"a bare top-tier role ({fde}) outranks a loaded lower tier ({pm})")
 
     generic = score_of("Software Engineer Intern")
     focused = score_of("Software Engineer Intern, Distributed Systems")

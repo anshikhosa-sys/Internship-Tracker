@@ -75,7 +75,7 @@ def refresh(verbose: bool = True) -> dict:
 
     # -- 2. SCORE -----------------------------------------------------------
     # Scores are always recomputed from scratch, so editing config.py and
-    # re-running is all it takes to change your rankings.
+    # re-running is all it takes to change the rankings.
     if verbose:
         print("\nScoring...")
     scored = scorer.score_all(all_postings)

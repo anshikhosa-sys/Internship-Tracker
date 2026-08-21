@@ -2,8 +2,8 @@
 Scoring — turns a Posting into a fit score using the weights in config.py.
 
 This file contains NO numbers and NO keywords. That's deliberate: every value
-it uses is imported from config.py, so tuning your rankings never means editing
-logic. If you find yourself wanting to change a number here, it belongs in
+it uses is imported from config.py, so tuning the rankings never means editing
+any logic. If you find yourself wanting to change a number here, it belongs in
 config.py instead.
 
 TWO SUBTLE DECISIONS WORTH UNDERSTANDING

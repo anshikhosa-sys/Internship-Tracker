@@ -44,7 +44,7 @@ numbers or keywords exist anywhere else in the codebase.
 | If you want to... | Edit this in `config.py` |
 |---|---|
 | Boost a kind of role | Add keywords to its entry in `ROLE_TIERS`, or raise its `points` |
-| Change priority order | Change the `points` values (higher = higher priority) |
+| Change which roles rank highest | Change the `points` values in `ROLE_TIERS` |
 | Care more about a topic | Raise its number in `FOCUS_BONUSES` |
 | Push irrelevant roles down | Add keywords to `OUT_OF_SCOPE_KEYWORDS` |
 | Include Quant / Hardware roles | Add them to `INGEST_CATEGORIES` |
