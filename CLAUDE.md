@@ -1,104 +1,135 @@
 # Internship Finder — Project Spec
 
-This file is the source of truth for what this project does.
-(Claude Code reads it automatically when working in this repo.)
+Source of truth for what this project does. (Claude Code reads this
+automatically when working in this repo.)
 
 ## Goal
 
-A local tool that fetches internship postings and ranks them by fit against a
-configurable profile, so the best-matched roles sort to the top instead of
-appearing in arbitrary order.
+A local tool that fetches internship postings and ranks them by how worth
+applying to they are **today**, so the top of the list is a set of actions
+rather than a wish list.
 
 ## Data source
 
-The [SimplifyJobs/Summer2027-Internships](https://github.com/SimplifyJobs/Summer2027-Internships)
-GitHub repo — README-based, updated daily, organized by category (Software
-Engineering, Product Management, Data Science/AI, Quantitative Finance,
-Hardware Engineering).
-
-Summer 2027 is the active cycle. Summer 2026 is archived.
+[SimplifyJobs/Summer2027-Internships](https://github.com/SimplifyJobs/Summer2027-Internships)
+— README-based, updated daily, organized by category. Summer 2027 is the
+active cycle; Summer 2026 is archived.
 
 ## Scoring model
 
-Postings are scored by a weighted, tiered keyword model. Every keyword and
-weight lives in `config.py`; no scoring values appear anywhere else in the
-codebase, so tuning never requires editing logic.
+Three factors, each 0 to 1, **multiplied**:
 
-A posting's score is the sum of:
+```
+score = preference × candidacy × freshness × 100
+```
 
-1. **Role tier** — the heaviest component. Tiers are keyword sets with point
-   values; a posting matching several tiers takes only the highest-valued one,
-   so a padded title can't collect points from multiple tiers at once.
-2. **Category bonus** — which section of the source it was listed under.
-3. **Focus bonuses** — topic keywords, which stack but are capped by
-   `MAX_FOCUS_BONUS` so a keyword-stuffed title can't overturn the tiers.
-4. **Out-of-scope adjustments** — negative values for fields the search isn't
-   covering, so they sort to the bottom rather than being hidden.
+| Factor | Question | Source |
+|---|---|---|
+| preference | Do you want it? | role family + topic keywords |
+| candidacy | Would they take you? | what the résumé proves; blockers |
+| freshness | Is it still open? | age of the posting |
 
-Every posting retains a breakdown of which rules fired and for how many points,
-surfaced in the dashboard so a score is never an unexplained number.
+Every keyword and weight lives in `config.py`; `scorer.py` contains no numbers.
+
+### Why multiplied and not added
+
+The first version **added** a large constant for wanting a role (+150 for
+"forward deployed"). Preference then swamped everything, and the top of the
+list filled with month-old postings at companies that take a handful of
+interns — accurate to the wish list, useless as actions.
+
+Multiplying encodes the real requirement: an application is worth making only
+if **all three** hold. A near-zero in any factor sinks the result, which
+addition cannot express.
+
+### Calibration notes
+
+- Scores are compressed by multiplying three fractions. A **50 is near the
+  top of what exists**, not a mediocre result. Bands were set against the
+  measured distribution, not picked as round numbers.
+- **Candidacy is weakly informative from a title alone.** Most titles carry no
+  skill keywords, so roughly two-thirds of postings sit at the baseline. It
+  works at the extremes — blockers sink, stack matches lift. The fix is
+  pasting the real job description on the prep page, not a cleverer constant.
+- **Freshness is steep, with a hard 7-day cutoff** (`MAX_AGE_DAYS`). Nothing
+  is deleted: an override in the dashboard restores every hidden posting. This
+  matters because both forward-deployed roles currently listed are ~29 days
+  old, so any tight window hides that whole category. Per-cutoff costs are
+  tabulated in `config.py`.
 
 ## Core features
 
-- Fetch and parse listings into: company, role title, category, location, link,
-  date posted.
-- Score and rank postings, highest fit first.
+- Parse listings into company, role, category, location, link, date posted.
+- Score and rank, best first.
 - Internship-level filtering.
-- Flag postings that are new since the user last viewed the dashboard.
-- Refresh automatically once a day via a macOS LaunchAgent, with a notification
-  when strong matches appear.
-- A local Flask dashboard showing ranked postings with fit score, company,
-  role, location, and apply link, plus an applied-to tracker.
+- Flag postings new **since the user last opened the dashboard** — not since
+  the last refresh, which would silently stop flagging things after a day away.
+- Local Flask dashboard with score breakdown, apply link, and applied tracking.
+- Refresh automatically once a day (macOS LaunchAgent, 08:00), with a
+  notification when good new matches appear.
+- Free copy-paste prompts for cover letters and work-experience fields,
+  adapted per role family, accepting a pasted job description.
 
 ## Tech choices
 
-- Python for fetching/parsing/scoring; `requests` for HTTP.
-- SQLite for local storage (no database server).
-- Flask for the local dashboard.
+- Python; `requests` for HTTP.
+- SQLite for local storage — no database server.
+- Flask for the dashboard.
+- **No paid APIs.** Nothing in this repo can spend money; a test asserts it.
 - Heavily commented, with design decisions documented inline.
 
 ## Constraints
 
-- Runs locally, no hosting. Single user, no login.
-- Automation is opt-in and self-contained: installing or removing the daily
-  refresh touches only the user's own LaunchAgents folder, needs no admin
-  rights, and never modifies the database.
-- Reliable core first; structured so more sources can be added later
-  (e.g. `SimplifyJobs/New-Grad-Positions`).
+- Runs locally, no hosting. Single user, no login — binds to `127.0.0.1`.
+- Automation is opt-in and self-contained: `scripts/schedule.sh` only touches
+  the user's own LaunchAgents folder, needs no admin rights, and never
+  modifies the database.
+- Structured so more sources can be added: one file in `sources/`, one line in
+  `refresh.py`.
 
 ---
 
 ## Decisions made during the build
 
-- **Location does not affect the fit score.** Ranking is on role fit alone.
-  Location is parsed and displayed but carries no weight.
-- **Quantitative Finance and Hardware Engineering are filtered out at parse
-  time.** Only Software Engineering, Product Management, and Data Science/AI
-  are ingested. One-line change — see `INGEST_CATEGORIES` in `config.py`.
-- **"New" is measured against the last dashboard visit, not the last refresh.**
-  Once refreshes became automatic, "since the last run" would have meant "in
-  the last 24 hours", so skipping a few days would silently stop flagging
-  anything older than yesterday. Page loads within `VISIT_SESSION_MINUTES`
-  count as one visit so badges don't vanish mid-browse.
-- **Tier values are chosen to guarantee ordering, not just suggest it.** The
-  top tier is weighted so its worst-case score still exceeds the best case of
-  the tier below, since category and focus bonuses would otherwise let a lower
-  tier overtake a higher one. See the comment on the first entry in
-  `ROLE_TIERS`.
+- **Location does not affect the score.** Parsed and displayed, but unweighted.
+  Worth revisiting now that same-day applying is the priority.
+- **Quantitative Finance and Hardware Engineering are not ingested.** See
+  `INGEST_CATEGORIES`.
+- **Preference and candidacy are stored; freshness is not.** Freshness changes
+  daily for the same posting, so a stored score would be wrong by morning. It
+  and the final score are recomputed at display time.
+- **The advanced-degree penalty lives in candidacy, not preference.** It's a
+  statement about eligibility, not desire. Applying it in both would
+  double-count.
+- **Cover letters are prompts, never submissions.** Application portals
+  prohibit automated submission and an application cannot be unsent, so the
+  irreversible step stays manual.
+- **Prompts adapt per role family.** An FDE reviewer wants evidence of
+  customer-facing work; a SWE reviewer wants depth on the hardest system. Same
+  résumé, different pitch. See `ROLE_FAMILY_GUIDANCE`.
 
-## Notes about the data source
-
-Learned by inspecting it; worth remembering if the upstream repo changes:
+## Gotchas in the data source
 
 1. **Listings are HTML `<table>` blocks inside the README, not markdown
    tables.** A markdown-pipe regex returns zero rows.
-2. **Continuation rows use `↳` as the company name**, meaning "same company as
-   the row above." The parser carries the last real company forward.
-3. **There is no date-posted column — only a relative "Age"** (`18d`, `1mo`).
-   Date posted is therefore derived and approximate. The new-posting flag uses
-   the tool's own `first_seen` timestamp instead, which is exact.
-4. **Closed roles are already excluded upstream** — they move to a separate
-   `README-Inactive.md`.
-5. **The repo's legend documents 🛂 and 🇺🇸 markers, but no row actually uses
-   them.** Those fields parse to False from this source; they're kept on the
-   `Posting` model for future sources.
+2. **Continuation rows use `↳` as the company name**, meaning "same as above".
+   ~230 of them; parsed literally you get hundreds of postings from a company
+   called `↳`.
+3. **No date-posted column — only a relative "Age"** (`18d`, `1mo`). Dates are
+   derived and approximate. The new-posting flag uses our own `first_seen`
+   instead, which is exact.
+4. **Closed roles are already excluded upstream** (moved to
+   `README-Inactive.md`).
+5. **The legend documents 🛂 and 🇺🇸 markers, but no row uses them.** Those
+   fields parse to False from this source; kept for future sources.
+
+## Filter interaction worth remembering
+
+The steep freshness curve puts every stale posting **below** the low-fit
+threshold. So the dashboard's "show them" link must lift *both* the age cutoff
+and the low-fit filter — lifting only the age filter appears to do nothing.
+
+## Files that never get committed
+
+`profile.md` (the résumé), `letters/`, `internships.db`, `logs/`, `.venv/`.
+The ignore rules were verified before any personal data was written to disk.
