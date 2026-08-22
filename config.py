@@ -584,6 +584,31 @@ DEFAULT_SORT = "candidacy"
 # window the evidence supports.
 DEFAULT_WITHIN_DAYS = 0
 
+# ================================================1=============================
+# APPLICATION PIPELINE
+# =============================================================================
+#
+# The stages an application moves through. Order matters — it's the order
+# shown in the dropdown and used for sorting the tracker.
+#
+# `key` is stored in the database, so renaming one orphans existing records.
+# Change `label` freely; change `key` only if you're prepared to migrate.
+APPLICATION_STAGES = [
+    {"key": "",          "label": "Not applied",     "active": False},
+    {"key": "applied",   "label": "Applied",         "active": True},
+    {"key": "oa",        "label": "Online assessment", "active": True},
+    {"key": "interview", "label": "Interview",       "active": True},
+    {"key": "offer",     "label": "Offer",           "active": False},
+    {"key": "rejected",  "label": "Rejected",        "active": False},
+    {"key": "ghosted",   "label": "No response",     "active": False},
+]
+
+# After this many days with no stage change, an application is "gone quiet".
+# Not a failure — most never respond — but worth seeing, because it tells you
+# whether your pipeline is actually moving or just accumulating.
+STALE_APPLICATION_DAYS = 21
+
+
 # Hide co-ops by default — full-time during a school term, so you'd take a
 # semester off rather than working over the summer.
 DEFAULT_HIDE_COOP = True

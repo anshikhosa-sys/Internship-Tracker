@@ -35,6 +35,9 @@
     <!-- Forms, not links: these change data, and changes belong in a POST.
          Links should never have side effects. -->
     <div class="topbar-actions">
+      <a class="btn-secondary" href="{{ url_for('applications_route') }}">
+        My applications{% if applied_total %} ({{ applied_total }}){% endif %}
+      </a>
       {% if new_count %}
         <form method="post" action="{{ url_for('mark_seen_route') }}">
           <button type="submit" class="btn-secondary">Mark all as seen</button>
@@ -171,7 +174,7 @@
     <ol class="postings">
       {% for posting in postings %}
         <li class="posting fit-{{ posting.fit }}
-                   {% if posting.applied %}is-applied{% endif %}">
+                   {% if posting.status %}is-applied{% endif %}">
 
           <!-- Score badge. The title attribute shows the full breakdown on
                hover, so a score is never an unexplained number. -->
@@ -257,12 +260,17 @@
               Application prep
             </a>
 
-            <label class="checkbox applied-toggle">
-              <input type="checkbox"
-                     data-id="{{ posting.id }}"
-                     {% if posting.applied %}checked{% endif %}>
-              Applied
-            </label>
+            <!-- A stage, not a checkbox. "Applied" is binary and stops
+                 being enough the moment you have more than a handful in
+                 flight and need to know which are actually live. -->
+            <select class="stage-select" data-id="{{ posting.id }}">
+              {% for stage in stages %}
+                <option value="{{ stage.key }}"
+                        {% if posting.status == stage.key %}selected{% endif %}>
+                  {{ stage.label }}
+                </option>
+              {% endfor %}
+            </select>
           </div>
         </li>
       {% endfor %}
@@ -272,31 +280,29 @@
 
 <script>
 // ===========================================================================
-// Ticking "Applied" saves immediately, without reloading the page.
+// Changing a stage saves immediately, without reloading the page.
 //
-// Without this, the checkbox would need to be inside a form you submit, and
-// every tick would reload and throw away your scroll position. Instead we
-// POST to /api/applied in the background and just restyle the row.
+// A reload here would throw away your scroll position mid-way down a list
+// you're working through, which is exactly when you're using this.
 // ===========================================================================
-document.querySelectorAll('.applied-toggle input').forEach(function (box) {
-  box.addEventListener('change', async function () {
-    const row = box.closest('.posting');
-
-    // Show the change straight away so the UI feels instant.
-    row.classList.toggle('is-applied', box.checked);
+document.querySelectorAll('.stage-select').forEach(function (select) {
+  let previous = select.value;
+  select.addEventListener('change', async function () {
+    const row = select.closest('.posting');
+    row.classList.toggle('is-applied', select.value !== '');
 
     try {
-      const response = await fetch('/api/applied', {
+      const res = await fetch('/api/status', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({id: box.dataset.id, applied: box.checked}),
+        body: JSON.stringify({id: select.dataset.id, status: select.value}),
       });
-      if (!response.ok) throw new Error('save failed');
+      if (!res.ok) throw new Error('save failed');
+      previous = select.value;
     } catch (err) {
-      // If the save failed, put the checkbox back rather than leaving the
-      // page showing something the database doesn't agree with.
-      box.checked = !box.checked;
-      row.classList.toggle('is-applied', box.checked);
+      // Put it back rather than showing state the database disagrees with.
+      select.value = previous;
+      row.classList.toggle('is-applied', previous !== '');
       alert('Could not save that — is the server still running?');
     }
   });

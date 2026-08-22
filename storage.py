@@ -89,7 +89,12 @@ CREATE TABLE IF NOT EXISTS applications (
     -- and re-attached instead of silently orphaned. This is the only data
     -- in the database that cannot be regenerated, so it gets a backup key.
     company     TEXT DEFAULT '',
-    role        TEXT DEFAULT ''
+    role        TEXT DEFAULT '',
+    -- Where this application has got to. Empty means not applied.
+    -- `applied_at` is set once, when it first becomes an application, so
+    -- "how long have I been waiting" stays answerable after a stage change.
+    status      TEXT DEFAULT '',
+    applied_at  TEXT DEFAULT ''
 );
 
 -- One row per refresh, so we know what "since last time" means.
@@ -191,6 +196,8 @@ _MIGRATIONS = {
         "updated_at": "TEXT",
         "company": "TEXT DEFAULT ''",
         "role": "TEXT DEFAULT ''",
+        "status": "TEXT DEFAULT ''",
+        "applied_at": "TEXT DEFAULT ''",
     },
 }
 
@@ -207,6 +214,33 @@ def _migrate(conn) -> None:
                 conn.execute(
                     f"ALTER TABLE {table} ADD COLUMN {name} {column_type}"
                 )
+    conn.commit()
+    _backfill(conn)
+
+
+def _backfill(conn) -> None:
+    """
+    Fill in values that a new column can't get from a DEFAULT alone.
+
+    Adding a column is only half a migration. When `applied` (a boolean) was
+    replaced by `status` (a stage), every existing mark got status='' — and
+    since the pipeline view lists rows WHERE status != '', those applications
+    would have silently disappeared from it. The data was still in the
+    database, which makes it worse rather than better: it looks like loss
+    with no error to investigate.
+    """
+    conn.execute(
+        "UPDATE applications SET status = 'applied' "
+        "WHERE applied = 1 AND (status IS NULL OR status = '')"
+    )
+    # An application with a stage but no timestamp predates applied_at.
+    # Use the last update as the best available approximation rather than
+    # leaving "days waiting" blank forever.
+    conn.execute(
+        "UPDATE applications SET applied_at = updated_at "
+        "WHERE status != '' AND (applied_at IS NULL OR applied_at = '') "
+        "AND updated_at IS NOT NULL"
+    )
     conn.commit()
 
 
@@ -378,8 +412,10 @@ def load_postings(conn, include_inactive: bool = False) -> list:
     rows = conn.execute(
         f"""
         SELECT p.*,
-               COALESCE(a.applied, 0) AS applied,
-               COALESCE(a.notes, '')  AS notes
+               COALESCE(a.applied, 0)    AS applied,
+               COALESCE(a.notes, '')     AS notes,
+               COALESCE(a.status, '')    AS status,
+               COALESCE(a.applied_at, '') AS applied_at
         FROM postings p
         LEFT JOIN applications a ON a.posting_id = p.id
         {where}
@@ -564,6 +600,123 @@ def set_applied(conn, posting_id: str, applied: bool) -> None:
         (posting_id, int(applied), now_iso(), company, role),
     )
     conn.commit()
+
+
+def set_status(conn, posting_id: str, status: str) -> None:
+    """
+    Move an application to a pipeline stage.
+
+    `applied` stays in sync as a plain boolean so nothing that already reads
+    it has to change. `applied_at` is stamped ONCE, the first time a posting
+    leaves "not applied" — so it keeps answering "how long have I been
+    waiting" even after the stage moves on.
+    """
+    valid = {stage["key"] for stage in config.APPLICATION_STAGES}
+    if status not in valid:
+        raise ValueError(f"unknown status: {status!r}")
+
+    row = conn.execute(
+        "SELECT company, role FROM postings WHERE id = ?", (posting_id,)
+    ).fetchone()
+    company = row["company"] if row else ""
+    role = row["role"] if row else ""
+
+    existing = conn.execute(
+        "SELECT applied_at FROM applications WHERE posting_id = ?",
+        (posting_id,),
+    ).fetchone()
+    applied_at = (existing["applied_at"] if existing else "") or ""
+    if status and not applied_at:
+        applied_at = now_iso()
+
+    conn.execute(
+        """
+        INSERT INTO applications
+            (posting_id, applied, status, applied_at, updated_at,
+             company, role)
+        VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT(posting_id) DO UPDATE SET
+            applied    = excluded.applied,
+            status     = excluded.status,
+            applied_at = excluded.applied_at,
+            updated_at = excluded.updated_at,
+            company    = excluded.company,
+            role       = excluded.role
+        """,
+        (posting_id, 1 if status else 0, status, applied_at,
+         now_iso(), company, role),
+    )
+    conn.commit()
+
+
+def set_notes(conn, posting_id: str, notes: str) -> None:
+    """Save free-text notes against an application."""
+    conn.execute(
+        """
+        INSERT INTO applications (posting_id, notes, updated_at)
+        VALUES (?,?,?)
+        ON CONFLICT(posting_id) DO UPDATE SET
+            notes      = excluded.notes,
+            updated_at = excluded.updated_at
+        """,
+        (posting_id, notes, now_iso()),
+    )
+    conn.commit()
+
+
+def pipeline(conn) -> list:
+    """
+    Every application, joined to its posting, newest first.
+
+    LEFT JOIN from applications, not postings: an application must survive
+    its posting dropping off the source. You applied — that happened, and
+    losing the record because a company took the listing down would be the
+    exact failure this table exists to prevent.
+    """
+    rows = conn.execute(
+        """
+        SELECT a.posting_id, a.status, a.applied_at, a.updated_at,
+               a.notes, a.company AS saved_company, a.role AS saved_role,
+               p.company, p.role, p.location, p.apply_url, p.salary,
+               p.role_family
+        FROM applications a
+        LEFT JOIN postings p ON p.id = a.posting_id
+        WHERE a.status != ''
+        ORDER BY a.applied_at DESC
+        """
+    ).fetchall()
+
+    out = []
+    for row in rows:
+        item = dict(row)
+        # Fall back to the saved copies when the posting is gone.
+        item["company"] = item["company"] or item["saved_company"]
+        item["role"] = item["role"] or item["saved_role"]
+        item["days_waiting"] = _days_since(item["applied_at"])
+        out.append(item)
+    return out
+
+
+def _days_since(timestamp: str):
+    """Whole days between an ISO timestamp and now, or None."""
+    if not timestamp:
+        return None
+    try:
+        then = datetime.fromisoformat(timestamp)
+    except (TypeError, ValueError):
+        return None
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    return max(0, (datetime.now(timezone.utc) - then).days)
+
+
+def pipeline_counts(conn) -> dict:
+    """How many applications sit at each stage."""
+    rows = conn.execute(
+        "SELECT status, COUNT(*) AS n FROM applications "
+        "WHERE status != '' GROUP BY status"
+    ).fetchall()
+    return {row["status"]: row["n"] for row in rows}
 
 
 def reattach_orphaned_marks(conn) -> int:

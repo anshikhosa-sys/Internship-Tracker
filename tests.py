@@ -589,6 +589,90 @@ def test_defaults():
 
 
 # =============================================================================
+def test_pipeline():
+    """Application stages, notes, and the backfill from the old boolean."""
+    print("\nAPPLICATION PIPELINE")
+
+    db_path = os.path.join(tempfile.mkdtemp(), "pipe.db")
+    conn = storage.connect(db_path)
+
+    posting = make_posting(1, role="Software Engineer Intern")
+    scorer.score_all([posting])
+    storage.save_postings(conn, [posting], "2026-08-01T00:00:00+00:00")
+    storage.record_run(conn, "2026-08-01T00:00:00+00:00", 1, 0)
+
+    storage.set_status(conn, posting.id, "applied")
+    check(storage.pipeline_counts(conn) == {"applied": 1},
+          "setting a stage puts the application in the pipeline")
+
+    rows = storage.pipeline(conn)
+    check(len(rows) == 1, "the pipeline lists it")
+    check(rows[0]["days_waiting"] == 0, "days waiting starts at zero")
+
+    first_applied_at = conn.execute(
+        "SELECT applied_at FROM applications WHERE posting_id = ?",
+        (posting.id,),
+    ).fetchone()["applied_at"]
+
+    # Moving stage must NOT reset the clock — "how long have I been waiting"
+    # has to survive a stage change or the tracker can't spot stalled ones.
+    storage.set_status(conn, posting.id, "interview")
+    still = conn.execute(
+        "SELECT applied_at FROM applications WHERE posting_id = ?",
+        (posting.id,),
+    ).fetchone()["applied_at"]
+    check(still == first_applied_at,
+          "applied_at is stamped once and survives a stage change")
+    check(storage.pipeline_counts(conn) == {"interview": 1},
+          "the stage moved")
+
+    # Back to not-applied.
+    storage.set_status(conn, posting.id, "")
+    check(storage.pipeline_counts(conn) == {},
+          "clearing the stage removes it from the pipeline")
+    check(storage.applied_count(conn) == 0,
+          "the applied boolean stays in sync with the stage")
+
+    # An unknown stage must be rejected, not silently stored.
+    try:
+        storage.set_status(conn, posting.id, "nonsense")
+        check(False, "an unknown stage is rejected")
+    except ValueError:
+        check(True, "an unknown stage raises rather than storing junk")
+
+    storage.set_notes(conn, posting.id, "Recruiter: Dana. OA due Friday.")
+    saved = storage.load_postings(conn)[0]["notes"]
+    check(saved == "Recruiter: Dana. OA due Friday.", "notes round-trip")
+
+    conn.close()
+
+    print("\nBACKFILL FROM THE OLD BOOLEAN")
+    # An application marked under the old applied=1 scheme, with no stage.
+    # Without a backfill it would vanish from the pipeline view while still
+    # sitting in the database — loss with no error to investigate.
+    import sqlite3
+    old_path = os.path.join(tempfile.mkdtemp(), "legacy.db")
+    old = sqlite3.connect(old_path)
+    old.execute("CREATE TABLE applications (posting_id TEXT PRIMARY KEY, "
+                "applied INTEGER, notes TEXT, updated_at TEXT)")
+    old.execute("INSERT INTO applications VALUES "
+                "('job:abc', 1, '', '2026-08-01T00:00:00+00:00')")
+    old.commit()
+    old.close()
+
+    conn = storage.connect(old_path)
+    counts = storage.pipeline_counts(conn)
+    check(counts.get("applied") == 1,
+          "an old applied=1 mark is backfilled to the 'applied' stage")
+    row = conn.execute(
+        "SELECT applied_at FROM applications WHERE posting_id = 'job:abc'"
+    ).fetchone()
+    check(row["applied_at"] == "2026-08-01T00:00:00+00:00",
+          "applied_at is backfilled from the last update time")
+    conn.close()
+
+
+# =============================================================================
 def test_storage():
     print("\nSTORAGE: the NEW flag across runs")
 
@@ -812,6 +896,7 @@ if __name__ == "__main__":
     test_applied_marks_survive()
     test_migration()
     test_defaults()
+    test_pipeline()
     test_storage()
     test_visit_tracking()
     test_prompts()

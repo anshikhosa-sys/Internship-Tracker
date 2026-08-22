@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My applications</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <h1>My applications</h1>
+      <p class="sub">
+        {% if items %}
+          {{ items|length }} in the pipeline
+          {% for stage in stages if stage.key and counts.get(stage.key) %}
+            · {{ counts[stage.key] }} {{ stage.label|lower }}
+          {% endfor %}
+        {% else %}
+          Nothing tracked yet
+        {% endif %}
+      </p>
+    </div>
+    <div class="topbar-actions">
+      <a class="btn-refresh" href="{{ url_for('index') }}">Find more roles</a>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  {% if stale %}
+    <!-- Not a failure — most applications never get a reply. It's here so
+         the pipeline doesn't quietly look busier than it is. -->
+    <div class="warn-banner">
+      <strong>{{ stale|length }}</strong> application{{ '' if stale|length == 1 else 's' }}
+      {{ 'has' if stale|length == 1 else 'have' }} had no movement in
+      {{ stale_days }}+ days. Most never get a reply — worth marking
+      "No response" so your pipeline reflects what's really live.
+    </div>
+  {% endif %}
+
+  {% if not items %}
+    <p class="empty">
+      Nothing tracked yet. Set a posting's stage on the
+      <a href="{{ url_for('index') }}">main list</a> and it'll appear here.
+    </p>
+  {% else %}
+    <ol class="postings">
+      {% for item in items %}
+        <li class="posting stage-{{ item.status }}">
+          <div class="score">
+            <span class="score-value">{{ item.days_waiting if item.days_waiting is not none else '–' }}</span>
+            <span class="score-label">days</span>
+          </div>
+
+          <div class="details">
+            <div class="role-line">
+              <span class="company">{{ item.company }}</span>
+              {% if item.salary %}
+                <span class="tag tag-pay">{{ item.salary }}</span>
+              {% endif %}
+              {% if item.status in ('applied', 'oa')
+                    and (item.days_waiting or 0) >= stale_days %}
+                <span class="tag tag-warn">quiet</span>
+              {% endif %}
+              {% if not item.apply_url %}
+                <!-- The posting is gone from the source, but the application
+                     still happened, so the record stays. -->
+                <span class="tag" title="This posting is no longer listed">delisted</span>
+              {% endif %}
+            </div>
+
+            <div class="role">{{ item.role }}</div>
+            <div class="meta">
+              {{ item.location or 'Location unknown' }}
+              {% if item.applied_at %} · applied {{ item.applied_at[:10] }}{% endif %}
+              {% if item.role_family %} · {{ item.role_family }}{% endif %}
+            </div>
+
+            <textarea class="notes" data-id="{{ item.posting_id }}" rows="2"
+              placeholder="Notes — recruiter name, OA deadline, who referred you…">{{ item.notes }}</textarea>
+          </div>
+
+          <div class="actions">
+            <select class="stage-select" data-id="{{ item.posting_id }}">
+              {% for stage in stages %}
+                <option value="{{ stage.key }}"
+                        {% if item.status == stage.key %}selected{% endif %}>
+                  {{ stage.label }}
+                </option>
+              {% endfor %}
+            </select>
+            {% if item.apply_url %}
+              <a class="btn-draft" href="{{ item.apply_url }}"
+                 target="_blank" rel="noopener noreferrer">Open</a>
+            {% endif %}
+          </div>
+        </li>
+      {% endfor %}
+    </ol>
+  {% endif %}
+</main>
+
+<script>
+// Stage changes and notes save immediately, without a page reload.
+document.querySelectorAll('.stage-select').forEach(function (select) {
+  select.addEventListener('change', async function () {
+    const previous = select.dataset.previous || '';
+    try {
+      const res = await fetch('/api/status', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: select.dataset.id, status: select.value}),
+      });
+      if (!res.ok) throw new Error('save failed');
+      select.dataset.previous = select.value;
+      // Reload so the ordering and the stale banner stay truthful.
+      window.location.reload();
+    } catch (err) {
+      select.value = previous;
+      alert('Could not save that — is the server still running?');
+    }
+  });
+  select.dataset.previous = select.value;
+});
+
+// Notes save on blur rather than on every keystroke.
+document.querySelectorAll('.notes').forEach(function (box) {
+  let saved = box.value;
+  box.addEventListener('blur', async function () {
+    if (box.value === saved) return;
+    try {
+      const res = await fetch('/api/notes', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({id: box.dataset.id, notes: box.value}),
+      });
+      if (!res.ok) throw new Error('save failed');
+      saved = box.value;
+      box.classList.add('saved');
+      setTimeout(function () { box.classList.remove('saved'); }, 1200);
+    } catch (err) {
+      alert('Could not save those notes.');
+    }
+  });
+});
+</script>
+
+</body>
+</html>

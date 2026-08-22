@@ -21,6 +21,9 @@ THE ROUTES HERE
     POST /mark-seen      clear all NEW badges
     POST /refresh        re-fetch listings, then bounce back to the dashboard
     GET  /prompts/<id>   copy-paste prompts for one posting
+    GET  /applications   the pipeline: everything you've applied to
+    POST /api/status     move an application to a stage
+    POST /api/notes      save notes against an application
 
 WHY THERE'S NO LOGIN
 Single user, local only. The server binds to 127.0.0.1, which means it accepts
@@ -180,6 +183,7 @@ def index():
 
     last_run = storage.last_run_time(conn)
     applied_total = storage.applied_count(conn)
+    stage_counts = storage.pipeline_counts(conn)
 
     conn.close()
 
@@ -231,6 +235,8 @@ def index():
         applied_total=applied_total,
         last_run=last_run,
         sort=sort,
+        stages=config.APPLICATION_STAGES,
+        stage_counts=stage_counts,
         hidden_by_age=hidden_by_age,
         max_age_days=config.MAX_AGE_DAYS,
         showing_stale=request.args.get("stale") == "1",
@@ -239,6 +245,72 @@ def index():
         filters=request.args,
         config=config,
     )
+
+
+@app.route("/applications")
+def applications_route():
+    """
+    Everything you've applied to, and where it stands.
+
+    The dashboard answers "what should I do next". This answers "what's in
+    flight" — which is the question that starts mattering once applications
+    accumulate and you can no longer hold them in your head.
+    """
+    conn = storage.connect()
+    items = storage.pipeline(conn)
+    counts = storage.pipeline_counts(conn)
+    conn.close()
+
+    stale = [
+        item for item in items
+        if item["status"] in ("applied", "oa")
+        and (item["days_waiting"] or 0) >= config.STALE_APPLICATION_DAYS
+    ]
+
+    return render_template(
+        "applications.html",
+        items=items,
+        counts=counts,
+        stages=config.APPLICATION_STAGES,
+        stale=stale,
+        stale_days=config.STALE_APPLICATION_DAYS,
+    )
+
+
+@app.route("/api/status", methods=["POST"])
+def api_status():
+    """Move one application to a pipeline stage."""
+    data = request.get_json(silent=True) or {}
+    posting_id = data.get("id")
+    status = data.get("status", "")
+
+    if not posting_id:
+        return jsonify({"ok": False, "error": "missing id"}), 400
+
+    conn = storage.connect()
+    try:
+        storage.set_status(conn, posting_id, status)
+    except ValueError as exc:
+        conn.close()
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    counts = storage.pipeline_counts(conn)
+    conn.close()
+
+    return jsonify({"ok": True, "status": status, "counts": counts})
+
+
+@app.route("/api/notes", methods=["POST"])
+def api_notes():
+    """Save free-text notes against an application."""
+    data = request.get_json(silent=True) or {}
+    posting_id = data.get("id")
+    if not posting_id:
+        return jsonify({"ok": False, "error": "missing id"}), 400
+
+    conn = storage.connect()
+    storage.set_notes(conn, posting_id, data.get("notes", ""))
+    conn.close()
+    return jsonify({"ok": True})
 
 
 @app.route("/api/applied", methods=["POST"])
