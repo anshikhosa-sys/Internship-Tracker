@@ -116,6 +116,19 @@ def _filtered(postings, new_ids, args):
         # season filters are bypassed.
         in_pipeline = bool(posting.get("status"))
 
+        # THE "JUST APPLY" GATE.
+        #
+        # Anything reaching the list should already be worth an application,
+        # so you can work down it without deciding. Two rules: we must be
+        # able to classify the role, and you must be a plausible candidate.
+        # Both are bypassed by "show low-fit" for when you want everything.
+        if not in_pipeline and not show_low:
+            if (config.REQUIRE_KNOWN_ROLE_FAMILY
+                    and not posting.get("role_family")):
+                continue
+            if (posting.get("candidacy_score") or 0) < config.MIN_CANDIDACY:
+                continue
+
         # Hide low-fit postings unless asked for. They're still in the
         # database and still scored — just collapsed by default.
         if (not in_pipeline and not show_low

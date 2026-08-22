@@ -29,6 +29,8 @@ letters/
 # with `python3 refresh.py`. Back it up separately if you've been tracking
 # applications for a while:  cp internships.db internships.db.backup
 internships.db
+applications.db
+applications.json
 *.db-journal
 *.backup
 

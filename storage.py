@@ -8,20 +8,28 @@ THE MOST IMPORTANT IDEA IN THIS FILE
 ------------------------------------
 There are two kinds of data here, and they must never mix:
 
-  FETCHED DATA  (the `postings` table)
-      Comes from the internet. Thrown away and rewritten on every run.
+  FETCHED DATA  (internships.db)
+      Comes from the internet. Rebuildable at any time by re-running
+      refresh.py. Losing it costs nothing but a few seconds.
 
-  YOUR DATA     (the `applications` table)
-      Which roles you marked as applied. Irreplaceable — if this is lost,
-      there is no way to get it back.
+  YOUR DATA     (applications.db)
+      Which roles you applied to and where each stands. IRREPLACEABLE.
+      Nothing can regenerate it.
 
-They live in separate tables joined by posting ID. That means the refresh step
-can overwrite every posting field it likes and physically cannot touch your
-applied marks. If both lived in one table, a single careless UPDATE during a
-refresh would silently wipe weeks of tracking.
+THEY LIVE IN SEPARATE FILES, and that separation was learned the hard way.
+An earlier version put them in separate TABLES of the same database, which
+sounds equivalent and isn't: rebuilding the schema meant deleting the file,
+and deleting the file took the applications with it. That happened several
+times during development and destroyed real records each time.
 
-This is a habit worth keeping in every project you build: derived data and
-user-entered data get separate homes.
+Separate tables protect against a careless UPDATE. Only separate FILES
+protect against `rm`. Now internships.db can be deleted at any moment — as a
+schema reset, a bad backup restore, anything — and your applications are
+untouched, because they were never in it.
+
+There is also a plain-text mirror (applications.json) written after every
+change. Belt and braces: if both databases were somehow lost, that file is
+readable in any text editor and can be restored by hand.
 
 HOW THE "NEW" FLAG WORKS
 ------------------------
@@ -79,7 +87,9 @@ CREATE TABLE IF NOT EXISTS postings (
     is_active            INTEGER   -- 0 once it drops off the source
 );
 
--- YOUR data. Never touched by a refresh.
+-- Kept for MIGRATION ONLY. Applications now live in their own database
+-- file; this definition exists so an older internships.db can still be read
+-- and its rows moved across. Nothing writes here any more.
 CREATE TABLE IF NOT EXISTS applications (
     posting_id  TEXT PRIMARY KEY,
     applied     INTEGER NOT NULL DEFAULT 0,
@@ -127,6 +137,111 @@ CREATE INDEX IF NOT EXISTS idx_postings_active ON postings(is_active);
 """
 
 
+# =============================================================================
+# YOUR data — a separate file, deliberately
+# =============================================================================
+
+APPLICATIONS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS applications (
+    posting_id  TEXT PRIMARY KEY,
+    applied     INTEGER NOT NULL DEFAULT 0,
+    notes       TEXT DEFAULT '',
+    updated_at  TEXT,
+    -- Company and role are stored alongside the id so a mark can be found
+    -- again even if the posting id scheme ever changes.
+    company     TEXT DEFAULT '',
+    role        TEXT DEFAULT '',
+    status      TEXT DEFAULT '',
+    applied_at  TEXT DEFAULT ''
+);
+"""
+
+
+def applications_path() -> str:
+    """Where your applications live — deliberately NOT internships.db."""
+    return config.APPLICATIONS_PATH
+
+
+def connect_applications(path: str = None) -> sqlite3.Connection:
+    """Open the applications database, creating it if needed."""
+    conn = sqlite3.connect(path or applications_path())
+    conn.row_factory = sqlite3.Row
+    conn.executescript(APPLICATIONS_SCHEMA)
+    conn.commit()
+    return conn
+
+
+def _attach_applications(conn) -> None:
+    """
+    Make the applications database visible to queries on this connection.
+
+    ATTACH lets one connection see two files, so the existing LEFT JOIN
+    between postings and applications keeps working unchanged even though
+    they now live apart.
+    """
+    path = applications_path().replace("'", "''")
+    conn.execute(f"ATTACH DATABASE '{path}' AS appdb")
+    conn.executescript(
+        APPLICATIONS_SCHEMA.replace(
+            "CREATE TABLE IF NOT EXISTS applications",
+            "CREATE TABLE IF NOT EXISTS appdb.applications",
+        )
+    )
+    conn.commit()
+
+
+def _migrate_applications_out(conn) -> int:
+    """
+    Move any rows left in the OLD in-file applications table across.
+
+    Runs once. After it, the old table is empty and everything reads from
+    the separate file.
+    """
+    try:
+        rows = list(conn.execute("SELECT * FROM main.applications"))
+    except sqlite3.OperationalError:
+        return 0
+    if not rows:
+        return 0
+
+    for row in rows:
+        item = dict(row)
+        conn.execute(
+            """
+            INSERT INTO appdb.applications
+                (posting_id, applied, notes, updated_at, company, role,
+                 status, applied_at)
+            VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(posting_id) DO NOTHING
+            """,
+            (item.get("posting_id"), item.get("applied", 0),
+             item.get("notes", ""), item.get("updated_at", ""),
+             item.get("company", ""), item.get("role", ""),
+             item.get("status", ""), item.get("applied_at", "")),
+        )
+    conn.execute("DELETE FROM main.applications")
+    conn.commit()
+    return len(rows)
+
+
+def export_applications(conn) -> None:
+    """
+    Mirror your applications to a plain JSON file after every change.
+
+    A third copy, readable without any tooling. If both database files were
+    lost you could rebuild from this by hand, which is the whole point of
+    keeping something irreplaceable in more than one format.
+    """
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM appdb.applications WHERE status != ''")]
+        with open(config.APPLICATIONS_EXPORT, "w", encoding="utf-8") as fh:
+            json.dump(rows, fh, indent=2)
+    except (sqlite3.Error, OSError):
+        # A failed mirror must never block the actual save.
+        pass
+
+
 def connect(path: str = None) -> sqlite3.Connection:
     """
     Open (and if needed create) the database, migrating it if the schema has
@@ -152,6 +267,9 @@ def connect(path: str = None) -> sqlite3.Connection:
     conn.executescript(SCHEMA)      # tables first
     _migrate(conn)                  # then any columns added since
     conn.executescript(INDEXES)     # only then indexes, which need those
+    _attach_applications(conn)      # your data, from its own file
+    _migrate_applications_out(conn)  # move any legacy rows across
+    _backfill(conn)
     return conn
 
 
@@ -217,7 +335,6 @@ def _migrate(conn) -> None:
                     f"ALTER TABLE {table} ADD COLUMN {name} {column_type}"
                 )
     conn.commit()
-    _backfill(conn)
 
 
 def _backfill(conn) -> None:
@@ -232,14 +349,14 @@ def _backfill(conn) -> None:
     with no error to investigate.
     """
     conn.execute(
-        "UPDATE applications SET status = 'applied' "
+        "UPDATE appdb.applications SET status = 'applied' "
         "WHERE applied = 1 AND (status IS NULL OR status = '')"
     )
     # An application with a stage but no timestamp predates applied_at.
     # Use the last update as the best available approximation rather than
     # leaving "days waiting" blank forever.
     conn.execute(
-        "UPDATE applications SET applied_at = updated_at "
+        "UPDATE appdb.applications SET applied_at = updated_at "
         "WHERE status != '' AND (applied_at IS NULL OR applied_at = '') "
         "AND updated_at IS NOT NULL"
     )
@@ -422,7 +539,7 @@ def load_postings(conn, include_inactive: bool = False) -> list:
                COALESCE(a.status, '')    AS status,
                COALESCE(a.applied_at, '') AS applied_at
         FROM postings p
-        LEFT JOIN applications a ON a.posting_id = p.id
+        LEFT JOIN appdb.applications a ON a.posting_id = p.id
         {where}
         ORDER BY p.fit_score DESC, p.company COLLATE NOCASE, p.role
         """
@@ -586,14 +703,14 @@ def set_applied(conn, posting_id: str, applied: bool) -> None:
     while ids are stable — and they're the recovery key if one ever isn't.
     """
     row = conn.execute(
-        "SELECT company, role FROM postings WHERE id = ?", (posting_id,)
+        "SELECT company, role FROM main.postings WHERE id = ?", (posting_id,)
     ).fetchone()
     company = row["company"] if row else ""
     role = row["role"] if row else ""
 
     conn.execute(
         """
-        INSERT INTO applications
+        INSERT INTO appdb.applications
             (posting_id, applied, updated_at, company, role)
         VALUES (?,?,?,?,?)
         ON CONFLICT(posting_id) DO UPDATE SET
@@ -605,6 +722,7 @@ def set_applied(conn, posting_id: str, applied: bool) -> None:
         (posting_id, int(applied), now_iso(), company, role),
     )
     conn.commit()
+    export_applications(conn)
 
 
 def set_status(conn, posting_id: str, status: str) -> None:
@@ -621,13 +739,13 @@ def set_status(conn, posting_id: str, status: str) -> None:
         raise ValueError(f"unknown status: {status!r}")
 
     row = conn.execute(
-        "SELECT company, role FROM postings WHERE id = ?", (posting_id,)
+        "SELECT company, role FROM main.postings WHERE id = ?", (posting_id,)
     ).fetchone()
     company = row["company"] if row else ""
     role = row["role"] if row else ""
 
     existing = conn.execute(
-        "SELECT applied_at FROM applications WHERE posting_id = ?",
+        "SELECT applied_at FROM appdb.applications WHERE posting_id = ?",
         (posting_id,),
     ).fetchone()
     applied_at = (existing["applied_at"] if existing else "") or ""
@@ -636,7 +754,7 @@ def set_status(conn, posting_id: str, status: str) -> None:
 
     conn.execute(
         """
-        INSERT INTO applications
+        INSERT INTO appdb.applications
             (posting_id, applied, status, applied_at, updated_at,
              company, role)
         VALUES (?,?,?,?,?,?,?)
@@ -652,13 +770,14 @@ def set_status(conn, posting_id: str, status: str) -> None:
          now_iso(), company, role),
     )
     conn.commit()
+    export_applications(conn)
 
 
 def set_notes(conn, posting_id: str, notes: str) -> None:
     """Save free-text notes against an application."""
     conn.execute(
         """
-        INSERT INTO applications (posting_id, notes, updated_at)
+        INSERT INTO appdb.applications (posting_id, notes, updated_at)
         VALUES (?,?,?)
         ON CONFLICT(posting_id) DO UPDATE SET
             notes      = excluded.notes,
@@ -667,6 +786,7 @@ def set_notes(conn, posting_id: str, notes: str) -> None:
         (posting_id, notes, now_iso()),
     )
     conn.commit()
+    export_applications(conn)
 
 
 def pipeline(conn) -> list:
@@ -684,7 +804,7 @@ def pipeline(conn) -> list:
                a.notes, a.company AS saved_company, a.role AS saved_role,
                p.company, p.role, p.location, p.apply_url, p.salary,
                p.role_family
-        FROM applications a
+        FROM appdb.applications a
         LEFT JOIN postings p ON p.id = a.posting_id
         WHERE a.status != ''
         ORDER BY a.applied_at DESC
@@ -718,7 +838,7 @@ def _days_since(timestamp: str):
 def pipeline_counts(conn) -> dict:
     """How many applications sit at each stage."""
     rows = conn.execute(
-        "SELECT status, COUNT(*) AS n FROM applications "
+        "SELECT status, COUNT(*) AS n FROM appdb.applications "
         "WHERE status != '' GROUP BY status"
     ).fetchall()
     return {row["status"]: row["n"] for row in rows}
@@ -738,7 +858,7 @@ def reattach_orphaned_marks(conn) -> int:
     orphans = conn.execute(
         """
         SELECT a.posting_id, a.applied, a.notes, a.company, a.role
-        FROM applications a
+        FROM appdb.applications a
         LEFT JOIN postings p ON p.id = a.posting_id
         WHERE p.id IS NULL AND a.company != '' AND a.role != ''
         """
@@ -754,7 +874,7 @@ def reattach_orphaned_marks(conn) -> int:
             continue
         conn.execute(
             """
-            INSERT INTO applications
+            INSERT INTO appdb.applications
                 (posting_id, applied, notes, updated_at, company, role)
             VALUES (?,?,?,?,?,?)
             ON CONFLICT(posting_id) DO UPDATE SET
@@ -764,7 +884,7 @@ def reattach_orphaned_marks(conn) -> int:
              now_iso(), orphan["company"], orphan["role"]),
         )
         conn.execute(
-            "DELETE FROM applications WHERE posting_id = ?",
+            "DELETE FROM appdb.applications WHERE posting_id = ?",
             (orphan["posting_id"],),
         )
         recovered += 1
@@ -776,6 +896,6 @@ def reattach_orphaned_marks(conn) -> int:
 def applied_count(conn) -> int:
     """How many roles you've marked as applied."""
     row = conn.execute(
-        "SELECT COUNT(*) AS n FROM applications WHERE applied = 1"
+        "SELECT COUNT(*) AS n FROM appdb.applications WHERE applied = 1"
     ).fetchone()
     return row["n"] if row else 0

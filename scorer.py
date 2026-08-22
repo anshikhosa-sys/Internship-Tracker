@@ -218,6 +218,19 @@ def preference(posting):
             "detail": f"+{lift:.2f}",
         })
 
+    # -- a PM role with no technical signal isn't a TECHNICAL PM role -------
+    # These share a name and are different jobs. A "Product Management
+    # Competitive Product Assessment Intern" at a window-furnishings company
+    # matched the PM family and scored 50 before this.
+    if family_name == "Technical PM / APM":
+        if not any(_matches(sig, title)
+                   for sig in config.TECHNICAL_PM_SIGNALS):
+            value *= config.NON_TECHNICAL_PM_MULTIPLIER
+            reasons.append({
+                "label": "Product role with no technical signal in the title",
+                "detail": f"x{config.NON_TECHNICAL_PM_MULTIPLIER:.2f}",
+            })
+
     # -- out of scope: multiplies down --------------------------------------
     for keyword, multiplier in config.OUT_OF_SCOPE.items():
         if _matches(keyword, title):

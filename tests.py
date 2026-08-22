@@ -33,6 +33,27 @@ from sources.base import Posting
 from sources.simplify_readme import _TableParser, _age_to_date, _cell_text
 
 
+# =============================================================================
+# GLOBAL SAFETY: tests must never touch real data
+# =============================================================================
+#
+# Every storage path is redirected to a throwaway folder before a single
+# test runs. Per-test isolation exists too, but a test that forgets it — or
+# a helper that connects before the redirect — would otherwise write
+# fixtures straight into the real applications store.
+#
+# That is not hypothetical. It happened: test rows ("Company1", an empty
+# row keyed "x") ended up in the live applications.db and displaced a real
+# application. Applications are the one thing here that cannot be
+# regenerated, so the guard is global and unconditional rather than
+# per-test and easy to forget.
+
+_TEST_HOME = tempfile.mkdtemp(prefix="internship-tests-")
+config.DATABASE_PATH = os.path.join(_TEST_HOME, "internships.db")
+config.APPLICATIONS_PATH = os.path.join(_TEST_HOME, "applications.db")
+config.APPLICATIONS_EXPORT = os.path.join(_TEST_HOME, "applications.json")
+
+
 PASSED = 0
 
 
@@ -129,11 +150,18 @@ def test_preference():
     check(pref("Training Program Intern") < pref("AI Engineer Intern"),
           "'Training' does not collect the AI lift")
 
-    # Family ordering.
+    # Family ordering. Note the PM title must carry a technical signal —
+    # a bare "Product Manager Intern" is deliberately ranked BELOW software
+    # engineering, because a product role with nothing technical in the
+    # title is a different job that happens to share a name.
     check(pref("Forward Deployed Engineer Intern") >
-          pref("Product Manager Intern") >
+          pref("Technical Product Manager Intern") >
           pref("Software Engineer Intern"),
           "role families rank in the intended order")
+
+    check(pref("Technical Product Manager Intern") >
+          pref("Product Manager Intern") * 2,
+          "a technical PM role far outranks a generic product one")
 
     # Focus lift is what separates good SWE roles from generic ones.
     generic = pref("Software Engineer Intern")
@@ -290,7 +318,9 @@ def test_scoring_model():
           score("Software Engineer Intern", age_days=0,
                 advanced_degree=True),
           "candidacy changes the score when the other two are fixed")
-    check(score("Product Manager Intern", age_days=0) >
+    # A TECHNICAL product role — a bare "Product Manager Intern" is now
+    # deliberately ranked below software engineering.
+    check(score("Technical Product Manager Intern", age_days=0) >
           score("Software Engineer Intern", age_days=0),
           "preference changes the score when the other two are fixed")
 
@@ -606,7 +636,12 @@ def test_applied_marks_survive():
     """Applied marks are the only unrecoverable data here."""
     print("\nAPPLIED MARKS SURVIVE")
 
-    db_path = os.path.join(tempfile.mkdtemp(), "marks.db")
+    marks_folder = tempfile.mkdtemp()
+    db_path = os.path.join(marks_folder, "marks.db")
+    _saved_marks = (config.APPLICATIONS_PATH,
+                    config.APPLICATIONS_EXPORT)
+    config.APPLICATIONS_PATH = os.path.join(marks_folder, "apps.db")
+    config.APPLICATIONS_EXPORT = os.path.join(marks_folder, "apps.json")
     conn = storage.connect(db_path)
 
     posting = make_posting(1, role="Software Engineer Intern")
@@ -617,7 +652,7 @@ def test_applied_marks_survive():
 
     # The mark records company and role as a recovery key.
     row = conn.execute(
-        "SELECT company, role FROM applications WHERE posting_id = ?",
+        "SELECT company, role FROM appdb.applications WHERE posting_id = ?",
         (posting.id,),
     ).fetchone()
     check(row["company"] == posting.company,
@@ -626,10 +661,10 @@ def test_applied_marks_survive():
           "an applied mark stores the role as a recovery key")
 
     # Simulate an id that moved: file the mark under a stale id.
-    conn.execute("DELETE FROM applications")
+    conn.execute("DELETE FROM appdb.applications")
     conn.execute(
-        "INSERT INTO applications (posting_id, applied, updated_at, "
-        "company, role) VALUES (?,?,?,?,?)",
+        "INSERT INTO appdb.applications (posting_id, applied, "
+        "updated_at, company, role) VALUES (?,?,?,?,?)",
         ("stale:id", 1, "2026-08-01T00:00:00+00:00",
          posting.company, posting.role),
     )
@@ -645,6 +680,7 @@ def test_applied_marks_survive():
           "recovery does not duplicate the mark")
 
     conn.close()
+    config.APPLICATIONS_PATH, config.APPLICATIONS_EXPORT = _saved_marks
 
 
 # =============================================================================
@@ -653,7 +689,15 @@ def test_migration():
     print("\nSCHEMA MIGRATION")
 
     import sqlite3
-    db_path = os.path.join(tempfile.mkdtemp(), "old.db")
+    folder = tempfile.mkdtemp()
+    db_path = os.path.join(folder, "old.db")
+
+    # Point the applications store at a temp file too. Without this the
+    # migration would move the fixture's rows into the REAL applications.db,
+    # both corrupting it and making the assertion count wrong.
+    saved = (config.APPLICATIONS_PATH, config.APPLICATIONS_EXPORT)
+    config.APPLICATIONS_PATH = os.path.join(folder, "apps.db")
+    config.APPLICATIONS_EXPORT = os.path.join(folder, "apps.json")
 
     # An old database: postings without the columns added later.
     old = sqlite3.connect(db_path)
@@ -670,13 +714,15 @@ def test_migration():
     check("candidacy_score" in columns, "every new column is added")
 
     app_cols = {
-        r["name"] for r in conn.execute("PRAGMA table_info(applications)")
+        r["name"]
+        for r in conn.execute("PRAGMA appdb.table_info(applications)")
     }
     check("company" in app_cols, "the applications table migrates too")
 
     check(storage.applied_count(conn) == 1,
           "existing applied marks survive the migration")
     conn.close()
+    config.APPLICATIONS_PATH, config.APPLICATIONS_EXPORT = saved
 
 
 # =============================================================================
@@ -686,15 +732,19 @@ def test_defaults():
 
     check(config.DEFAULT_SORT == "candidacy",
           "opens sorted by strongest candidate")
-    check(config.DEFAULT_WITHIN_DAYS == 0, "opens showing today only")
+    # 3 days, not today-only: the quality gate does the filtering now, so a
+    # wider window means ~40 pre-vetted roles instead of ~6, while
+    # tier-aware freshness still ranks the time-critical ones first.
+    check(config.DEFAULT_WITHIN_DAYS == 3,
+          "opens showing the last 3 days")
     check(config.DEFAULT_HIDE_COOP is True, "opens with co-ops hidden")
 
     import app as dashboard
     # A bare load uses the defaults.
     check(dashboard._effective_hide_coop({}) is True,
           "a bare page load hides co-ops")
-    check(dashboard._effective_within({}) == "0",
-          "a bare page load shows today only")
+    check(dashboard._effective_within({}) == "3",
+          "a bare page load shows the last 3 days")
 
     # A submitted form with the box unticked must actually untick it. This
     # is the case a naive implementation gets wrong, because an unchecked
@@ -710,7 +760,11 @@ def test_pipeline():
     """Application stages, notes, and the backfill from the old boolean."""
     print("\nAPPLICATION PIPELINE")
 
-    db_path = os.path.join(tempfile.mkdtemp(), "pipe.db")
+    pipe_folder = tempfile.mkdtemp()
+    db_path = os.path.join(pipe_folder, "pipe.db")
+    saved_pipe = (config.APPLICATIONS_PATH, config.APPLICATIONS_EXPORT)
+    config.APPLICATIONS_PATH = os.path.join(pipe_folder, "apps.db")
+    config.APPLICATIONS_EXPORT = os.path.join(pipe_folder, "apps.json")
     conn = storage.connect(db_path)
 
     posting = make_posting(1, role="Software Engineer Intern")
@@ -727,7 +781,7 @@ def test_pipeline():
     check(rows[0]["days_waiting"] == 0, "days waiting starts at zero")
 
     first_applied_at = conn.execute(
-        "SELECT applied_at FROM applications WHERE posting_id = ?",
+        "SELECT applied_at FROM appdb.applications WHERE posting_id = ?",
         (posting.id,),
     ).fetchone()["applied_at"]
 
@@ -735,7 +789,7 @@ def test_pipeline():
     # has to survive a stage change or the tracker can't spot stalled ones.
     storage.set_status(conn, posting.id, "interview")
     still = conn.execute(
-        "SELECT applied_at FROM applications WHERE posting_id = ?",
+        "SELECT applied_at FROM appdb.applications WHERE posting_id = ?",
         (posting.id,),
     ).fetchone()["applied_at"]
     check(still == first_applied_at,
@@ -762,13 +816,18 @@ def test_pipeline():
     check(saved == "Recruiter: Dana. OA due Friday.", "notes round-trip")
 
     conn.close()
+    config.APPLICATIONS_PATH, config.APPLICATIONS_EXPORT = saved_pipe
 
     print("\nBACKFILL FROM THE OLD BOOLEAN")
     # An application marked under the old applied=1 scheme, with no stage.
     # Without a backfill it would vanish from the pipeline view while still
     # sitting in the database — loss with no error to investigate.
     import sqlite3
-    old_path = os.path.join(tempfile.mkdtemp(), "legacy.db")
+    legacy_folder = tempfile.mkdtemp()
+    old_path = os.path.join(legacy_folder, "legacy.db")
+    saved_apps = (config.APPLICATIONS_PATH, config.APPLICATIONS_EXPORT)
+    config.APPLICATIONS_PATH = os.path.join(legacy_folder, "apps.db")
+    config.APPLICATIONS_EXPORT = os.path.join(legacy_folder, "apps.json")
     old = sqlite3.connect(old_path)
     old.execute("CREATE TABLE applications (posting_id TEXT PRIMARY KEY, "
                 "applied INTEGER, notes TEXT, updated_at TEXT)")
@@ -782,11 +841,13 @@ def test_pipeline():
     check(counts.get("applied") == 1,
           "an old applied=1 mark is backfilled to the 'applied' stage")
     row = conn.execute(
-        "SELECT applied_at FROM applications WHERE posting_id = 'job:abc'"
+        "SELECT applied_at FROM appdb.applications "
+        "WHERE posting_id = 'job:abc'"
     ).fetchone()
     check(row["applied_at"] == "2026-08-01T00:00:00+00:00",
           "applied_at is backfilled from the last update time")
     conn.close()
+    config.APPLICATIONS_PATH, config.APPLICATIONS_EXPORT = saved_apps
 
 
 # =============================================================================
@@ -845,10 +906,111 @@ def test_applied_always_visible():
 
 
 # =============================================================================
+def test_applications_are_separate():
+    """
+    Applications must survive the postings database being deleted.
+
+    This is not hypothetical. During development internships.db was deleted
+    several times to rebuild the schema, and each time it destroyed real
+    application records — the one thing here that cannot be regenerated.
+    Separate TABLES protect against a careless UPDATE; only separate FILES
+    protect against rm.
+    """
+    print("\nAPPLICATIONS SURVIVE A DELETED DATABASE")
+
+    folder = tempfile.mkdtemp()
+    db = os.path.join(folder, "internships.db")
+    apps = os.path.join(folder, "applications.db")
+    export = os.path.join(folder, "applications.json")
+
+    original = (config.DATABASE_PATH, config.APPLICATIONS_PATH,
+                config.APPLICATIONS_EXPORT)
+    config.DATABASE_PATH, config.APPLICATIONS_PATH = db, apps
+    config.APPLICATIONS_EXPORT = export
+    try:
+        conn = storage.connect()
+        posting = make_posting(1, role="Software Engineer Intern")
+        scorer.score_all([posting])
+        storage.save_postings(conn, [posting], "2026-08-01T00:00:00+00:00")
+        storage.record_run(conn, "2026-08-01T00:00:00+00:00", 1, 0)
+        storage.set_status(conn, posting.id, "applied")
+        check(storage.applied_count(conn) == 1, "the application is recorded")
+        conn.close()
+
+        check(os.path.exists(apps),
+              "applications live in their own file")
+        check(os.path.exists(export),
+              "a plain-text mirror is written alongside")
+
+        # The thing that kept destroying data.
+        os.remove(db)
+        check(not os.path.exists(db), "the postings database is gone")
+
+        conn = storage.connect()
+        check(storage.applied_count(conn) == 1,
+              "the application SURVIVED the postings database being deleted")
+        conn.close()
+    finally:
+        (config.DATABASE_PATH, config.APPLICATIONS_PATH,
+         config.APPLICATIONS_EXPORT) = original
+
+
+# =============================================================================
+def test_just_apply_gate():
+    """Everything on the list should already be worth applying to."""
+    print("\nTHE 'JUST APPLY' GATE")
+
+    import app as dashboard
+
+    def row(**kw):
+        base = {
+            "id": "job:x", "company": "Acme", "role": "SWE Intern",
+            "location": "NYC", "category": "Software Engineering",
+            "status": "", "applied": False, "fit_score": 60,
+            "age_days": 1, "is_fresh": True, "is_coop": False,
+            "is_off_season": False, "company_tier": "mid",
+            "role_family": "Software Engineering", "candidacy_score": 0.7,
+        }
+        base.update(kw)
+        return base
+
+    check(len(dashboard._filtered([row()], set(), {})) == 1,
+          "a classified, credible, recent role is shown")
+
+    # An unclassifiable role is one the tool doesn't understand. These were
+    # 56% of the list and included textile engineering and geoscience.
+    check(len(dashboard._filtered([row(role_family="")], set(), {})) == 0,
+          "an unclassifiable role is not shown")
+
+    # A role you probably can't get isn't worth twenty minutes.
+    check(len(dashboard._filtered(
+        [row(candidacy_score=0.2)], set(), {})) == 0,
+        "a role you're a weak candidate for is not shown")
+
+    # Both bypassed by "show low-fit", so nothing is ever truly unreachable.
+    shown = dashboard._filtered(
+        [row(role_family="", candidacy_score=0.1)],
+        set(), {"f": "1", "show_low": "1", "within": "7"})
+    check(len(shown) == 1,
+          "'show low-fit' still reveals everything")
+
+    # And never applied to anything you've already applied to.
+    check(len(dashboard._filtered(
+        [row(role_family="", candidacy_score=0.1, status="applied")],
+        set(), {})) == 1,
+        "the gate never hides something you've applied to")
+
+
+# =============================================================================
 def test_storage():
     print("\nSTORAGE: the NEW flag across runs")
 
-    db_path = os.path.join(tempfile.mkdtemp(), "test.db")
+    store_folder = tempfile.mkdtemp()
+    db_path = os.path.join(store_folder, "test.db")
+    _saved_store = (config.APPLICATIONS_PATH,
+                    config.APPLICATIONS_EXPORT)
+    config.APPLICATIONS_PATH = os.path.join(store_folder, "apps.db")
+    config.APPLICATIONS_EXPORT = os.path.join(store_folder, "apps.json")
     conn = storage.connect(db_path)
 
     def run(postings, timestamp):
@@ -902,13 +1064,19 @@ def test_storage():
     check("role_family" in row, "the role family is stored for the prompts")
 
     conn.close()
+    config.APPLICATIONS_PATH, config.APPLICATIONS_EXPORT = _saved_store
 
 
 # =============================================================================
 def test_visit_tracking():
     print("\nVISIT TRACKING: what counts as new to you")
 
-    db_path = os.path.join(tempfile.mkdtemp(), "visits.db")
+    visit_folder = tempfile.mkdtemp()
+    db_path = os.path.join(visit_folder, "visits.db")
+    _saved_visit = (config.APPLICATIONS_PATH,
+                    config.APPLICATIONS_EXPORT)
+    config.APPLICATIONS_PATH = os.path.join(visit_folder, "apps.db")
+    config.APPLICATIONS_EXPORT = os.path.join(visit_folder, "apps.json")
     conn = storage.connect(db_path)
 
     live = []
@@ -955,6 +1123,7 @@ def test_visit_tracking():
           "several days away still surfaces every posting since your visit")
     check(storage.new_posting_ids(conn) == {make_posting(5).id},
           "...whereas 'new since last run' would only show the latest day")
+    config.APPLICATIONS_PATH, config.APPLICATIONS_EXPORT = _saved_visit
 
     storage.mark_all_seen(conn)
     check(storage.new_since_last_visit(
@@ -1070,6 +1239,8 @@ if __name__ == "__main__":
     test_defaults()
     test_pipeline()
     test_applied_always_visible()
+    test_applications_are_separate()
+    test_just_apply_gate()
     test_storage()
     test_visit_tracking()
     test_prompts()

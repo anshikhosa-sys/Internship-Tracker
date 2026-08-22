@@ -342,7 +342,6 @@ OUT_OF_SCOPE = {
     "content": 0.20,
     "audit": 0.15,
     "tax": 0.10,
-    "actuarial": 0.15,
     "underwriting": 0.15,
     "supply chain": 0.25,
     "procurement": 0.15,
@@ -780,6 +779,39 @@ MAX_AGE_DAYS = 7
 # Postings at or under this age get a "fresh" badge.
 FRESH_DAYS = 3
 
+
+# =============================================================================
+# THE "JUST APPLY" GATE
+# =============================================================================
+#
+# The dashboard should be a list you work down without deciding anything.
+# Everything on it should already be worth an application — no triage, no
+# second-guessing, no filtering by hand before you can start.
+#
+# Two rules do most of that work.
+
+# 1. ONLY SHOW ROLES WE CAN ACTUALLY CLASSIFY.
+#
+# A posting matching no role family is one the tool doesn't understand. An
+# audit found those were 56% of the live list and included textile
+# engineering, geoscience, and actuarial roles — none worth an application,
+# all sitting mid-table on a fallback guess.
+#
+# Showing only classified roles is the difference between a list you trust
+# and one you have to check. If something genuinely relevant gets excluded,
+# the fix is to add its keywords to a family in ROLE_FAMILIES — which also
+# makes it rank correctly rather than merely appearing.
+#
+# Set False to see everything, including the unclassifiable.
+REQUIRE_KNOWN_ROLE_FAMILY = True
+
+# 2. DON'T SHOW ROLES YOU PROBABLY CAN'T GET.
+#
+# Candidacy below this means something in the title works actively against
+# you — an advanced degree, a seniority level, a technology your resume
+# doesn't support. Those aren't worth the twenty minutes.
+MIN_CANDIDACY = 0.45
+
 # Default dashboard sort:
 #   "score"       preference × candidacy × freshness  (what to do today)
 #   "preference"  how much you want it, ignoring odds and age
@@ -801,7 +833,15 @@ DEFAULT_SORT = "candidacy"
 # point if you only apply same-day — but if the daily list feels too thin,
 # 1 (today or yesterday) roughly triples it and is still well inside the
 # window the evidence supports.
-DEFAULT_WITHIN_DAYS = 0
+# 3, not 0. With the "just apply" gate above doing the quality filtering,
+# a 3-day window is the right session size: about 40 roles, all already
+# worth applying to, versus about 6 for today-only.
+#
+# Urgency isn't lost by widening it — tier-aware freshness already ranks a
+# same-day big-tech role above a 3-day-old one, so the ordering still pushes
+# you to hit the time-critical ones first. The window decides how much is on
+# the list; the ranking decides what you do first.
+DEFAULT_WITHIN_DAYS = 3
 
 # ================================================1=============================
 # APPLICATION PIPELINE
@@ -887,6 +927,22 @@ GOOD_FIT_THRESHOLD = 28
 LOW_FIT_THRESHOLD = 14
 
 DATABASE_PATH = "internships.db"
+
+# YOUR applications live in a SEPARATE FILE, deliberately.
+#
+# internships.db is rebuildable — delete it any time and refresh.py restores
+# it in under a second. This file is not: nothing can regenerate which roles
+# you applied to.
+#
+# An earlier version kept both in one file, in separate tables. That protects
+# against a careless UPDATE but not against `rm`, and deleting the database
+# to rebuild the schema destroyed real records more than once. Separate files
+# make that impossible.
+APPLICATIONS_PATH = "applications.db"
+
+# A plain-text mirror, rewritten after every change. Readable in any editor,
+# so even losing both databases leaves something to restore from by hand.
+APPLICATIONS_EXPORT = "applications.json"
 
 
 # =============================================================================
@@ -1042,6 +1098,22 @@ ROLE_FAMILY_GUIDANCE = {
         ),
     },
 }
+
+# A Technical PM role and a generic Product Management role are different
+# jobs that share a name. "Product Management Competitive Product Assessment
+# Intern" at a window-blinds manufacturer matched the PM family and scored 50.
+#
+# So a PM title must carry SOME technical signal to score as a technical PM.
+# Without one, it's multiplied down — not hidden, since a genuinely technical
+# role with a plain title would otherwise be lost.
+TECHNICAL_PM_SIGNALS = [
+    "technical", "software", "platform", "api", "data", "ai", "ml",
+    "cloud", "infrastructure", "developer", "engineering", "systems",
+    "machine learning", "analytics platform", "sdk", "devtools",
+]
+
+NON_TECHNICAL_PM_MULTIPLIER = 0.35
+
 
 DEFAULT_FAMILY_GUIDANCE = {
     "emphasis": (

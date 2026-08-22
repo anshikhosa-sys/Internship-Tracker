@@ -29,8 +29,17 @@ SEPARATOR = re.compile(r"^\s*\|[\s:|-]+\|\s*$")
 
 
 def _extract_links(cell: str) -> list:
-    """Every href in a cell, in order."""
-    return re.findall(r'href=["\']([^"\']+)["\']', cell)
+    """
+    Every link in a cell, in order.
+
+    Two syntaxes appear across the sources: HTML anchors with an href, and
+    plain markdown [text](url). A source using the second form would return
+    no links at all if only hrefs were matched, and every one of its rows
+    would be dropped for having nothing to apply to.
+    """
+    links = re.findall(r'href=["\']([^"\']+)["\']', cell)
+    links += re.findall(r'\[[^\]]*\]\((https?://[^)\s]+)\)', cell)
+    return links
 
 
 def _strip_html(text: str) -> str:

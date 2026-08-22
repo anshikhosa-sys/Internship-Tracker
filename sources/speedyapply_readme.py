@@ -39,17 +39,19 @@ COMPETITIVE_SECTIONS = ("faang", "quant")
 
 
 class SpeedyApplyReadmeSource(Source):
-    """Fetches and parses the SpeedyApply 2027 list."""
+    """Fetches and parses a SpeedyApply 2027 list."""
 
-    name = "SpeedyApply-2027"
+    name = "SpeedyApply-SWE"
 
     URL = (
         "https://raw.githubusercontent.com/"
         "speedyapply/2027-SWE-College-Jobs/main/README.md"
     )
 
-    def __init__(self, url: str = None):
+    def __init__(self, url: str = None, name: str = None):
         self.url = url or self.URL
+        if name:
+            self.name = name
 
     def _download(self) -> str:
         response = requests.get(
@@ -139,3 +141,21 @@ def _clean_salary(text: str) -> str:
     if text in ("", "-", "–", "—", "N/A", "n/a", "?"):
         return ""
     return text
+
+
+class SpeedyApplyAISource(SpeedyApplyReadmeSource):
+    """
+    The AI-specific SpeedyApply list.
+
+    Identical table format to the SWE one, so it reuses the same parser with
+    a different URL — which is exactly what the Source abstraction is for.
+    Worth having separately because it covers ML and AI engineering roles the
+    general SWE list doesn't carry.
+    """
+
+    name = "SpeedyApply-AI"
+
+    URL = (
+        "https://raw.githubusercontent.com/"
+        "speedyapply/2027-AI-College-Jobs/main/README.md"
+    )

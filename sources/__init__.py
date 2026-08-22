@@ -10,7 +10,8 @@ came from.
 
 from .base import Posting, Source
 from .simplify_readme import SimplifyReadmeSource
-from .speedyapply_readme import SpeedyApplyReadmeSource
+from .sndsh_readme import SndshReadmeSource
+from .speedyapply_readme import SpeedyApplyAISource, SpeedyApplyReadmeSource
 from .vansh_readme import VanshReadmeSource
 
 __all__ = [
@@ -19,4 +20,6 @@ __all__ = [
     "SimplifyReadmeSource",
     "VanshReadmeSource",
     "SpeedyApplyReadmeSource",
+    "SpeedyApplyAISource",
+    "SndshReadmeSource",
 ]

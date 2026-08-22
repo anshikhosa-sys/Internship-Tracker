@@ -138,12 +138,11 @@ def check_database():
 
 def check_sources():
     print("\nSOURCES (network)")
-    from sources import (SimplifyReadmeSource, VanshReadmeSource,
-                         SpeedyApplyReadmeSource)
+    # Imported from refresh.py so this can never drift out of date when a
+    # source is added — there is one list, and it lives there.
+    from refresh import SOURCES
     total = 0
-    for source_class in (SimplifyReadmeSource, VanshReadmeSource,
-                         SpeedyApplyReadmeSource):
-        source = source_class()
+    for source in SOURCES:
         try:
             postings = source.fetch()
             total += len(postings)

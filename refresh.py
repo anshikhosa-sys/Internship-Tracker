@@ -37,6 +37,8 @@ import scorer
 import storage
 from sources import (
     SimplifyReadmeSource,
+    SndshReadmeSource,
+    SpeedyApplyAISource,
     SpeedyApplyReadmeSource,
     VanshReadmeSource,
 )
@@ -52,6 +54,8 @@ SOURCES = [
     SimplifyReadmeSource(),
     VanshReadmeSource(),
     SpeedyApplyReadmeSource(),
+    SpeedyApplyAISource(),
+    SndshReadmeSource(),
 ]
 
 

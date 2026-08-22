@@ -14,121 +14,64 @@ which is updated daily.
 ## Setup (once)
 
 ```bash
-python3 -m venv .venv           # create an isolated Python environment
-source .venv/bin/activate       # switch into it (Windows: .venv\Scripts\activate)
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+./scripts/schedule.sh install
 ```
 
-The virtual environment keeps this project's packages separate from the rest of
-the system, so installing something here can't break another project.
+That's it. Refreshes run at 07:30, 11:30 and 16:30, and the dashboard stays
+live at **http://127.0.0.1:5000** — bookmark it.
 
 ## Everyday use
 
-```bash
-python3 refresh.py         # fetch the latest listings and show what's new
-python3 app.py             # serve the dashboard at http://127.0.0.1:5000
-python3 app.py --debug     # same, with auto-reload while editing code
-```
+Open the bookmark. The list is already filtered to roles worth applying to:
+work down it, click **Apply**, set the stage dropdown. There is nothing to
+configure and nothing to decide.
 
-Both are optional once the background jobs are installed — see below.
-
-Run `refresh.py` whenever you want fresh data. The dashboard also has a
-**Refresh listings** button that does the same thing.
-
-Run the tests any time with `python3 tests.py`.
-
-## Running it hands-off
-
-```bash
-./scripts/schedule.sh install     # set up both background jobs
-./scripts/schedule.sh status      # what's running, what it last did
-./scripts/schedule.sh run-now     # force a refresh immediately, to test
-./scripts/schedule.sh restart     # reload after editing code
-./scripts/schedule.sh uninstall   # remove both
-```
-
-That installs two macOS **LaunchAgents** in `~/Library/LaunchAgents/`:
-
-| Job | What it does |
+| Command | What it does |
 |---|---|
-| `com.internship-finder.daily` | Runs `refresh.py` at 08:00 every day |
-| `com.internship-finder.dashboard` | Keeps the dashboard alive at `127.0.0.1:5000` |
+| `python3 healthcheck.py` | Is everything actually working? |
+| `python3 refresh.py` | Force a refresh now |
+| `./scripts/schedule.sh status` | Are the background jobs alive? |
+| `python3 tests.py` | Run the test suite |
 
-Together they mean there's nothing to type: listings update each morning, and
-the dashboard is always there — bookmark it like any other site. The dashboard
-job uses `KeepAlive`, so it restarts itself after a crash, a reboot, or a
-logout.
+## What's on the list, and what isn't
 
-No admin rights needed — LaunchAgents live in your home folder and run as you.
+The dashboard is meant to be a **don't-think-just-apply list**. Three gates
+run before anything appears:
 
-**Why launchd rather than cron:** if the Mac is asleep at the scheduled time,
-cron skips that day silently and you'd get no update. launchd notices the
-missed run and fires it when the machine next wakes — which matters for a
-morning schedule on a laptop that's closed overnight.
+1. **It must be classifiable.** A posting matching no role family is one the
+   tool doesn't understand. Those were 56% of an earlier list and included
+   textile engineering, geoscience and actuarial roles.
+2. **You must be a plausible candidate.** Below `MIN_CANDIDACY` means
+   something in the title works against you — an advanced degree, a
+   seniority level, a technology your résumé doesn't support.
+3. **It must be recent enough to still be open**, judged per company tier.
 
-To change the time, edit `RUN_HOUR` / `RUN_MINUTE` at the top of
-`scripts/schedule.sh` and re-run `install`. Output goes to `logs/refresh.log`.
+Deliberately excluded: quant and trading firms, data *analysis* (as opposed
+to data *engineering*), ML *research* (as opposed to ML *infrastructure*),
+co-ops, off-season terms, and non-technical product roles.
 
-## Cover letters and work experience
+Tick **Show low-fit** to see everything anyway. Nothing is ever deleted.
 
-Every posting has an **Application prep** button with two copy-paste prompts:
+## Your data is in a separate file
 
-- **Cover letter** — a draft, reusable talking points, an honest gap list, and
-  a frank verdict on whether the role is worth your time.
-- **Work experience** — your experience rewritten for that role's audience,
-  in a short version for character-limited fields and a full one.
+`applications.db` holds what you applied to. It is **not** in
+`internships.db`, deliberately: the postings database is rebuildable in under
+a second, and deleting it must never cost you an application record.
+`applications.json` is a third, human-readable copy.
 
-**Both are free and always will be.** They're text assembled on your machine.
-Copy one into claude.ai, ChatGPT, or anything else, and paste the result back.
-There is no API client installed and no key to configure.
+## Where the postings come from
 
-The prompts adapt to the role family: an FDE reviewer wants evidence of
-customer-facing work, a SWE reviewer wants depth on the hardest system you've
-shipped. Same résumé, different pitch — see `ROLE_FAMILY_GUIDANCE` in
-`config.py`.
+Five lists, merged and deduplicated — about 970 rows collapsing to ~750
+unique postings:
 
-**Paste the real job description** into the box on that page. The source only
-gives us a job title, so this is the single biggest quality lever available —
-it also makes the gap list real, telling you what a role wants that you don't
-have before an interview does.
-
-They draft; they never submit. Application portals prohibit automated
-submission and an application can't be unsent, so the irreversible step stays
-yours.
-
-Letters are written from `profile.md` (gitignored — copy `profile_example.md`
-to start). The prompt restricts every claim to what that file states. **The
-"Notes for the letter writer" section at the bottom of `profile.md` is the
-highest-leverage thing to keep adding to** — it's where context lives that a
-one-page résumé can't hold.
-
-### Notifications
-
-When a scheduled run finds new postings scoring at or above
-`NOTIFY_THRESHOLD` (default 60), macOS shows **one** notification summarizing
-them — not one per posting. Set `NOTIFY_ON_STRONG_FIT = False` for silent runs.
-The dashboard's Refresh button never notifies, since you're already looking at
-the results.
-
-`NOTIFY_THRESHOLD` is deliberately separate from `STRONG_FIT_THRESHOLD`. The
-badge threshold answers "what deserves a green highlight"; the notify
-threshold answers "what deserves interrupting me". Measured against real data,
-about 55 postings arrive daily, ~7 score 60+, and almost none score 100+ — so
-tying notifications to the badge threshold left it silent for days while
-relevant roles went by unannounced.
-
-### What "NEW" means
-
-**NEW = arrived since you last opened the dashboard**, not since the last
-refresh. Those are different questions once refreshes are automatic: "since
-the last run" would mean "in the last 24 hours", so skipping a few days would
-silently stop flagging everything older than yesterday.
-
-Page loads within `VISIT_SESSION_MINUTES` (default 30) count as the same
-visit, so badges don't vanish while you're browsing. Coming back later starts
-a new visit. **Mark all as seen** clears them on demand.
-
----
+- SimplifyJobs/Summer2027-Internships
+- vanshb03/Summer2027-Internships
+- speedyapply/2027-SWE-College-Jobs
+- speedyapply/2027-AI-College-Jobs
+- sndsh404/summer-2027-internships
 
 ## Tuning the rankings
 
