@@ -293,6 +293,68 @@ def test_scoring_model():
         make_posting(1, role="Software Engineer Intern/Co-op")
     )["score"] > 0, "a co-op still scores rather than being zeroed")
 
+    print("\nOFF-SEASON DETECTION")
+    winter = make_posting(1, role="SWE Intern - Winter 2027")
+    check(scorer.is_off_season(winter), "a winter role is flagged")
+    check(scorer.is_off_season(make_posting(1, role="SWE Intern - Fall 2026")),
+          "a fall role is flagged")
+    check(not scorer.is_off_season(
+        make_posting(1, role="Software Engineer Intern - Summer 2027")),
+        "a summer role is not flagged")
+    # Matched on the TITLE only — a company called Winter shouldn't be caught.
+    p = make_posting(1, role="Software Engineer Intern")
+    p.company = "Winter Capital"
+    check(not scorer.is_off_season(p),
+          "a company name containing 'winter' is not flagged")
+    # A label, not a score input.
+    check(scorer.score_posting(
+        make_posting(1, role="Software Engineer Intern - Winter 2027")
+    )["score"] > 0, "an off-season role still scores rather than being zeroed")
+
+    print("\nRESUME-GROUNDED CANDIDACY")
+    original = config.PROFILE_PATH
+    try:
+        # A profile mentioning Python but not Kubernetes.
+        path = os.path.join(tempfile.mkdtemp(), "p.md")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("Built Python data pipelines on AWS with Postgres. " * 8)
+        config.PROFILE_PATH = path
+        scorer._PROFILE_CACHE["path"] = None       # bust the cache
+
+        supported = scorer.candidacy(
+            make_posting(1, role="Python Backend Engineer Intern"))[0]
+        unsupported = scorer.candidacy(
+            make_posting(1, role="Kubernetes Platform Engineer Intern"))[0]
+        check(supported > unsupported,
+              "a title matching the resume beats one naming tech it lacks")
+        check(scorer.profile_supports("python"),
+              "a term in the resume is recognized")
+        check(not scorer.profile_supports("kubernetes"),
+              "a term absent from the resume is not")
+    finally:
+        config.PROFILE_PATH = original
+        scorer._PROFILE_CACHE["path"] = None
+
+    print("\nTRADING FIRMS CAUGHT BY NAME")
+    dv = make_posting(1, role="Software Engineer Intern, Commodities")
+    dv.company = "DV Group"
+    ordinary = make_posting(2, role="Software Engineer Intern")
+    check(scorer.preference(dv)[0] < scorer.preference(ordinary)[0],
+          "a trading firm's SWE role scores below an ordinary one")
+
+    print("\nPHONE PUSH")
+    import push
+    check(push.is_configured() is False or bool(config.PUSH_TOPIC),
+          "push reports configured only when a topic is set")
+    # Must never raise from a background job, even with a bad topic.
+    original_topic = config.PUSH_TOPIC
+    try:
+        config.PUSH_TOPIC = ""
+        check(push.notify_matches([make_posting(1)]) is False,
+              "no topic configured means no push, and no error")
+    finally:
+        config.PUSH_TOPIC = original_topic
+
     print("\nINTERNSHIP GATE")
     intern = make_posting(1, role="Software Engineer Intern")
     check(scorer.is_internship(intern), "an intern role passes the gate")

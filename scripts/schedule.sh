@@ -53,10 +53,12 @@ DASH_PLIST="$PLIST_DIR/$DASH_LABEL.plist"
 
 LOG_DIR="$PROJECT_DIR/logs"
 
-# What time the daily refresh runs (24-hour clock). Change these, then re-run
-# `./scripts/schedule.sh install` to apply.
-RUN_HOUR=8
-RUN_MINUTE=0
+# When the refresh runs. Read from config.py so there is ONE place that
+# decides the schedule — duplicating it here is how the plist and the config
+# silently drift apart.
+#
+# Several runs a day rather than one: listings typically go up late morning,
+# so a single early-morning run misses the whole posting window.
 
 DASH_PORT=5000
 
@@ -80,7 +82,23 @@ require_venv() {
   fi
 }
 
+# Build the <dict> entries from config.py, so the schedule has one source of
+# truth instead of a copy here that can drift.
+build_schedule_entries() {
+  "$PYTHON_BIN" - <<'PY'
+import sys
+sys.path.insert(0, ".")
+import config
+for hour, minute in config.REFRESH_TIMES:
+    print("        <dict>")
+    print(f"            <key>Hour</key><integer>{hour}</integer>")
+    print(f"            <key>Minute</key><integer>{minute}</integer>")
+    print("        </dict>")
+PY
+}
+
 write_refresh_plist() {
+  SCHEDULE_ENTRIES="$(cd "$PROJECT_DIR" && build_schedule_entries)"
   cat > "$REFRESH_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -101,14 +119,12 @@ write_refresh_plist() {
     <key>WorkingDirectory</key>
     <string>$PROJECT_DIR</string>
 
-    <!-- Once a day. If the Mac is asleep, launchd runs it on wake. -->
+    <!-- Several times a day. If the Mac is asleep at one of these, launchd
+         runs it on wake rather than skipping the slot. -->
     <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>$RUN_HOUR</integer>
-        <key>Minute</key>
-        <integer>$RUN_MINUTE</integer>
-    </dict>
+    <array>
+$SCHEDULE_ENTRIES
+    </array>
 
     <!-- Don't fire on install/login — only on the schedule. -->
     <key>RunAtLoad</key>
@@ -180,7 +196,7 @@ do_install() {
   printf '%s\n' \
     "Installed. Nothing to run by hand from now on." \
     "" \
-    "  Daily refresh:  $(printf '%02d:%02d' "$RUN_HOUR" "$RUN_MINUTE") every day" \
+    "  Refresh runs:   $(cd "$PROJECT_DIR" && "$PYTHON_BIN" -c "import config; print(', '.join('%02d:%02d' % t for t in config.REFRESH_TIMES))")" \
     "  Dashboard:      http://127.0.0.1:$DASH_PORT  (always on)" \
     "  Logs:           $LOG_DIR/" \
     ""

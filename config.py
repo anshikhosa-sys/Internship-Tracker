@@ -250,6 +250,18 @@ OUT_OF_SCOPE = {
     "quantitative": 0.10, "quant": 0.10, "trading": 0.10,
     "trader": 0.10, "hedge fund": 0.15,
 
+    # Trading-desk words that appear in otherwise ordinary-looking titles.
+    "commodities": 0.20,
+    "derivatives": 0.15,
+    "market making": 0.10,
+    "market maker": 0.10,
+    "proprietary trading": 0.10,
+    "execution algo": 0.10,
+    "low latency": 0.30,
+    "high frequency": 0.15,
+    "portfolio": 0.35,
+    "securities": 0.35,
+
     "hardware": 0.20, "embedded": 0.25, "fpga": 0.10, "asic": 0.10,
     "verilog": 0.10, "rtl": 0.15, "silicon": 0.15, "analog": 0.15,
     "circuit": 0.15, "mechanical": 0.10, "electrical": 0.20,
@@ -289,6 +301,26 @@ OUT_OF_SCOPE = {
 # Blackstone, Goldman, PwC — are NOT here: those are real engineering
 # internships and you said you'd take a good general one.
 OUT_OF_SCOPE_COMPANIES = {
+    # Trading firms whose name is the only clue. "Software Engineer Intern,
+    # Commodities" at DV Group reads like an ordinary SWE role from the title
+    # alone — the work is C++ and market maths, a different track entirely.
+    "dv group": 0.25,
+    "dv trading": 0.25,
+    "garda capital": 0.30,
+    "belvedere trading": 0.30,
+    "wolverine trading": 0.30,
+    "peak6": 0.30,
+    "tower research": 0.30,
+    "xtx markets": 0.30,
+    "quantlab": 0.30,
+    "headlands": 0.30,
+    "cutler group": 0.30,
+    "group one trading": 0.30,
+    "vatic labs": 0.30,
+    "radix trading": 0.30,
+    "gts": 0.35,
+    "virtu": 0.35,
+    "flow traders": 0.30,
     "millennium": 0.35,
     "citadel": 0.35,
     "jane street": 0.35,
@@ -339,8 +371,12 @@ OUT_OF_SCOPE_COMPANIES = {
 CANDIDACY_BASELINE = 0.60
 
 # Things your résumé demonstrably proves. Added to the baseline, capped at
-# 1.0. KEEP THIS IN SYNC WITH YOUR RÉSUMÉ — it's the part of this file that
-# goes stale as you learn things.
+# CANDIDACY_MAX_EVIDENCE.
+#
+# THESE ARE WEIGHTS, NOT CLAIMS. A keyword here only earns points if the term
+# ALSO appears in profile.md — see REQUIRE_EVIDENCE_IN_PROFILE below. That
+# way the list can't quietly credit you for things your résumé doesn't say,
+# and adding a skill to your résumé starts crediting it automatically.
 CANDIDACY_EVIDENCE = {
     # Directly evidenced by shipped work
     "python": 0.15,
@@ -390,6 +426,49 @@ CANDIDACY_EVIDENCE = {
 }
 
 CANDIDACY_MAX_EVIDENCE = 0.40
+
+# Only count evidence keywords that actually appear in profile.md.
+#
+# WHY THIS EXISTS: an audit found 15 of 36 keywords above were hand-written
+# from what the résumé seemed to imply — "ml infrastructure", "model
+# serving", "developer experience" — none of which appear in it. Those were
+# crediting candidacy for experience that couldn't be pointed at, which is
+# the same mistake the cover letters are explicitly forbidden from making.
+#
+# Set to False to go back to trusting the list alone.
+REQUIRE_EVIDENCE_IN_PROFILE = True
+
+# Technologies and specialties that show up in job titles and that your
+# résumé does NOT support. A title naming one is a signal you'd be competing
+# against people who've done exactly it.
+#
+# These multiply candidacy down. They're separate from CANDIDACY_BLOCKERS
+# because they're softer — a role wanting Go isn't closed to you, it's just
+# a worse use of an application than one wanting Python.
+#
+# Anything listed here that LATER appears in profile.md stops counting
+# automatically, same rule as the evidence list.
+UNSUPPORTED_TECH = {
+    "c++": 0.45,
+    "rust": 0.50,
+    "golang": 0.55,
+    "scala": 0.55,
+    "kubernetes": 0.65,
+    "terraform": 0.70,
+    "kafka": 0.70,
+    "spark": 0.70,
+    "hadoop": 0.65,
+    "cuda": 0.40,
+    "verilog": 0.30,
+    "assembly": 0.40,
+    "低": 0.60,          # placeholder-safe; harmless if never matched
+    "kernel": 0.40,
+    "firmware": 0.35,
+    "unity": 0.45,
+    "unreal": 0.45,
+    "solidity": 0.45,
+    "blockchain": 0.50,
+}
 
 # Things that make you a poor or ineligible candidate. These MULTIPLY, so a
 # single hard blocker sinks the posting no matter how good the match looks.
@@ -629,6 +708,20 @@ REQUIRE_INTERNSHIP = True
 # list.
 COOP_KEYWORDS = ["co-op", "coop", "cooperative education"]
 
+# Roles for a term OTHER than summer. A "Winter 2027" internship runs during
+# the academic year, so taking it means not being in class — the same
+# practical problem as a co-op, from a different direction.
+#
+# Only matched against the title, and only badges/filters — never scores.
+# Whether you can take a term off is a fact about you, not about the role.
+OFF_SEASON_KEYWORDS = [
+    "winter", "fall", "autumn", "spring",
+    "off-season", "off season", "january start",
+]
+
+# Hide off-season roles by default. You're looking for Summer 2027.
+DEFAULT_HIDE_OFFSEASON = True
+
 INTERNSHIP_KEYWORDS = [
     "intern", "internship", "co-op", "coop", "summer", "student",
 ]
@@ -673,6 +766,40 @@ NOTIFY_ON_STRONG_FIT = True
 # this decides whether to interrupt. Tying them together once left the feature
 # silent for days while relevant roles arrived unannounced.
 NOTIFY_THRESHOLD = GOOD_FIT_THRESHOLD
+
+# Where the dashboard lives, used to make a phone notification tappable.
+DASHBOARD_URL = "http://127.0.0.1:5000"
+
+# PHONE NOTIFICATIONS (optional, free, no account).
+#
+# Install the "ntfy" app, subscribe to a topic, and put the same topic
+# string here. See push.py for the full setup.
+#
+# PICK SOMETHING UNGUESSABLE. On ntfy's free tier, knowing the topic name IS
+# the credential — anyone who guesses it receives your notifications and can
+# send you fake ones. Only company names and job titles are ever sent, all
+# of which are already public listings; nothing about you is transmitted.
+#
+# Leave empty to keep Mac-only notifications.
+PUSH_TOPIC = ""
+
+# WHEN THE REFRESH RUNS.
+#
+# Several times a day, not once. The research on posting times is consistent:
+# listings typically go up late morning, and applications start arriving in
+# volume a few hours later. A single 8am run therefore MISSES the entire
+# posting window — a role posted at 11am wouldn't reach you until 8am
+# tomorrow, roughly 21 hours late, which is most of the advantage gone.
+#
+# Three runs cost 0.74 seconds each and cover the day: early, just after the
+# posting window opens, and late afternoon for anything that slipped out.
+# A notification only fires when something NEW clears the threshold, so extra
+# runs don't mean extra interruptions — most find nothing.
+REFRESH_TIMES = [
+    (7, 30),    # before class: yesterday afternoon's postings
+    (11, 30),   # the posting window — the important one
+    (16, 30),   # afternoon sweep
+]
 
 
 # =============================================================================

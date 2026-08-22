@@ -80,8 +80,10 @@ def _filtered(postings, new_ids, args):
 
     if submitted:
         hide_coop = args.get("nocoop") == "1"
+        hide_offseason = args.get("nowinter") == "1"
     else:
         hide_coop = config.DEFAULT_HIDE_COOP
+        hide_offseason = config.DEFAULT_HIDE_OFFSEASON
 
     # Explicit "posted within N days" filter, independent of the global
     # cutoff.
@@ -117,6 +119,9 @@ def _filtered(postings, new_ids, args):
             continue
 
         if hide_coop and posting["is_coop"]:
+            continue
+
+        if hide_offseason and posting["is_off_season"]:
             continue
 
         if fresh_only and not posting["is_fresh"]:
@@ -163,6 +168,13 @@ def _effective_hide_coop(args) -> bool:
     return config.DEFAULT_HIDE_COOP
 
 
+def _effective_hide_offseason(args) -> bool:
+    """Whether the Summer only box should render ticked."""
+    if args.get("f") == "1":
+        return args.get("nowinter") == "1"
+    return config.DEFAULT_HIDE_OFFSEASON
+
+
 # =============================================================================
 # Routes
 # =============================================================================
@@ -198,6 +210,7 @@ def index():
         posting["freshness_label"] = fresh_label
         posting["is_fresh"] = scorer.is_fresh(age)
         posting["is_coop"] = scorer.is_coop(posting)
+        posting["is_off_season"] = scorer.is_off_season(posting)
         posting["fit_score"] = scorer.final_score(
             posting["preference"], posting["candidacy_score"], fresh
         )
@@ -242,6 +255,7 @@ def index():
         showing_stale=request.args.get("stale") == "1",
         within=_effective_within(request.args),
         hide_coop=_effective_hide_coop(request.args),
+        hide_offseason=_effective_hide_offseason(request.args),
         filters=request.args,
         config=config,
     )

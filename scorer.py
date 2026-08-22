@@ -62,10 +62,57 @@ THREE IMPLEMENTATION NOTES
    different numbers.
 """
 
+import os
 import re
 from datetime import date
 
 import config
+
+
+# =============================================================================
+# The résumé itself
+# =============================================================================
+
+_PROFILE_CACHE = {"path": None, "text": ""}
+
+
+def profile_text() -> str:
+    """
+    The raw text of profile.md, lowercased, cached per path.
+
+    Read directly rather than through letters.py so scoring never depends on
+    the prompt module. A missing profile returns "" — scoring degrades to the
+    hand-written weights rather than crashing, since you should be able to
+    browse listings before writing a résumé file.
+    """
+    path = config.PROFILE_PATH
+    if _PROFILE_CACHE["path"] != path:
+        text = ""
+        if os.path.exists(path):
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    text = handle.read().lower()
+            except OSError:
+                text = ""
+        _PROFILE_CACHE.update({"path": path, "text": text})
+    return _PROFILE_CACHE["text"]
+
+
+def profile_supports(term: str) -> bool:
+    """
+    Does the résumé actually contain this term?
+
+    The check that makes candidacy résumé-DRIVEN rather than merely
+    résumé-inspired. An audit found 15 of 36 evidence keywords were never in
+    the résumé at all — they were guesses about what it implied, and they
+    were inflating candidacy for experience that couldn't be pointed at.
+    """
+    text = profile_text()
+    if not text:
+        # No résumé on disk: fall back to trusting the configured list, since
+        # blocking everything would make the tool useless before setup.
+        return True
+    return term.lower() in text
 
 
 # =============================================================================
@@ -222,12 +269,21 @@ def candidacy(posting, company_volume=None):
     })
 
     # -- evidence from the résumé -------------------------------------------
+    # A keyword only counts if it appears in BOTH the job title and the
+    # résumé. Matching the title alone would credit experience you can't
+    # point at — the same failure the cover letter prompt forbids.
     evidence = 0.0
     hits = []
+    unsupported = []
     for keyword, amount in config.CANDIDACY_EVIDENCE.items():
-        if _matches(keyword, title):
-            evidence += amount
-            hits.append(keyword)
+        if not _matches(keyword, title):
+            continue
+        if (config.REQUIRE_EVIDENCE_IN_PROFILE
+                and not profile_supports(keyword)):
+            unsupported.append(keyword)
+            continue
+        evidence += amount
+        hits.append(keyword)
 
     if evidence > config.CANDIDACY_MAX_EVIDENCE:
         evidence = config.CANDIDACY_MAX_EVIDENCE
@@ -269,6 +325,27 @@ def candidacy(posting, company_volume=None):
                         "detail": f"+{amount:.2f}",
                     })
                 break
+
+    if unsupported:
+        # Not a penalty — just honesty about why a promising-looking title
+        # didn't earn points.
+        reasons.append({
+            "label": "In the title but not on your resume: "
+                     + ", ".join(unsupported),
+            "detail": "+0.00",
+        })
+
+    # -- technologies your résumé doesn't support ---------------------------
+    # Softer than a blocker: a role wanting Go isn't closed to you, it's a
+    # worse use of an application than one wanting Python. Anything that
+    # later appears in your résumé stops counting automatically.
+    for keyword, multiplier in config.UNSUPPORTED_TECH.items():
+        if _matches(keyword, title) and not profile_supports(keyword):
+            value *= multiplier
+            reasons.append({
+                "label": f"Wants {keyword}, which your resume doesn't show",
+                "detail": f"x{multiplier:.2f}",
+            })
 
     # -- blockers: multiply down --------------------------------------------
     for keyword, multiplier in config.CANDIDACY_BLOCKERS.items():
@@ -347,6 +424,20 @@ def is_coop(posting) -> bool:
     """
     title = _field(posting, "role") or ""
     return any(_matches(kw, title) for kw in config.COOP_KEYWORDS)
+
+
+def is_off_season(posting) -> bool:
+    """
+    Is this for a term other than summer?
+
+    "Software Engineer Intern - Winter 2027" runs during the academic year.
+    Same practical problem as a co-op: you'd not be in class.
+
+    A label, not a scoring input — and matched on the title only, so a
+    company merely named "Winter" isn't caught.
+    """
+    title = _field(posting, "role") or ""
+    return any(_matches(kw, title) for kw in config.OFF_SEASON_KEYWORDS)
 
 
 def is_fresh(age_days) -> bool:

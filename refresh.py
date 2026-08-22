@@ -32,6 +32,7 @@ import requests
 
 import dedupe
 import notify
+import push
 import scorer
 import storage
 from sources import (
@@ -54,6 +55,19 @@ SOURCES = [
 ]
 
 
+def _stamp() -> str:
+    """Local time, for the log.
+
+    The log had no timestamps, which meant that after the fact there was no
+    way to tell what time a scheduled run actually happened — only the file's
+    modification time, which is the LAST write, not the first. That made a
+    one-hour discrepancy between the configured schedule and the observed
+    log impossible to diagnose. Every run now says when it started.
+    """
+    from datetime import datetime
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
 def refresh(verbose: bool = True, notifications: bool = True) -> dict:
     """
     Run the full pipeline once. Returns a summary dict.
@@ -65,6 +79,9 @@ def refresh(verbose: bool = True, notifications: bool = True) -> dict:
 
     run_time = storage.now_iso()
     conn = storage.connect()
+
+    if verbose:
+        print(f"=== run started {_stamp()} ===")
 
     # -- 1. FETCH -----------------------------------------------------------
     all_postings = []
@@ -136,6 +153,10 @@ def refresh(verbose: bool = True, notifications: bool = True) -> dict:
     if notifications and result["new_ids"]:
         new_postings = [p for p in scored if p.id in result["new_ids"]]
         notified = notify.notify_strong_matches(new_postings)
+        # Phone push, if a topic is configured. Same threshold, so the two
+        # never disagree about what's worth interrupting you for.
+        if push.notify_matches(new_postings) and verbose:
+            print("  pushed to phone")
 
     conn.close()
     return {
