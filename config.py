@@ -3,47 +3,61 @@
  CONFIG — THIS IS THE FILE YOU EDIT
 ==============================================================================
 
-Everything that decides how a posting gets ranked lives in this file. No
-scoring numbers are hidden anywhere else in the codebase. If a role is ranked
-too high or too low, the fix is here.
+Everything that decides how a posting gets ranked lives here. No scoring
+numbers exist anywhere else in the codebase.
 
-HOW SCORING WORKS (read this once, then the rest is self-explanatory):
+HOW SCORING WORKS
+-----------------
+A posting's score is three factors MULTIPLIED, each between 0 and 1:
 
-    Every posting starts at 0 points and accumulates:
+    score = PREFERENCE × CANDIDACY × FRESHNESS × 100
 
-      1. ROLE TIER      — the big one. Which of your target roles is this?
-                          Only the BEST-matching tier counts (see note below).
-      2. CATEGORY       — which section of the repo it was listed under.
-      3. FOCUS BONUSES  — topic keywords you care about (AI, infra, data...).
-      4. OUT OF SCOPE   — fields this search isn't covering (quant,
-                          hardware...), so they sort to the bottom.
+    PREFERENCE   Do you want this role?
+                 From the role family and the topics involved.
 
-    Higher total = better fit = higher in the dashboard.
+    CANDIDACY    Would they realistically interview you?
+                 Grounded in what your résumé actually proves, and knocked
+                 down hard by things that disqualify you.
 
-WHY ONLY THE BEST TIER COUNTS:
-    A posting titled "Solutions Engineer Intern" contains the word "engineer",
-    so it would also match the generic Software Engineer tier. If tiers
-    stacked, generic SWE roles with padded titles would outrank a true
-    top-priority match. So we take the single highest tier a posting matches
-    and ignore the rest. Focus bonuses DO stack — those are additive by design.
+    FRESHNESS    Is it still open?
+                 Internship hiring is rolling; postings fill and close.
 
-TO TUNE IT:
-    - Role ranked too low?   Add a keyword to its tier, or raise that tier's
-                             `points`.
-    - Irrelevant roles high? Add a keyword to OUT_OF_SCOPE_KEYWORDS.
-    - Want a topic to matter more?  Raise its number in FOCUS_BONUSES.
+WHY MULTIPLY INSTEAD OF ADD
+---------------------------
+This is the important idea, and the first version of this tool got it wrong.
 
-    Then re-run:  python3 refresh.py
-    Scores are recomputed from scratch every run, so edits take effect
-    immediately. You never need to delete the database.
+The original model ADDED a big number for wanting a role — +150 for anything
+titled "forward deployed". That made preference swamp everything else, so a
+month-old role at a company that takes a handful of interns outranked a fresh
+posting that matched the résumé exactly. The list looked impressive and was
+useless: the top of it was full of things that couldn't be acted on.
+
+Multiplying fixes that, because it encodes the actual requirement: an
+application is only worth making if ALL THREE are true. You want it, AND you
+could plausibly get it, AND it's still open. A zero anywhere should sink the
+whole thing, and with multiplication it does.
+
+    Dream role, stale, long odds:   1.00 × 0.35 × 0.30  =  10
+    Good match, fresh, credible:    0.75 × 0.85 × 1.00  =  64
+
+The second one is what you should do today. The first is still visible — it's
+never hidden — but it stops crowding out things you can act on.
+
+TO TUNE IT
+----------
+  - A role type ranked too low?    Raise its number in ROLE_FAMILIES.
+  - Irrelevant roles too high?     Add keywords to OUT_OF_SCOPE.
+  - Not getting credit for a skill you have? Add it to CANDIDACY_EVIDENCE.
+  - Old postings sinking too fast? Raise the values in FRESHNESS_CURVE.
+
+  Then run:  python3 refresh.py
+  Scores are recomputed from scratch every run, so edits take effect at once.
 """
 
 # =============================================================================
 # 1. WHICH SOURCE TO PULL FROM
 # =============================================================================
 
-# The raw README URL. GitHub serves raw markdown from raw.githubusercontent.
-# 'dev' is the branch this repo actively updates.
 SOURCE_URL = (
     "https://raw.githubusercontent.com/"
     "SimplifyJobs/Summer2027-Internships/dev/README.md"
@@ -51,16 +65,11 @@ SOURCE_URL = (
 
 SOURCE_NAME = "Summer2027-Internships"
 
-# Which category sections to actually ingest.
+# Which category sections to ingest. Matched case-insensitively as substrings,
+# so "Product Management" matches "📱 Product Management Internship Roles".
 #
-# The repo has five sections. These are matched loosely (case-insensitive
-# substring), so "Product Management" matches the real heading
-# "📱 Product Management Internship Roles".
-#
-# Sections deliberately left out: "Quantitative Finance" and "Hardware
-# Engineering" — different career tracks from the ones this search targets.
-# To pull them in anyway, add the string to this list and re-run. Nothing
-# else needs to change.
+# Left out: "Quantitative Finance" and "Hardware Engineering" — different
+# career tracks. Add them here to pull them in; nothing else needs changing.
 INGEST_CATEGORIES = [
     "Software Engineering",
     "Product Management",
@@ -69,378 +78,506 @@ INGEST_CATEGORIES = [
 
 
 # =============================================================================
-# 2. ROLE TIERS — the heaviest weight in the model
+# 2. PREFERENCE — do you want this role?  (0.0 to 1.0)
 # =============================================================================
 #
-# Each tier is checked against the ROLE TITLE. A posting can match several
-# tiers ("Solutions Engineer" contains the word "engineer", so it matches both
-# the Solutions tier and the Software Engineering tier) — when that happens the
-# HIGHEST-VALUE matching tier wins and the others are ignored.
+# `preference` is the base value for a role family. A posting matching several
+# families takes the HIGHEST — "Solutions Engineer" contains "engineer", so it
+# matches both Solutions and generic SWE, and should be treated as the former.
 #
-# That means the `points` value decides priority, not the position in this
-# list. You can reorder these freely without changing behavior; to change
-# priority, change the number.
-#
-# The gaps between tiers are what actually produce the ranking, so keep them
-# wide enough that a top-tier role with no bonuses still beats a bottom-tier
-# role stacked with bonuses.
-#
-# The tiers below are a starting configuration, not a fixed part of the tool.
-# Rewrite the names, keywords, and values to match whatever roles you're
-# searching for — the scoring logic reads them generically.
+# These are fractions of an ideal role, not points. 1.0 means "exactly what
+# I'm looking for". 0.5 means "half as interesting".
 
-ROLE_TIERS = [
+ROLE_FAMILIES = [
     {
         "name": "Forward-Deployed / Solutions",
-        # WHY 150 AND NOT 100 — the one value here with real reasoning behind
-        # it, and a useful lesson in how weighted models go wrong:
-        #
-        # Roles in this tier are listed under Software Engineering, which
-        # earns only the +10 category bonus, while the tier below it earns
-        # +30. At 100 points, a bare top-tier match scored 110, but a
-        # bonus-laden second-tier match could reach 155 — so the lower tier
-        # systematically outranked the higher one. The tier gap said one
-        # thing; the bonuses quietly overrode it.
-        #
-        # 150 guarantees the ordering instead of hoping for it: the WORST a
-        # top-tier role can score (150 + 10) still beats the BEST the tier
-        # below can score (85 + 30 + 40 = 155).
-        #
-        # Lower this toward 100 if you'd rather a heavily-matched second-tier
-        # role sometimes place above a bare top-tier one.
-        "points": 150,
+        "preference": 1.00,
         "keywords": [
-            "forward deployed",
-            "forward-deployed",
-            "fde",
-            "solutions engineer",
-            "solutions architect",
-            "solution engineer",
-            "solution architect",
-            "sales engineer",          # often the same job under another name
-            "customer engineer",       # Google's term for it
-            "implementation engineer",
-            "deployment engineer",
-            "field engineer",
+            "forward deployed", "forward-deployed", "fde",
+            "solutions engineer", "solutions architect",
+            "solution engineer", "solution architect",
+            "sales engineer", "customer engineer",
+            "implementation engineer", "deployment engineer",
+            "field engineer", "solutions consultant",
         ],
     },
     {
         "name": "Technical PM / APM",
-        "points": 85,
+        "preference": 0.92,
         "keywords": [
-            "product manager",
-            "product management",
-            "associate product manager",
-            "apm",
-            "technical product",
-            "product intern",
-            "pm intern",
+            "product manager", "product management",
+            "associate product manager", "apm", "technical product",
+            "product intern", "pm intern",
         ],
     },
     {
         "name": "Technical Consulting / Strategy",
-        "points": 60,
+        "preference": 0.72,
         "keywords": [
-            "technical consultant",
-            "technology consultant",
-            "consultant",
-            "consulting",
-            "technical strategy",
-            "product strategy",
-            "business technology",
-            "technical program manager",
-            "tpm",
+            "technical consultant", "technology consultant",
+            "consultant", "consulting", "technical strategy",
+            "product strategy", "business technology",
+            "technical program manager", "tpm",
         ],
     },
     {
         "name": "Software Engineering",
-        "points": 40,
-        # Deliberately the lowest tier, because the focus bonuses below are
-        # what lift the specialized SWE roles (systems, infra, data, AI) above
-        # the generic ones. A plain "Software Engineer Intern" scores 40; an
-        # "Infrastructure Engineer Intern" scores 40 + bonuses. That's the
-        # intended behavior — it's what prevents a wall of interchangeable SWE
-        # listings from filling the top of the list.
+        # 0.50 is the FLOOR for a generic SWE role, not the ceiling. The
+        # FOCUS_LIFT values below raise it toward 1.0 when the role is in an
+        # area you actually want — infrastructure, data platform, developer
+        # tools. A plain "Software Engineer Intern" stays at 0.50; a "Software
+        # Engineer Intern, Data Platform" lands around 0.80.
+        "preference": 0.50,
         "keywords": [
-            "software engineer",
-            "software engineering",
-            "swe",
-            "developer",
-            "programmer",
-            "data engineer",
-            "machine learning engineer",
-            "ml engineer",
-            "research engineer",
-            "data scientist",
-            "backend",
-            "full stack",
-            "fullstack",
+            "software engineer", "software engineering", "swe",
+            "developer", "programmer", "data engineer",
+            "machine learning engineer", "ml engineer",
+            "research engineer", "data scientist",
+            "backend", "full stack", "fullstack", "infrastructure engineer",
+            "platform engineer",
         ],
     },
 ]
 
+# Preference for a posting that matched no family at all.
+UNKNOWN_FAMILY_PREFERENCE = 0.30
 
-# =============================================================================
-# 3. CATEGORY BONUS — which section of the repo it came from
-# =============================================================================
+# Topics that make a role MORE interesting, added to the family's preference
+# and capped at 1.0. These are about what you want to work on — CANDIDACY
+# below is the separate question of whether you're qualified for it.
+FOCUS_LIFT = {
+    # Infrastructure and platform — the strongest signal for your targets
+    "infrastructure": 0.18,
+    "infra": 0.18,
+    "platform": 0.15,
+    "developer experience": 0.22,
+    "developer tools": 0.22,
+    "internal tools": 0.18,
+    "devex": 0.22,
+    "systems": 0.12,
+    "distributed": 0.12,
+    "cloud": 0.10,
+    "devops": 0.12,
+    "sre": 0.12,
+    "site reliability": 0.12,
+
+    # Data
+    "data platform": 0.20,
+    "data infrastructure": 0.20,
+    "data engineering": 0.16,
+    "data pipeline": 0.18,
+    "database": 0.12,
+    "data": 0.08,
+
+    # AI, applied rather than research — see CANDIDACY_BLOCKERS for why
+    # research-heavy roles are treated differently
+    "llm": 0.18,
+    "genai": 0.16,
+    "generative": 0.14,
+    "ai": 0.10,
+    "ml": 0.08,
+    "machine learning": 0.08,
+    "applied ai": 0.20,
+    "ai engineer": 0.20,
+
+    # Customer-facing — core to forward-deployed work
+    "customer": 0.18,
+    "client": 0.15,
+    "field": 0.12,
+    "solutions": 0.15,
+    "technical": 0.06,
+}
+
+# Ceiling on total lift, so a keyword-stuffed title can't rocket a generic
+# role past a genuinely top-tier one.
+MAX_FOCUS_LIFT = 0.35
+
+# Fields this search isn't covering. These MULTIPLY preference down rather
+# than subtracting, so a quant role is worth a fraction of a real match no
+# matter what else its title says.
 #
-# The section a posting is filed under is itself a signal, independent of what
-# the title says. Matched as a case-insensitive substring against the
-# section heading.
+# Not a judgment about the work — a relevance filter for one person's search.
+OUT_OF_SCOPE = {
+    "quantitative": 0.10, "quant": 0.10, "trading": 0.10,
+    "trader": 0.10, "hedge fund": 0.15,
 
-CATEGORY_BONUS = {
-    "Product Management": 30,       # small pool, weighted up to surface it
-    "Data Science, AI & Machine Learning": 15,
-    "Software Engineering": 10,
+    "hardware": 0.20, "embedded": 0.25, "fpga": 0.10, "asic": 0.10,
+    "verilog": 0.10, "rtl": 0.15, "silicon": 0.15, "analog": 0.15,
+    "circuit": 0.15, "mechanical": 0.10, "electrical": 0.20,
+
+    "recruiting": 0.15, "marketing": 0.25, "accounting": 0.10,
+    "sales development": 0.25,
 }
 
 
 # =============================================================================
-# 4. FOCUS BONUSES — topics you want, these STACK
+# 3. CANDIDACY — would they realistically interview you?  (0.0 to 1.0)
 # =============================================================================
 #
-# Checked against role title + category together. Each keyword scores at most
-# once, but different keywords add up. Grouped only for readability — the
-# groups have no special meaning, it's one flat pool of keyword -> points.
+# This is the half the original tool was missing entirely, and the reason it
+# recommended roles you had little chance at.
+#
+# Everything here should be answerable with "my résumé proves this". If you
+# can't point at a bullet, it doesn't belong in CANDIDACY_EVIDENCE.
+#
+# AN HONEST LIMITATION: the source gives a job TITLE, not a description. This
+# reliably catches blunt cases ("PhD", "Senior") and rewards visible stack
+# overlap. It cannot know a role wants three years of Kubernetes. It's a
+# sorting aid, not a verdict — never let it stop you applying to something you
+# want.
 
-FOCUS_BONUSES = {
-    # --- AI / ML ---
-    "ai": 12,
-    "artificial intelligence": 12,
-    "ml": 12,
-    "machine learning": 12,
-    "llm": 15,
-    "genai": 15,
-    "generative": 12,
-    "nlp": 10,
-    "deep learning": 10,
+# Where an unremarkable role starts. Not 1.0: you're an undergrad with two
+# internships, which is strong but not a guaranteed interview anywhere.
+#
+# HONEST LIMITATION, worth understanding: most job TITLES contain no skill
+# keywords at all ("Software Engineer Intern"), so for roughly two-thirds of
+# postings candidacy never moves off this baseline. It does real work at the
+# extremes — blockers like "PhD" sink a posting, and a title naming your
+# actual stack lifts one — but in the middle it's close to a constant.
+#
+# The fix isn't a cleverer number here: it's pasting the real job description
+# on the application-prep page, where the full text is available. Treat this
+# factor as a filter against obvious mismatches, not a precise estimate.
+CANDIDACY_BASELINE = 0.60
 
-    # --- Infrastructure / systems ---
-    "infrastructure": 12,
-    "infra": 12,
-    "systems": 10,
-    "platform": 10,
-    "distributed": 10,
-    "cloud": 8,
-    "backend": 6,
-    "devops": 8,
-    "site reliability": 8,
-    "sre": 8,
+# Things your résumé demonstrably proves. Added to the baseline, capped at
+# 1.0. KEEP THIS IN SYNC WITH YOUR RÉSUMÉ — it's the part of this file that
+# goes stale as you learn things.
+CANDIDACY_EVIDENCE = {
+    # Directly evidenced by shipped work
+    "python": 0.15,
+    "data pipeline": 0.20,
+    "pipelines": 0.15,
+    "etl": 0.15,
+    "backend": 0.15,
+    "sql": 0.14,
+    "postgres": 0.14,
+    "database": 0.12,
+    "aws": 0.12,
+    "docker": 0.12,
+    "microservice": 0.15,
+    "microservices": 0.15,
+    "internal tools": 0.20,
+    "developer experience": 0.20,
+    "developer tools": 0.20,
+    "platform": 0.12,
+    "infrastructure": 0.12,
 
-    # --- Data ---
-    "data": 8,
-    "data platform": 12,
-    "analytics": 6,
-    "database": 8,
+    # LLM/AI application work — Spotlight and the subagent code review
+    "llm": 0.16,
+    "genai": 0.14,
+    "applied ai": 0.16,
+    "ai engineer": 0.14,
+    "prompt": 0.12,
 
-    # --- Customer-facing / technical-but-people-facing ---
-    "customer": 12,
-    "client": 10,
-    "field": 8,
-    "partner": 6,
-    "technical": 6,
-    "solutions": 10,
+    # Web stack
+    "typescript": 0.12,
+    "javascript": 0.10,
+    "react": 0.12,
+    "full stack": 0.10,
+    "fullstack": 0.10,
+    "node": 0.10,
+
+    # ML — engineering side only. You've built pipelines that FEED models,
+    # which is a different thing from training them. Weighted lower than the
+    # data-engineering entries on purpose.
+    "pytorch": 0.10,
+    "machine learning": 0.06,
+    "ml": 0.06,
 }
 
-# Ceiling on the TOTAL focus bonus a single posting can collect.
-#
-# Why this exists: the keywords above overlap on purpose ("ai" and "artificial
-# intelligence", "ml" and "machine learning", "data" and "data platform").
-# Without a cap, a title like "AI/ML Data Platform Infrastructure Intern"
-# collects six overlapping bonuses and outranks a genuine Forward-Deployed
-# role. The cap keeps bonuses as a tie-breaker between similar roles rather
-# than something that can overturn the role tiers.
-#
-# Raise it if you want topic keywords to matter more; set it very high to
-# effectively disable the cap.
-MAX_FOCUS_BONUS = 40
+CANDIDACY_MAX_EVIDENCE = 0.40
 
-
-# =============================================================================
-# 5. OUT OF SCOPE — fields this particular search isn't covering
-# =============================================================================
+# Things that make you a poor or ineligible candidate. These MULTIPLY, so a
+# single hard blocker sinks the posting no matter how good the match looks.
 #
-# The source repo mixes several career tracks into the same listings. These
-# keywords mark the ones outside the scope of THIS search, so they sort to the
-# bottom instead of crowding out the roles being looked for.
-#
-# To be clear about what this is: a relevance filter for one person's job
-# search, not a judgment about the work. Quantitative finance, chip design, and
-# marketing are all excellent careers — they're simply not the ones this tool
-# is pointed at. Someone searching for those roles would flip these numbers
-# positive and move the software keywords down here instead.
-#
-# The values are negative so matches sort downward. They stack, and they're
-# matched against the role title.
+# Tuned for an undergraduate targeting a summer internship between junior and
+# senior year. If you start a master's, delete the degree entries.
+CANDIDACY_BLOCKERS = {
+    # Degree requirements — genuine disqualifiers
+    "phd": 0.05, "doctoral": 0.05, "masters": 0.10,
+    "master's": 0.10, "mba": 0.10, "graduate student": 0.15,
 
-OUT_OF_SCOPE_KEYWORDS = {
-    # --- Quantitative finance: a separate track with its own pipeline ---
-    "quantitative": -40,
-    "quant": -40,
-    "trading": -35,
-    "trader": -40,
-    "hedge fund": -30,
+    # Not internships
+    "new grad": 0.15, "senior": 0.10, "staff": 0.10,
+    "principal": 0.10, "manager ii": 0.15,
 
-    # --- Hardware, embedded, and other engineering disciplines ---
-    "hardware": -30,
-    "embedded": -25,
-    "fpga": -35,
-    "asic": -35,
-    "verilog": -35,
-    "rtl": -30,
-    "silicon": -30,
-    "chip": -25,
-    "analog": -30,
-    "circuit": -30,
-    "mechanical": -35,
-    "electrical": -30,
-
-    # --- Non-engineering roles that appear in these tech listings ---
-    "recruiting": -30,
-    "marketing": -25,
-    "sales development": -25,
-    "accounting": -35,
+    # Deep specializations your résumé doesn't evidence. Not zero — you could
+    # still be considered — but honestly long odds against people who've done
+    # exactly this.
+    "research scientist": 0.20,
+    "compiler": 0.35,
+    "kernel": 0.30,
+    "cryptography": 0.30,
+    "robotics": 0.35,
+    "computer vision": 0.45,
+    "nlp research": 0.30,
+    "formal verification": 0.25,
 }
 
-# Advanced-degree adjustment.
-#
-# The repo marks roles requiring a Master's/PhD/MBA with a 🎓 emoji. Those
-# are outside the scope of this search, so they sort down rather than being
-# hidden entirely. SET THIS TO 0 to rank them normally.
-ADVANCED_DEGREE_PENALTY = -15
+# The repo's 🎓 marker, applied on top of the keyword blockers above. It's set
+# deliberately by maintainers, so it's more reliable than title text.
+ADVANCED_DEGREE_MULTIPLIER = 0.15
 
-# The repo marks FAANG+ companies with 🔥. No score effect by default — it's
-# displayed in the dashboard as a badge. Raise this if brand matters to you.
-FAANG_BONUS = 0
+# Highly competitive employers (the repo's 🔥 marker). Deliberately mild —
+# long odds are not closed doors, and burying every good company would make
+# this tool useless in a different way. Set to 1.0 to ignore entirely.
+COMPETITIVE_EMPLOYER_MULTIPLIER = 0.85
 
 
 # =============================================================================
-# 6. THE INTERNSHIP GATE
+# 4. FRESHNESS — is it still open?  (0.0 to 1.0)
 # =============================================================================
 #
-# Your spec says internship-level only. The source repo is internship-only, so
-# this is a safety net rather than a real filter — it matters more later when
-# you add New-Grad-Positions as a second source.
+# WHAT THE EVIDENCE SAYS
+# ----------------------
+# The direction is well supported and matches how rolling internship hiring
+# works: recruiters review top-of-funnel first, and postings close once a
+# shortlist forms. Popular roles draw 100-250 applications in 24-48 hours.
 #
-# A posting must contain at least one of these in its title to be kept.
-# Set REQUIRE_INTERNSHIP = False to disable the gate entirely.
+# The widely quoted multipliers ("8x within 96 hours", "90% of interviews go
+# to 24-hour applicants") come mostly from companies selling application-speed
+# tools, and the most-cited study is from a firm that no longer exists. Treat
+# the magnitudes as marketing and the direction as real.
+#
+# Recruiters are also consistent that older postings ARE still worth applying
+# to — roles stay open for slow processes, and some companies must keep a
+# listing up until an offer is signed. That's why the curve has a FLOOR and
+# nothing is ever excluded by age.
+
+# (days old, multiplier) — first row whose threshold is >= the age wins.
+#
+# STEEP ON PURPOSE. Internship hiring is rolling: recruiters work top-of-funnel
+# first and close a posting once a shortlist forms. A role posted today and the
+# same role posted a week ago are not the same opportunity, and a gentle curve
+# hides that.
+#
+# Where the evidence actually lands: the strongest study puts the prime window
+# at about 96 hours, not 24. So day 3 is still genuinely worth applying to —
+# it's inside the window — while day 10 mostly is not. The curve reflects that
+# shape: near-flat for the first two days, falling off a cliff after four.
+FRESHNESS_CURVE = [
+    (0,  1.00),   # today — the reason to check every morning
+    (1,  0.82),
+    (2,  0.66),
+    (3,  0.52),   # still inside the prime window, but clearly worse
+    (5,  0.34),
+    (7,  0.20),
+    (10, 0.10),
+    (14, 0.05),
+    (999, 0.02),  # effectively dead, and filtered out by default anyway
+]
+
+# Unknown age is treated as middling rather than punished — a parsing failure
+# on our side shouldn't cost a posting its rank.
+UNKNOWN_AGE_FRESHNESS = 0.45
+
+# HARD CUTOFF: postings older than this are hidden by default.
+#
+# This is the one setting that removes things from the tool rather than just
+# ranking them lower, so it deserves a clear-eyed look.
+#
+# WHAT EACH VALUE COSTS YOU, measured against the current 408 postings:
+#
+#      cutoff    kept    PM roles    forward-deployed roles
+#         3d      126           2                         0
+#         7d      166           4                         0
+#        14d      250          18                         0
+#        30d      408          28                         2
+#
+# Note the last column. Both forward-deployed roles currently listed are 29
+# days old, so ANY cutoff under 29 hides your highest-preference category
+# completely. That's the real price of a tight window, and it's why the
+# dashboard keeps a "Show stale" checkbox — the postings still exist, they're
+# just out of the way until you ask.
+#
+# Raise this if the daily list feels too thin; lower it toward 3 if you only
+# ever want same-week postings.
+MAX_AGE_DAYS = 7
+
+# Postings at or under this age get a "fresh" badge.
+FRESH_DAYS = 3
+
+# Default dashboard sort:
+#   "score"       preference × candidacy × freshness  (what to do today)
+#   "preference"  how much you want it, ignoring odds and age
+#   "candidacy"   where you're strongest
+#   "recency"     newest first
+DEFAULT_SORT = "score"
+
+
+# =============================================================================
+# 5. THE INTERNSHIP GATE
+# =============================================================================
 
 REQUIRE_INTERNSHIP = True
 
 INTERNSHIP_KEYWORDS = [
-    "intern",
-    "internship",
-    "co-op",
-    "coop",
-    "summer",
-    "student",
+    "intern", "internship", "co-op", "coop", "summer", "student",
 ]
 
 
 # =============================================================================
-# 7. DISPLAY SETTINGS — cosmetic only, no effect on ranking
+# 6. DISPLAY — cosmetic only
 # =============================================================================
 
-# Score at or above this gets a "STRONG FIT" badge in the dashboard.
-STRONG_FIT_THRESHOLD = 100
+# Score bands.
+#
+# CALIBRATED AGAINST THE REAL DISTRIBUTION, not picked as round numbers.
+# Multiplying three fractions compresses the range — 0.8 x 0.7 x 0.9 is only
+# 50 — so a "50" here is not a mediocre score, it's near the top of what
+# actually exists. Measured across the current 404 postings, the best
+# available role scores in the low 50s and the median is under 20.
+#
+# Read a score as "how good is this compared to what's realistically out
+# there today", not as a percentage of some perfect job that isn't on the
+# list. If you widen INGEST_CATEGORIES or your résumé grows, re-check these.
+STRONG_FIT_THRESHOLD = 42
+GOOD_FIT_THRESHOLD = 28
+LOW_FIT_THRESHOLD = 14
 
-# Score at or above this gets a "GOOD FIT" badge.
-GOOD_FIT_THRESHOLD = 60
-
-# Postings scoring below this are hidden behind the "show low-fit" toggle.
-# They're still stored and scored — just collapsed by default.
-LOW_FIT_THRESHOLD = 20
-
-# Where the local database file lives (created automatically on first run).
 DATABASE_PATH = "internships.db"
 
 
 # =============================================================================
-# 8. AUTOMATION — the scheduled daily refresh
+# 7. AUTOMATION
 # =============================================================================
 
-# How long a "visit" to the dashboard lasts, in minutes.
-#
-# NEW badges mean "arrived since you last looked". To stop badges vanishing
-# while you're mid-browse, page loads within this many minutes of your last
-# activity count as the same visit and leave the badges alone. Come back after
-# a longer gap and it counts as a new visit, so the badges then show
-# everything that arrived since your previous one.
-#
-# Raise it if badges clear sooner than you'd like; lower it to have them clear
-# more eagerly.
+# How long a dashboard "visit" lasts, in minutes. Page loads within this
+# window count as the same visit, so NEW badges don't vanish mid-browse.
 VISIT_SESSION_MINUTES = 30
 
-# Show a macOS notification when a refresh finds new postings worth knowing
-# about. Set to False for silent refreshes.
-#
-# Only affects the scheduled job and the command line — it never fires from
-# the dashboard's Refresh button, since you're already looking at the results.
+# Notify when a scheduled refresh finds new postings worth acting on.
 NOTIFY_ON_STRONG_FIT = True
 
-# =============================================================================
-# 9. APPLICATION PREP — cover letter drafting
-# =============================================================================
+# Score a NEW posting must reach to be worth interrupting you for.
 #
-# Your résumé, in the form the letter generator reads. Gitignored — it holds
-# your contact details and work history. Start from profile_example.md.
-#
-# The letters are only as specific as this file. Its "Notes for the letter
-# writer" section is the highest-leverage thing to keep adding to.
+# Separate from STRONG_FIT_THRESHOLD on purpose: that decides badge colour,
+# this decides whether to interrupt. Tying them together once left the feature
+# silent for days while relevant roles arrived unannounced.
+NOTIFY_THRESHOLD = GOOD_FIT_THRESHOLD
+
+
+# =============================================================================
+# 8. COVER LETTERS AND WORK EXPERIENCE
+# =============================================================================
+
+# Your résumé, in the form the generator reads. Gitignored. Start from
+# profile_example.md.
 PROFILE_PATH = "profile.md"
 
-# Where generated drafts are written. Also gitignored — they're in your name.
+# Where generated drafts are written. Also gitignored.
 LETTERS_DIR = "letters"
 
-# Which model drafts the letters, and how hard it thinks.
+# YOU DON'T HAVE TO PAY FOR THIS. Every letter page offers a "copy this
+# prompt" option that costs nothing — paste it into claude.ai, ChatGPT, or
+# anything else. The settings below only affect the one-click button.
 #
-# YOU DON'T HAVE TO PAY FOR THIS AT ALL. The dashboard's letter page always
-# offers a "copy this prompt" option that costs nothing — you paste it into
-# claude.ai, ChatGPT, or whatever you already use free, and paste the result
-# back. The settings below only affect the one-click "generate here" button.
+# MEASURED COST per letter (~1,700 input, ~2,300 output including thinking
+# tokens, which bill as output):
 #
-# MEASURED COST per letter (~1,700 input tokens, ~2,300 output including
-# thinking tokens, which bill as output — easy to forget):
-#
-#     claude-opus-5     effort=high     $0.066     $3.31 per 50 letters
+#     claude-opus-5     effort=high     $0.066     $3.31 per 50
 #     claude-opus-5     effort=low      $0.039     $1.93 per 50
 #     claude-sonnet-5   effort=high     $0.026     $1.32 per 50
 #     claude-haiku-4-5  effort=high     $0.013     $0.66 per 50
-#     copy-paste prompt               free        free
-#
-# The per-letter cost is small either way; the real threshold is that the
-# Anthropic console has a minimum credit purchase. If you'd rather not fund an
-# account at all, use the copy-paste option and leave these alone.
+#     copy-paste                        free       free
 LETTER_MODEL = "claude-opus-5"
-
-# Reasoning effort: "low" | "medium" | "high" | "xhigh" | "max".
-#
-# Picking WHICH of your experiences match a posting — and being honest about
-# what doesn't — is a judgment call, so this is set above the minimum. Dropping
-# to "low" roughly halves the cost by cutting thinking tokens.
 LETTER_EFFORT = "high"
-
-# Shown on the letter page so the price is visible at the moment you choose,
-# rather than buried in this file. Update it if you change the model above.
+LETTER_MAX_TOKENS = 8000
 LETTER_COST_ESTIMATE = "about 7¢"
 
-# Generous enough that a letter is never truncated mid-sentence.
-LETTER_MAX_TOKENS = 8000
 
+# =============================================================================
+# 9. WHAT EACH KIND OF ROLE WANTS TO READ
+# =============================================================================
+#
+# A cover letter for a forward-deployed role and one for a backend SWE role
+# are not the same document, even from the same person with the same résumé.
+# An FDE reviewer is scanning for evidence you can sit with a customer and
+# survive ambiguity; a SWE reviewer wants depth on the hardest thing you've
+# shipped. The same Backstage project is the lead story for one and a footnote
+# for the other.
+#
+# Keys MUST match the "name" values in ROLE_FAMILIES above.
 
-# The score a NEW posting must reach to be worth interrupting you for.
-#
-# THIS IS DELIBERATELY SEPARATE FROM STRONG_FIT_THRESHOLD, and the difference
-# matters. STRONG_FIT_THRESHOLD decides what gets a green badge in the
-# dashboard; this decides what's worth a notification. They answer different
-# questions and want different numbers.
-#
-# Measured against real data: of ~55 postings added on a typical day, roughly
-# 7 score 60+ and almost none score 100+. Tying notifications to 100 meant the
-# feature stayed silent for days at a time while genuinely relevant roles — a
-# 90-point Product Management internship among them — arrived unannounced.
-#
-# At 60 you get roughly one notification a morning, summarizing that day's
-# worthwhile matches. Raise it for fewer interruptions; lower it to hear about
-# everything.
-NOTIFY_THRESHOLD = GOOD_FIT_THRESHOLD
+ROLE_FAMILY_GUIDANCE = {
+
+    "Forward-Deployed / Solutions": {
+        "emphasis": (
+            "Judged on whether you can work directly with customers and "
+            "operate in ambiguity, not on algorithmic depth. Lead with "
+            "evidence of building something other people had to adopt, "
+            "translating between technical and non-technical audiences, and "
+            "shipping into an environment you didn't fully control. Technical "
+            "credibility is the floor, not the pitch — show you can deploy "
+            "AND explain."
+        ),
+        "experience_framing": (
+            "Frame each item around who you served and what problem of theirs "
+            "you solved. Name the stakeholders, the ambiguity you worked "
+            "through, and how adoption or usage changed. Technical detail "
+            "supports the story rather than being the story."
+        ),
+    },
+
+    "Technical PM / APM": {
+        "emphasis": (
+            "Judged on product judgment: why you built a thing, who it was "
+            "for, what you chose not to do, and how you knew it worked. Lead "
+            "with user impact and decisions rather than implementation. Where "
+            "you influenced scope or reconciled competing views, say so — "
+            "that's the job. Stay technical enough to be credible; this is a "
+            "TECHNICAL PM role, not a generalist one."
+        ),
+        "experience_framing": (
+            "Frame each item as: the user or problem, the decision you made, "
+            "the tradeoff you accepted, the measurable outcome. Lead with the "
+            "'why' and the result; compress the 'how'. Where you worked "
+            "across people with different opinions, make it visible."
+        ),
+    },
+
+    "Software Engineering": {
+        "emphasis": (
+            "Judged on technical depth. Pick the single hardest engineering "
+            "problem in the profile that's relevant to this posting and go "
+            "deep — the system, the failure mode, the specific fix, the "
+            "measured result. Depth on one thing beats a tour of everything. "
+            "Don't soften technical detail for readability; the reader is an "
+            "engineer."
+        ),
+        "experience_framing": (
+            "Frame each item around the technical problem and what you did: "
+            "the system, the constraint, the approach, the measurable result. "
+            "Keep the specifics — concrete details are the evidence. Name "
+            "real technologies rather than categories."
+        ),
+    },
+
+    "Technical Consulting / Strategy": {
+        "emphasis": (
+            "Judged on structured thinking and communication. Show you can "
+            "take an ambiguous problem, break it down, and explain the "
+            "reasoning to someone non-technical. Evidence of working across "
+            "teams with competing priorities is worth more here than raw "
+            "implementation depth."
+        ),
+        "experience_framing": (
+            "Frame each item as problem → approach → outcome, with the "
+            "reasoning visible. Emphasize working across groups, handling "
+            "ambiguity, and communicating decisions. Quantify wherever the "
+            "profile supports it."
+        ),
+    },
+}
+
+DEFAULT_FAMILY_GUIDANCE = {
+    "emphasis": (
+        "Lead with the experience in the profile that most directly matches "
+        "this posting, and be concrete about what was built and what resulted."
+    ),
+    "experience_framing": (
+        "Frame each item around the problem, what you did, and the measurable "
+        "result."
+    ),
+}

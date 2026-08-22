@@ -46,8 +46,19 @@ class Posting:
     citizenship_required: bool = False   # 🇺🇸 requires U.S. citizenship
 
     # --- Filled in later by scorer.py, not by the source ---
-    fit_score: int = 0
-    score_reasons: list = field(default_factory=list)
+    # Three separate numbers rather than one, because they answer different
+    # questions: do you want it, would they take you, and how fast is it
+    # going stale. Blending them into a single stored score would hide the
+    # cases that matter most.
+    # Three separate numbers, not one. They answer different questions —
+    # do you want it, would they take you, and is it still open — and
+    # blending them would hide the cases that matter most.
+    preference: float = 0.0
+    preference_reasons: list = field(default_factory=list)
+    candidacy_score: float = 0.0
+    candidacy_reasons: list = field(default_factory=list)
+    role_family: str = ""     # matched ROLE_FAMILIES entry; drives letters
+    fit_score: int = 0        # the three multiplied, 0-100
 
     @property
     def id(self) -> str:

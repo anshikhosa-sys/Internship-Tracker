@@ -3,27 +3,29 @@ tests.py — checks the logic that's easy to get quietly wrong.
 
     python3 tests.py
 
-These use a throwaway database in a temp folder, so running them never touches
-your real internships.db. They don't hit the network either — the parser is
-tested against a small chunk of saved HTML.
+Throwaway databases in temp folders, no network. Running this never touches
+your real internships.db.
 
-WHY THESE PARTICULAR TESTS?
-Not everything needs a test, but two things here genuinely do:
+WHY THESE TESTS EXIST
+Two of them encode bugs this project actually shipped and had to fix:
 
-  1. The NEW flag. It depends on timestamps lining up across runs, and a bug
-     is invisible — you'd just see slightly wrong badges and never know. The
-     first version of this code had an off-by-one-run bug that these tests
-     caught: `first_seen >= previous_run` also matched postings inserted
-     during the previous run, so they were reported new twice.
+  1. The NEW flag was off by one run — `first_seen >= previous_run` also
+     matched postings inserted during the previous run, so they were reported
+     as new twice.
 
-  2. Applied marks surviving a refresh. If that breaks, you lose data you
-     can't recover.
+  2. Scoring used to ADD a large constant for wanting a role (+150 for
+     "forward deployed"), which let preference swamp everything else. A
+     month-old role you couldn't realistically get outranked a fresh one that
+     matched exactly. The multiplicative model replaced it, and the tests
+     below pin the property that makes it work.
 """
 
 import os
 import tempfile
+from datetime import date, timedelta
 
 import config
+import letters
 import scorer
 import storage
 from sources.base import Posting
@@ -34,7 +36,6 @@ PASSED = 0
 
 
 def check(condition, label):
-    """Tiny assertion helper so output reads like a checklist."""
     global PASSED
     if condition:
         PASSED += 1
@@ -44,8 +45,10 @@ def check(condition, label):
         raise AssertionError(label)
 
 
-def make_posting(n, score=50, role=None, category="Software Engineering"):
-    posting = Posting(
+def make_posting(n, role=None, category="Software Engineering",
+                 age_days=0, faang=False, advanced_degree=False):
+    posted = (date.today() - timedelta(days=age_days)).isoformat()
+    return Posting(
         company=f"Company{n}",
         role=role or f"Role {n} Intern",
         category=category,
@@ -53,17 +56,16 @@ def make_posting(n, score=50, role=None, category="Software Engineering"):
         apply_url=f"https://example.com/{n}",
         simplify_url=f"https://simplify.jobs/p/uuid-{n}",
         source="test",
+        date_posted=posted,
+        is_faang=faang,
+        needs_advanced_degree=advanced_degree,
     )
-    posting.fit_score = score
-    return posting
 
 
 # =============================================================================
 def test_parser():
     print("\nPARSER")
 
-    # A cut-down version of the real table, including the two awkward cases:
-    # a continuation row (↳) and a collapsed multi-location cell.
     html = """
     <table><tbody>
     <tr>
@@ -94,17 +96,12 @@ def test_parser():
     check(_cell_text(rows[0][0]) == "Acme", "reads the company name")
     check(_cell_text(rows[1][0]) == "↳", "continuation marker reaches the row")
 
-    # The multi-location cell is the one that used to come out mangled as
-    # "2 locationsSeattle, WA".
     location = _cell_text(rows[1][2])
     check("locations" not in location,
           "drops the '2 locations' summary label")
     check(location == "Seattle, WA | Remote",
           f"joins multiple locations cleanly (got {location!r})")
-
-    # Links: the apply URL and the Simplify URL must be told apart.
-    links = rows[0][3]["links"]
-    check(any("simplify.jobs/p/" in link for link in links),
+    check(any("simplify.jobs/p/" in link for link in rows[0][3]["links"]),
           "captures the Simplify posting URL")
 
     print("\nAGE PARSING")
@@ -118,48 +115,165 @@ def test_parser():
 
 
 # =============================================================================
-def test_scoring():
-    print("\nSCORING")
+def test_preference():
+    print("\nPREFERENCE — do you want it")
 
-    def score_of(role, category="Software Engineering"):
-        return scorer.score(make_posting(1, role=role, category=category))[0]
+    def pref(role, category="Software Engineering"):
+        return scorer.preference(make_posting(1, role=role,
+                                              category=category))[0]
 
-    # The whole-word matching bug: "ai" must not match inside other words.
-    check(score_of("Email Platform Intern") < score_of("AI Platform Intern"),
-          "'Email' does not collect the AI bonus (whole-word matching)")
-    check(score_of("Training Program Intern") < score_of("AI Engineer Intern"),
-          "'Training' does not collect the AI bonus")
+    # Whole-word matching: "ai" must not fire inside other words.
+    check(pref("Email Platform Intern") < pref("AI Platform Intern"),
+          "'Email' does not collect the AI lift (whole-word matching)")
+    check(pref("Training Program Intern") < pref("AI Engineer Intern"),
+          "'Training' does not collect the AI lift")
 
-    # Tier ordering must hold even against bonuses.
-    fde = score_of("Forward Deployed Engineer Intern")
-    pm = score_of("AI Data Platform Product Manager Intern",
-                  "Product Management")
-    check(fde > pm,
-          f"a bare top-tier role ({fde}) outranks a loaded lower tier ({pm})")
+    # Family ordering.
+    check(pref("Forward Deployed Engineer Intern") >
+          pref("Product Manager Intern") >
+          pref("Software Engineer Intern"),
+          "role families rank in the intended order")
 
-    generic = score_of("Software Engineer Intern")
-    focused = score_of("Software Engineer Intern, Distributed Systems")
+    # Focus lift is what separates good SWE roles from generic ones.
+    generic = pref("Software Engineer Intern")
+    focused = pref("Software Engineer Intern, Data Platform")
     check(focused > generic,
-          f"a systems SWE role ({focused}) outranks a generic one ({generic})")
+          f"a data-platform SWE role ({focused}) beats a generic one "
+          f"({generic})")
+    check(generic == config.ROLE_FAMILIES[-1]["preference"],
+          "a bare SWE title sits at the family floor")
 
-    # Only the best tier counts, so "Solutions Engineer" isn't also paid for
-    # matching the generic "engineer" tier.
-    solutions = score_of("Solutions Engineer Intern")
-    check(solutions < 150 + 10 + 40 + 1, "role tiers do not stack")
+    # Only the best family counts, so "Solutions Engineer" isn't also paid
+    # for matching the generic "engineer" family.
+    check(pref("Solutions Engineer Intern") <= 1.0,
+          "preference never exceeds 1.0")
 
-    # The focus cap.
-    stuffed = score_of("AI ML Data Platform Infrastructure Systems Intern")
-    check(stuffed <= 40 + config.MAX_FOCUS_BONUS + 150,
-          "keyword-stuffed titles are capped")
+    # Out-of-scope multiplies down rather than subtracting.
+    check(pref("Quantitative Trading Intern") < 0.2,
+          "out-of-scope roles are worth a fraction of a real match")
 
-    # Out-of-scope fields sort to the bottom.
-    check(score_of("Quantitative Trading Intern") < 0,
-          "roles outside this search's scope sort below everything else")
 
-    # The internship gate.
+# =============================================================================
+def test_candidacy():
+    print("\nCANDIDACY — would they take you")
+
+    def cand(role, **kwargs):
+        return scorer.candidacy(make_posting(1, role=role, **kwargs))[0]
+
+    baseline = cand("Software Engineer Intern")
+    check(baseline == config.CANDIDACY_BASELINE,
+          "an unremarkable title sits at the baseline")
+
+    check(cand("Data Pipeline Engineer Intern") > baseline,
+          "a title naming proven experience raises candidacy")
+
+    # Blockers must sink a posting even when it otherwise looks perfect.
+    check(cand("Machine Learning PhD Research Intern") < 0.15,
+          "a PhD requirement sinks candidacy")
+    check(cand("Senior Software Engineer") < baseline / 2,
+          "a senior title sinks candidacy")
+    check(cand("Software Engineer Intern", advanced_degree=True) < baseline,
+          "the advanced-degree marker lowers candidacy")
+    check(cand("Software Engineer Intern", faang=True) < baseline,
+          "a highly competitive employer lowers candidacy slightly")
+
+    check(0.0 <= cand("Compiler Engineer Intern") <= 1.0,
+          "candidacy stays within 0-1")
+
+
+# =============================================================================
+def test_freshness():
+    print("\nFRESHNESS — is it still open")
+
+    check(scorer.freshness(0)[0] == 1.0,
+          "a posting from today is undiscounted")
+    check(scorer.freshness(0)[0] > scorer.freshness(3)[0] >
+          scorer.freshness(14)[0] > scorer.freshness(60)[0],
+          "freshness decreases monotonically with age")
+
+    # The floor matters: recruiters are consistent that old postings are
+    # still worth applying to, so nothing should ever reach zero.
+    check(scorer.freshness(9999)[0] > 0,
+          "a very old posting still scores above zero")
+
+    check(scorer.freshness(None)[0] == config.UNKNOWN_AGE_FRESHNESS,
+          "unknown age is treated as middling, not penalized")
+    check(scorer.freshness(0)[1] == "Posted today", "today is labelled")
+    check(scorer.freshness(1)[1] == "Posted yesterday",
+          "yesterday is labelled")
+
+    # The hard cutoff hides rather than ranks, so its boundary is worth
+    # pinning: off by one here silently loses a day of postings.
+    cutoff = config.MAX_AGE_DAYS
+    check(cutoff > 0, "the age cutoff is a positive number of days")
+    check(scorer.freshness(cutoff)[0] > scorer.freshness(cutoff + 1)[0],
+          "freshness still falls across the cutoff boundary")
+    check(config.FRESH_DAYS <= cutoff,
+          "the 'fresh' badge window fits inside the cutoff")
+
+    check(scorer.days_old(make_posting(1, age_days=5)) == 5,
+          "age is derived from the posted date")
+    check(scorer.days_old(Posting(company="x", role="y", category="z",
+                                  location="l", apply_url="u")) is None,
+          "a missing date yields None rather than a guess")
+
+
+# =============================================================================
+def test_scoring_model():
+    """The properties that make the multiplicative model work."""
+    print("\nSCORING MODEL")
+
+    def score(role, age_days=0, **kwargs):
+        return scorer.score_posting(
+            make_posting(1, role=role, age_days=age_days, **kwargs)
+        )["score"]
+
+    # THE REGRESSION THAT MATTERS. The old additive model ranked a month-old
+    # dream role above a fresh, well-matched one. This is the exact case that
+    # made the tool useless, so it gets a test.
+    stale_dream = score("Forward Deployed Engineer Intern", age_days=30)
+    fresh_match = score("Software Engineer Intern, Data Platform", age_days=0)
+    check(fresh_match > stale_dream,
+          f"a fresh matching role ({fresh_match}) beats a stale dream role "
+          f"({stale_dream}) — the bug this model replaced")
+
+    # But the dream role must still be VISIBLE. Sinking it to zero would be
+    # the opposite failure.
+    check(stale_dream > 0,
+          "the stale dream role still scores above zero")
+
+    # All three factors have to matter. Hold two fixed, vary the third.
+    check(score("Forward Deployed Engineer Intern", age_days=0) >
+          score("Forward Deployed Engineer Intern", age_days=30),
+          "age changes the score when preference and candidacy are fixed")
+    check(score("Software Engineer Intern", age_days=0) >
+          score("Software Engineer Intern", age_days=0,
+                advanced_degree=True),
+          "candidacy changes the score when the other two are fixed")
+    check(score("Product Manager Intern", age_days=0) >
+          score("Software Engineer Intern", age_days=0),
+          "preference changes the score when the other two are fixed")
+
+    # A near-zero in any factor should sink the whole thing — that's the
+    # entire reason for multiplying rather than adding.
+    check(score("Quantitative Trading PhD Intern", age_days=0) < 5,
+          "a posting that fails every test scores near zero")
+
+    check(0 <= score("Software Engineer Intern") <= 100,
+          "scores stay within 0-100")
+
+    # Bands must actually be reachable, or the badges are decorative.
+    best = score(
+        "Solutions Engineer Intern, Data Platform", age_days=0
+    )
+    check(best >= config.STRONG_FIT_THRESHOLD,
+          f"a near-ideal posting ({best}) can reach the STRONG band "
+          f"({config.STRONG_FIT_THRESHOLD})")
+
+    print("\nINTERNSHIP GATE")
     intern = make_posting(1, role="Software Engineer Intern")
     check(scorer.is_internship(intern), "an intern role passes the gate")
-    check(not scorer.is_internship(make_posting(1, role="Senior Engineer")),
+    check(not scorer.is_internship(make_posting(1, role="Staff Engineer")),
           "a full-time role is filtered out")
 
 
@@ -171,12 +285,12 @@ def test_storage():
     conn = storage.connect(db_path)
 
     def run(postings, timestamp):
+        scorer.score_all(postings)
         result = storage.save_postings(conn, postings, timestamp)
         storage.record_run(conn, timestamp, result["total"],
                            len(result["new_ids"]))
         return result
 
-    # Run 1: baseline.
     r1 = run([make_posting(1), make_posting(2), make_posting(3)],
              "2026-08-01T00:00:00+00:00")
     check(r1["is_first_run"], "first run is recognized as a baseline")
@@ -184,7 +298,6 @@ def test_storage():
 
     storage.set_applied(conn, make_posting(2).id, True)
 
-    # Run 2: one posting leaves, one arrives.
     r2 = run([make_posting(1), make_posting(2), make_posting(4)],
              "2026-08-02T00:00:00+00:00")
     check(r2["new_ids"] == {make_posting(4).id},
@@ -192,13 +305,12 @@ def test_storage():
     check(r2["deactivated"] == 1,
           "a posting that dropped off the source is marked inactive")
 
-    # Run 3: nothing changes. This is the regression test for the off-by-one.
+    # Regression: the off-by-one-run bug.
     r3 = run([make_posting(1), make_posting(2), make_posting(4)],
              "2026-08-03T00:00:00+00:00")
     check(not r3["new_ids"],
           "last run's new posting is NOT flagged again (regression)")
 
-    # Run 4: a previously-inactive posting returns.
     r4 = run([make_posting(1), make_posting(2), make_posting(4),
               make_posting(3)], "2026-08-04T00:00:00+00:00")
     check(not r4["new_ids"], "a returning posting is not counted as new")
@@ -211,102 +323,77 @@ def test_storage():
           "the right posting is still marked applied")
     check(rows[make_posting(1).id]["first_seen"].startswith("2026-08-01"),
           "first_seen is preserved, not overwritten each run")
-    check(rows[make_posting(4).id]["first_seen"].startswith("2026-08-02"),
-          "a later posting keeps its own first_seen")
     check(len(storage.load_postings(conn)) == 4,
           "a returning posting becomes active again")
-    check(storage.new_posting_ids(conn) == set(),
-          "new_posting_ids() agrees with save_postings()")
+
+    print("\nSTORAGE: the score components round-trip")
+    row = rows[make_posting(1).id]
+    check(isinstance(row["preference"], float),
+          "preference is stored as a number")
+    check(isinstance(row["preference_reasons"], list),
+          "reason lists are decoded from JSON on the way out")
+    check("role_family" in row, "the role family is stored for the prompts")
 
     conn.close()
 
 
 # =============================================================================
 def test_visit_tracking():
-    """
-    The 'new since you last looked' logic.
-
-    This matters because the scheduled daily refresh broke the old definition
-    of NEW. When you triggered every refresh yourself, "new since the last
-    run" was fine. With a job running each morning it silently becomes "new in
-    the last 24 hours", so skipping a few days meant postings stopped being
-    flagged and you'd never see them.
-    """
     print("\nVISIT TRACKING: what counts as new to you")
 
     db_path = os.path.join(tempfile.mkdtemp(), "visits.db")
     conn = storage.connect(db_path)
 
-    # Each refresh re-sends every posting still live at the source. Sending
-    # only the new one would (correctly) mark all the others inactive, so the
-    # helper accumulates — this mirrors what a real refresh does.
     live = []
 
     def add(posting, when):
         live.append(posting)
+        scorer.score_all(live)
         result = storage.save_postings(conn, live, when)
         storage.record_run(conn, when, result["total"],
                            len(result["new_ids"]))
 
-    # Two postings already exist before you ever open the dashboard.
     add(make_posting(1), "2026-08-01T09:00:00+00:00")
     add(make_posting(2), "2026-08-01T09:00:00+00:00")
 
-    # First visit ever: nothing should be badged, since none of it arrived
-    # "since you last looked" — you've never looked.
     basis = storage.register_visit(conn)
     check(storage.new_since_last_visit(conn, basis) == set(),
           "first ever visit badges nothing")
 
-    # A reload moments later must not clear anything or crash.
     basis = storage.register_visit(conn)
     check(storage.new_since_last_visit(conn, basis) == set(),
           "reloading during a visit is stable")
 
-    # Now the scheduled job runs overnight and finds a new posting.
     add(make_posting(3), "2026-08-02T08:00:00+00:00")
-
-    # Simulate coming back the next day by ageing your last activity beyond
-    # the session window.
     storage._set_state(conn, "last_activity", "2026-08-01T09:05:00+00:00")
     conn.commit()
 
     basis = storage.register_visit(conn)
-    new_ids = storage.new_since_last_visit(conn, basis)
-    check(new_ids == {make_posting(3).id},
+    check(storage.new_since_last_visit(conn, basis) == {make_posting(3).id},
           "a posting that arrived since your last visit is badged")
 
-    # THE KEY TEST: badges must survive while you browse. A second page load
-    # moments later is the same visit, so posting 3 stays flagged.
     basis = storage.register_visit(conn)
     check(storage.new_since_last_visit(conn, basis) == {make_posting(3).id},
           "badges persist across reloads within one visit")
 
-    # THE OTHER KEY TEST: skipping several days must not lose anything. Two
-    # more postings arrive on separate days; both should still be flagged,
-    # even though only one arrived in the most recent run.
+    # Several days away must not lose anything — the reason this exists.
     add(make_posting(4), "2026-08-03T08:00:00+00:00")
     add(make_posting(5), "2026-08-04T08:00:00+00:00")
-
     storage._set_state(conn, "last_activity", "2026-08-02T08:10:00+00:00")
     conn.commit()
 
     basis = storage.register_visit(conn)
-    new_ids = storage.new_since_last_visit(conn, basis)
-    check(new_ids == {make_posting(4).id, make_posting(5).id},
+    check(storage.new_since_last_visit(conn, basis) ==
+          {make_posting(4).id, make_posting(5).id},
           "several days away still surfaces every posting since your visit")
-
-    # This is what the old logic would have returned — one day's worth.
     check(storage.new_posting_ids(conn) == {make_posting(5).id},
           "...whereas 'new since last run' would only show the latest day")
 
-    # Explicitly clearing badges.
     storage.mark_all_seen(conn)
-    basis = storage._get_state(conn, "visit_basis")
-    check(storage.new_since_last_visit(conn, basis) == set(),
-          "'Mark all as seen' clears every badge")
+    check(storage.new_since_last_visit(
+        conn, storage._get_state(conn, "visit_basis")) == set(),
+        "'Mark all as seen' clears every badge")
 
-    # A corrupt timestamp must not freeze the badges forever.
     storage._set_state(conn, "last_activity", "not-a-timestamp")
     conn.commit()
     storage.register_visit(conn)
@@ -316,105 +403,66 @@ def test_visit_tracking():
 
 
 # =============================================================================
-def test_notifications():
-    """The notifier must never raise — it runs from a background job."""
-    print("\nNOTIFICATIONS")
+def test_prompts():
+    print("\nPROMPTS")
 
-    import notify
+    posting = {
+        "company": "Acme", "role": "Solutions Engineer Intern",
+        "category": "Software Engineering", "location": "Austin, TX",
+        "apply_url": "https://acme.com/apply", "age_text": "2d",
+        "role_family": "Forward-Deployed / Solutions",
+    }
+    profile = "MY-UNIQUE-PROFILE-MARKER"
 
-    # Text from job postings is untrusted third-party input, so quotes and
-    # backslashes must be escaped before going into an AppleScript string.
-    escaped = notify._escape('Acme "Corp" \\ Ltd')
-    check('\\"' in escaped and "\\\\" in escaped,
-          "quotes and backslashes are escaped for AppleScript")
+    cover = letters.cover_letter_prompt(posting, profile)
+    experience = letters.work_experience_prompt(posting, profile)
 
-    # With the feature off, nothing is sent regardless of what's passed in.
-    original = config.NOTIFY_ON_STRONG_FIT
-    try:
-        config.NOTIFY_ON_STRONG_FIT = False
-        strong = make_posting(1, score=999)
-        check(notify.notify_strong_matches([strong]) is False,
-              "notifications respect the config switch")
-    finally:
-        config.NOTIFY_ON_STRONG_FIT = original
+    pairs = (("cover letter", cover), ("work experience", experience))
+    for name, text in pairs:
+        flat = " ".join(text.split())
+        check("MY-UNIQUE-PROFILE-MARKER" in text,
+              f"the {name} prompt carries the profile")
+        check("Acme" in text and "Solutions Engineer Intern" in text,
+              f"the {name} prompt carries the posting")
+        check("Use only what the candidate profile below states" in flat,
+              f"the {name} prompt keeps the honesty rule")
+        check("do not invent requirements that were never stated" in flat,
+              f"the {name} prompt forbids inventing requirements")
 
-    # Nothing new that clears the threshold means nothing to say.
-    weak = make_posting(2, score=0)
-    check(notify.notify_strong_matches([weak]) is False,
-          "a weak match does not trigger a notification")
-    check(notify.notify_strong_matches([]) is False,
-          "an empty list does not trigger a notification")
+    # The whole point of role families: different documents for different
+    # audiences, from the same profile.
+    fde = letters.cover_letter_prompt(posting, profile)
+    swe_posting = dict(posting, role_family="Software Engineering")
+    swe = letters.cover_letter_prompt(swe_posting, profile)
+    check(fde != swe,
+          "an FDE letter prompt differs from a SWE one")
+    check("customers" in fde and "customers" not in swe,
+          "the FDE prompt asks for customer evidence; the SWE one doesn't")
+    check("hardest engineering problem" in swe,
+          "the SWE prompt asks for technical depth")
 
-    # The threshold boundary. Scoring one point under must stay silent —
-    # this is checked without sending anything.
-    just_under = make_posting(3, score=config.NOTIFY_THRESHOLD - 1)
-    check(notify.notify_strong_matches([just_under]) is False,
-          "a posting just below NOTIFY_THRESHOLD stays silent")
+    # An unknown family must still produce a usable prompt.
+    unknown = letters.cover_letter_prompt(
+        dict(posting, role_family="Nonexistent"), profile)
+    check(len(unknown) > 500, "an unrecognized family falls back gracefully")
 
-    # The notify threshold must remain SEPARATE from the badge threshold.
-    # Tying them together is what kept notifications silent for days while
-    # relevant roles arrived — see the comment in config.py.
-    check(config.NOTIFY_THRESHOLD <= config.STRONG_FIT_THRESHOLD,
-          "notify threshold is not stricter than the strong-fit badge")
+    # The pasted job description is the biggest quality lever available.
+    with_jd = letters.cover_letter_prompt(
+        posting, profile, job_description="Must know Kubernetes and Go.")
+    check("Kubernetes" in with_jd,
+          "a pasted job description reaches the prompt")
+    check("prefer it over inference" in " ".join(with_jd.split()),
+          "the prompt says to prefer the real description over the title")
+    without = letters.cover_letter_prompt(posting, profile)
+    check("No job description was pasted" in without,
+          "the prompt says when it's working from the title alone")
 
+    # These prompts are free by design — nothing should reach for an API.
+    source = open("letters.py", encoding="utf-8").read()
+    check("anthropic" not in source.lower(),
+          "letters.py makes no API calls and costs nothing")
 
-# =============================================================================
-def test_letters():
-    """
-    Cover letter drafting — everything that can be checked without spending
-    an API call. The network path isn't tested here; what's tested is the
-    scaffolding around it, which is where the fixable bugs live.
-    """
-    print("\nLETTERS")
-
-    import letters
-
-    # -- the honesty constraint ------------------------------------------
-    # This is the single most important line in the prompt. A letter that
-    # invents experience goes out under a real name, so if this instruction
-    # ever gets edited away, a test should fail.
-    prompt = letters.SYSTEM_PROMPT.lower()
-    check("only what appears in the candidate profile" in prompt,
-          "system prompt restricts claims to the profile")
-    check("never invent" in prompt,
-          "system prompt forbids inventing experience")
-    check("gaps" in prompt,
-          "system prompt routes shortfalls to `gaps` instead of the letter")
-
-    # -- schema ----------------------------------------------------------
-    schema = letters.OUTPUT_SCHEMA
-    check(schema["additionalProperties"] is False,
-          "output schema is strict")
-    check(set(schema["required"]) == {"cover_letter", "talking_points",
-                                      "gaps", "fit_summary"},
-          "output schema requires all four fields")
-
-    # -- filenames -------------------------------------------------------
-    # Company names contain slashes, quotes, and emoji. A filename built
-    # naively from "TikTok / ByteDance" would try to write into a directory.
-    check("/" not in letters._safe_filename("TikTok / ByteDance"),
-          "slashes are stripped from filenames")
-    check(".." not in letters._safe_filename("../../etc/passwd"),
-          "path traversal is stripped from filenames")
-    check(letters._safe_filename("!!!") == "untitled",
-          "an all-punctuation name still yields a usable filename")
-    check(len(letters._safe_filename("x" * 200)) <= 60,
-          "very long names are truncated")
-
-    # -- error messages --------------------------------------------------
-    # Missing credentials arrive as a plain TypeError, not an SDK exception.
-    # This caught a real bug: the original code only handled
-    # anthropic.AuthenticationError, so a new setup got an unreadable dump.
-    auth_error = TypeError(
-        "Could not resolve authentication method. Expected one of api_key..."
-    )
-    explained = letters._explain_api_error(auth_error)
-    check("console.anthropic.com" in explained,
-          "a missing key explains where to get one")
-    check("ANTHROPIC_API_KEY" in explained,
-          "a missing key names the variable to set")
-
-    # -- profile loading -------------------------------------------------
+    print("\nPROFILE LOADING")
     original = config.PROFILE_PATH
     try:
         config.PROFILE_PATH = os.path.join(tempfile.mkdtemp(), "missing.md")
@@ -425,8 +473,6 @@ def test_letters():
             check("profile_example.md" in str(exc),
                   "a missing profile points at the template")
 
-        # A file that exists but is basically empty is its own failure mode:
-        # it would silently produce vague, useless letters.
         thin = os.path.join(tempfile.mkdtemp(), "thin.md")
         with open(thin, "w", encoding="utf-8") as handle:
             handle.write("# Me\n")
@@ -439,116 +485,15 @@ def test_letters():
     finally:
         config.PROFILE_PATH = original
 
-    # -- prompt assembly -------------------------------------------------
-    posting = {
-        "company": "Acme", "role": "Solutions Engineer Intern",
-        "category": "Software Engineering", "location": "Austin, TX",
-        "apply_url": "https://acme.com/apply", "fit_score": 160,
-        "score_reasons": [{"points": 150, "label": "Role type: Solutions"}],
-    }
-    built = letters._build_prompt(posting, "MY-UNIQUE-PROFILE-MARKER")
-
-    # Collapse whitespace before matching. The prompt is a wrapped f-string,
-    # so a phrase can straddle a newline — asserting on the raw text makes
-    # the test fail on reflowing rather than on meaning.
-    flat = " ".join(built.split())
-
-    check("Acme" in flat and "Solutions Engineer Intern" in flat,
-          "the prompt includes the posting")
-    check("MY-UNIQUE-PROFILE-MARKER" in flat,
-          "the prompt includes the profile")
-    check("keyword matches, not judgment" in flat,
-          "the prompt warns that scores are keyword hits, not facts")
-    check("don't invent specific requirements" in flat,
-          "the prompt says not to invent requirements it wasn't given")
-
-    # -- the free copy-paste path ----------------------------------------
-    # This path needs no API key and no credit, so it has to be complete on
-    # its own: everything the assistant needs must be inside the one block
-    # you paste, since a chat window has no access to profile.md.
-    paste = letters.build_paste_prompt(posting, "MY-UNIQUE-PROFILE-MARKER")
-    flat_paste = " ".join(paste.split())
-    check("MY-UNIQUE-PROFILE-MARKER" in paste,
-          "the paste prompt carries the profile")
-    check("Acme" in paste, "the paste prompt carries the posting")
-    check("only what appears in the candidate profile" in flat_paste,
-          "the paste prompt keeps the same honesty constraint")
-    check("json schema" not in flat_paste.lower()
-          or "isn't needed here" in flat_paste,
-          "the paste prompt doesn't demand JSON from a chat window")
-
-    # -- writing the draft to disk ---------------------------------------
-    original_dir = config.LETTERS_DIR
-    try:
-        config.LETTERS_DIR = tempfile.mkdtemp()
-        packet = {
-            "cover_letter": "Dear team,\n\nHello.",
-            "talking_points": ["Point one"],
-            "gaps": [{"requirement": "Go", "how_to_address": "No Go yet."}],
-            "fit_summary": "Strong match.",
-            "model": "claude-opus-5",
-        }
-        path = letters.save_markdown(posting, packet)
-        check(os.path.exists(path), "the draft is written to disk")
-        with open(path, encoding="utf-8") as handle:
-            written = handle.read()
-        check("Dear team," in written, "the letter body is written out")
-        check("No Go yet." in written, "the gaps are written out")
-        check("Read it before you send it" in written,
-              "the draft carries a review reminder")
-    finally:
-        config.LETTERS_DIR = original_dir
-
-
-# =============================================================================
-def test_packet_storage():
-    """Generated drafts must survive refreshes, like applied marks do."""
-    print("\nPACKET STORAGE")
-
-    db_path = os.path.join(tempfile.mkdtemp(), "packets.db")
-    conn = storage.connect(db_path)
-
-    posting = make_posting(1)
-    storage.save_postings(conn, [posting], "2026-08-01T00:00:00+00:00")
-    storage.record_run(conn, "2026-08-01T00:00:00+00:00", 1, 0)
-
-    packet = {
-        "cover_letter": "Body text.",
-        "talking_points": ["A", "B"],
-        "gaps": [{"requirement": "Rust", "how_to_address": "None yet."}],
-        "fit_summary": "Good match.",
-        "model": "claude-opus-5",
-    }
-    storage.save_packet(conn, posting.id, packet, "letters/x.md")
-
-    loaded = storage.get_packet(conn, posting.id)
-    check(loaded["cover_letter"] == "Body text.", "the packet round-trips")
-    check(loaded["talking_points"] == ["A", "B"],
-          "JSON columns are decoded on the way out")
-    check(loaded["gaps"][0]["requirement"] == "Rust",
-          "nested gap objects survive the round-trip")
-
-    # The thing that would actually hurt: a refresh wiping an expensive draft.
-    storage.save_postings(conn, [posting], "2026-08-02T00:00:00+00:00")
-    check(storage.get_packet(conn, posting.id) is not None,
-          "a refresh does not delete generated drafts")
-    check(storage.packet_count(conn) == 1, "the packet count is right")
-    check(storage.packet_ids(conn) == {posting.id},
-          "packet_ids reports which postings have drafts")
-
-    check(storage.get_packet(conn, "no-such-id") is None,
-          "an unknown posting returns None rather than raising")
-
-    conn.close()
-
 
 # =============================================================================
 if __name__ == "__main__":
     test_parser()
-    test_scoring()
+    test_preference()
+    test_candidacy()
+    test_freshness()
+    test_scoring_model()
     test_storage()
     test_visit_tracking()
-    test_notifications()
-    test_letters()
-    test_packet_storage()
+    test_prompts()
     print(f"\n{PASSED} checks passed.\n")

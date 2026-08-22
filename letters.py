@@ -1,46 +1,43 @@
 """
-letters.py — drafts a tailored application packet for one posting.
+letters.py — builds copy-paste prompts for job applications.
 
-For a given job posting it produces four things, using your profile.md:
+Two kinds, both free:
 
-    cover_letter    a draft, in your voice, citing specific work
-    talking_points  bullets to reuse in the application's free-text fields
-    gaps            what the role wants that your profile doesn't show
-    fit_summary     one honest line on how well you actually match
+    cover_letter    a tailored letter for one posting
+    work_experience bullets rewritten for that role's audience, for the
+                    "describe your relevant experience" boxes
 
-WHAT THIS DELIBERATELY DOES NOT DO
-----------------------------------
-It does not submit anything. Every application portal's terms prohibit
-automated submission, and being flagged doesn't fail one application — it can
-follow your email address across every company using that ATS. More
-importantly, an application can't be unsent. A draft you skim for ten seconds
-before pasting has a recoverable failure mode; an auto-submitted one doesn't.
+NOTHING HERE CALLS AN API OR COSTS MONEY. It assembles text. You copy it into
+claude.ai, ChatGPT, or whatever you already use, and paste the result back.
 
-So this generates, you review, you send.
+THE IDEA THAT MAKES THESE GOOD
+------------------------------
+A cover letter for a forward-deployed role and one for a backend SWE role are
+not the same document, even from the same person with the same résumé. An FDE
+reviewer is scanning for evidence you can sit with a customer and handle
+ambiguity. A SWE reviewer wants depth on the hardest thing you've shipped. The
+same Backstage project is the lead story for one and a footnote for the other.
+
+So the prompt adapts. Every posting already knows its role family — the scorer
+records which ROLE_FAMILIES entry matched — and that name selects a block of
+guidance from config.ROLE_FAMILY_GUIDANCE about what this audience is
+actually reading for.
 
 THE RULE THAT MATTERS MOST
 --------------------------
-The model is instructed to use ONLY what appears in profile.md, and to report
-gaps rather than paper over them. A cover letter that invents a credential is
-far worse than no cover letter: it goes out under your real name, and if it
-gets caught in an interview you can't walk it back. That constraint is in the
-system prompt, and the `gaps` field exists so the model has an honest place to
-put "the posting wants X and you don't have it" instead of quietly inventing X.
+The prompt tells the model to use ONLY what's in profile.md, and to report
+gaps rather than paper over them. A letter that invents a credential is far
+worse than a plain one: it goes out under your real name, and if it surfaces
+in an interview you can't walk it back.
 """
 
-import json
 import os
-import re
 
 import config
 
-# The SDK is imported lazily inside _client() so that importing this module —
-# which app.py does at startup — never fails just because the API key isn't
-# set yet. You should be able to browse the dashboard without credentials.
-
 
 class LetterError(Exception):
-    """Something went wrong that the user needs to read and act on."""
+    """Something the user needs to read and fix."""
 
 
 # =============================================================================
@@ -49,10 +46,8 @@ class LetterError(Exception):
 
 def load_profile() -> str:
     """
-    Read profile.md.
-
-    Raises LetterError with instructions rather than a bare FileNotFoundError,
-    because "no such file: profile.md" doesn't tell you what to do about it.
+    Read profile.md, with instructions rather than a bare FileNotFoundError —
+    "no such file: profile.md" doesn't tell you what to do about it.
     """
     path = config.PROFILE_PATH
     if not os.path.exists(path):
@@ -60,8 +55,7 @@ def load_profile() -> str:
             f"No {path} found.\n\n"
             f"Create it from the template:\n"
             f"    cp profile_example.md {path}\n\n"
-            f"Then fill in your own details. It is gitignored, so it\n"
-            f"stays local."
+            f"Then fill in your details. It is gitignored, so it stays local."
         )
 
     with open(path, encoding="utf-8") as handle:
@@ -69,348 +63,224 @@ def load_profile() -> str:
 
     if len(text) < 200:
         raise LetterError(
-            f"{path} looks empty or barely filled in. The letters are only as "
-            f"specific as this file is — fill in your real experience first."
+            f"{path} looks empty or barely filled in. These prompts are only "
+            f"as specific as that file — fill in your real experience first."
         )
 
     return text
 
 
+def _guidance(role_family: str) -> dict:
+    """What this kind of role's reviewer is actually reading for."""
+    return config.ROLE_FAMILY_GUIDANCE.get(
+        role_family or "", config.DEFAULT_FAMILY_GUIDANCE
+    )
+
+
+def _posting_block(posting: dict) -> str:
+    """The facts about the role, formatted for the prompt."""
+    family = posting.get("role_family") or "not classified"
+    return (
+        f"  Company:    {posting['company']}\n"
+        f"  Role:       {posting['role']}\n"
+        f"  Category:   {posting['category']}\n"
+        f"  Location:   {posting['location']}\n"
+        f"  Role type:  {family}\n"
+        f"  Posted:     {posting.get('age_text', 'unknown')} ago"
+    )
+
+
 # =============================================================================
-# Talking to Claude
+# The shared rules
 # =============================================================================
 
-def _client():
-    """
-    Build the API client, with a readable error if credentials are missing.
+HONESTY_RULES = """\
+NON-NEGOTIABLE RULES
 
-    The SDK resolves credentials from ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN,
-    or a saved `ant auth login` profile — so we don't check for the env var
-    ourselves. We just let the SDK try, and translate its failure into
-    something actionable.
-    """
-    try:
-        import anthropic
-    except ImportError as exc:
-        raise LetterError(
-            "The anthropic package isn't installed. Run:\n"
-            "    .venv/bin/pip install -r requirements.txt"
-        ) from exc
+1. Use only what the candidate profile below states. Never invent, embellish,
+   or imply experience, coursework, employers, metrics, technologies, or
+   skills that are not in it. If you catch yourself writing something you
+   can't point to a line in the profile for, delete it.
 
-    try:
-        return anthropic.Anthropic()
-    except Exception as exc:
-        raise LetterError(
-            "Couldn't create the Claude client — usually a missing key.\n\n"
-            "Get one at https://console.anthropic.com/settings/keys:\n"
-            "    export ANTHROPIC_API_KEY='sk-ant-...'\n\n"
-            "To make it permanent, add that line to ~/.zshrc.\n"
-            f"\n(underlying error: {exc})"
-        ) from exc
+2. Do not inflate. "Built data pipelines processing 100+ hours of video" is
+   in the profile. "Architected large-scale distributed video infrastructure"
+   is not — it's the same work dressed up, and it reads as dressed up.
+
+3. Where the role clearly wants something the profile doesn't show, say so in
+   the GAPS section. Never paper over it in the prose. A candidate who names
+   fewer matches honestly beats one who overstates and gets caught.
+
+4. Write like a person. Banned outright: "I am writing to express",
+   "passionate about", "leverage", "synergy", "thrilled at the opportunity",
+   "I believe I would be a great fit", "delve", "tapestry", "testament to".
+   Contractions are fine. Short sentences are better than long ones.
+
+5. No invented specifics about the company or the team — no hiring manager's
+   name, no guesses about their tech stack or current projects. If you don't
+   know it, write about the role instead."""
 
 
-SYSTEM_PROMPT = """\
-You are helping a candidate prepare a job application. You write in their \
-voice, for them to review and send themselves.
+WHAT_WE_KNOW = """\
+WHAT YOU HAVE AND DON'T HAVE
 
-THE ABSOLUTE RULE: use only what appears in the candidate profile you are \
-given. Never invent, embellish, or imply experience, coursework, employers, \
-metrics, or skills that are not stated there. If the posting asks for \
-something the profile does not show, that belongs in `gaps` — never papered \
-over in the letter. A letter that overstates goes out under a real person's \
-name and can be caught in an interview; an honest one that names fewer \
-matches is strictly better.
-
-Writing the cover letter:
-- 200-300 words. Three or four short paragraphs. No postal-address header, no \
-"To Whom It May Concern".
-- Open with why this specific role and company, not a summary of the resume.
-- The middle must cite CONCRETE work from the profile — name the system, the \
-technical problem, the result. Generic enthusiasm is filler; cut it.
-- Choose the one or two experiences that genuinely match THIS posting. Do not \
-inventory everything the candidate has done.
-- Plain, direct, human. No "I am writing to express my keen interest", no \
-"passionate about leveraging", no "thrilled at the opportunity". Contractions \
-are fine. Read it back and cut any sentence that survives being deleted.
-- Do not fill in details you weren't given: no hiring manager's name, no \
-invented company facts. If the company's specific work isn't in the posting, \
-speak to the role instead of guessing.
-
-talking_points: 3-5 reusable bullets for free-text application fields ("why \
-this company", "relevant experience"). Each self-contained and specific.
-
-gaps: what the posting asks for that the profile does not demonstrate. For \
-each, an honest suggestion for addressing it — a related experience to lean \
-on, or an admission it's a genuine gap. Empty list only if there really are \
-none.
-
-fit_summary: one sentence, honest. If this is a weak match, say so plainly — \
-the candidate uses this to decide where to spend their time."""
+You have the job TITLE and category, not the full job description. Write from
+what the title genuinely implies, and do not invent requirements that were
+never stated. If the candidate pastes the real description below, use it and
+prefer it over inference — mirror its actual language where it honestly
+matches their experience, since a human and an applicant-tracking system will
+both be scanning for those words."""
 
 
-OUTPUT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "cover_letter": {
-            "type": "string",
-            "description": "The draft letter, 200-300 words.",
-        },
-        "talking_points": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "3-5 reusable bullets for application fields.",
-        },
-        "gaps": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "requirement": {"type": "string"},
-                    "how_to_address": {"type": "string"},
-                },
-                "required": ["requirement", "how_to_address"],
-                "additionalProperties": False,
-            },
-        },
-        "fit_summary": {"type": "string"},
-    },
-    "required": ["cover_letter", "talking_points", "gaps", "fit_summary"],
-    "additionalProperties": False,
-}
+def _job_description_block(job_description: str) -> str:
+    """The optional pasted job description."""
+    if job_description and job_description.strip():
+        return (
+            "--- THE ACTUAL JOB DESCRIPTION (use this over inference) ---\n\n"
+            f"{job_description.strip()}\n\n"
+            "--- END JOB DESCRIPTION ---\n\n"
+        )
+    return (
+        "(No job description was pasted. Work from the title, and stay "
+        "general rather than inventing requirements.)\n\n"
+    )
 
 
-def _build_prompt(posting: dict, profile: str) -> str:
-    """Assemble the user message: the posting, then the candidate profile."""
-    reasons = posting.get("score_reasons") or []
-    why = "\n".join(
-        f"  {r['points']:+d}  {r['label']}" for r in reasons
-    ) or "  (none recorded)"
+# =============================================================================
+# Cover letter prompt
+# =============================================================================
+
+def cover_letter_prompt(posting: dict, profile: str = None,
+                        job_description: str = "") -> str:
+    """Build the copy-paste prompt for a cover letter."""
+    profile = profile or load_profile()
+    guidance = _guidance(posting.get("role_family"))
 
     return f"""\
-Here is the job posting.
+You are helping a candidate write a cover letter they will review, edit, and
+send themselves. Write in their voice — first person, plain, specific.
 
-  Company:   {posting['company']}
-  Role:      {posting['role']}
-  Category:  {posting['category']}
-  Location:  {posting['location']}
-  Link:      {posting.get('apply_url', '')}
+{HONESTY_RULES}
 
-The candidate's own ranking tool scored this {posting['fit_score']}, for these
-reasons:
+WHAT THIS PARTICULAR AUDIENCE CARES ABOUT
 
-{why}
+{guidance['emphasis']}
 
-Those reasons are keyword matches, not judgment — treat them as a hint about
-why this role surfaced, not as facts about the candidate.
+{WHAT_WE_KNOW}
 
-NOTE: only the job title and category are available, not the full job
-description. Write from what the title implies about the role, and don't
-invent specific requirements the posting never stated.
+HOW TO STRUCTURE IT
 
---- CANDIDATE PROFILE (the only source of facts about them) ---
+- 200-300 words. Three or four short paragraphs. No address header, no
+  "To Whom It May Concern", no signature block.
+- Open with something specific about this role — a reason this particular
+  job is interesting. Not a summary of the resume, and not flattery.
+- The middle carries the weight: pick the ONE or TWO experiences from the
+  profile that genuinely match this posting and go concrete on them. Name the
+  system, the problem, what changed. Resist listing everything they've done —
+  a letter that covers three projects shallowly is worse than one that covers
+  one properly.
+- Close briefly. One or two sentences. No restating the whole letter.
+- Then read it back and delete every sentence that would not be missed.
+
+ALSO PRODUCE
+
+TALKING POINTS: 3-5 short bullets reusable in application form fields like
+"why this company" or "relevant experience". Each self-contained, each
+specific enough that it couldn't be pasted into a different application
+unchanged.
+
+GAPS: what this role likely wants that the profile doesn't demonstrate. For
+each, either the closest honest thing the candidate can point to, or a plain
+statement that it's a real gap. This is for their own preparation — being
+blindsided in an interview is worse than knowing in advance.
+
+FIT CHECK: one honest sentence on whether this is worth applying to. If it's
+a weak match, say so — their time is finite and a frank answer is more useful
+than encouragement.
+
+===============================================================================
+THE POSTING
+===============================================================================
+
+{_posting_block(posting)}
+
+{_job_description_block(job_description)}\
+===============================================================================
+THE CANDIDATE PROFILE — the only source of facts about them
+===============================================================================
 
 {profile}
 
---- END PROFILE ---
+===============================================================================
 
-Draft the application packet."""
-
-
-def build_paste_prompt(posting: dict, profile: str = None) -> str:
-    """
-    Assemble the same prompt as generate(), as one block to paste into any
-    chat interface — claude.ai, ChatGPT, whatever you already pay nothing for.
-
-    WHY THIS EXISTS
-    ---------------
-    generate() costs a few cents per letter and needs a funded API account.
-    This costs nothing and needs no key. The tradeoff is a copy-paste round
-    trip instead of one click.
-
-    For a student applying to a few dozen roles, the free path is usually the
-    right default — the automation you actually needed was the ranking and the
-    notification, both of which are free. Letter drafting is a convenience,
-    and it's worth being honest that it's optional rather than quietly
-    metering something you could do yourself.
-
-    The system prompt is folded into the message because chat interfaces have
-    no separate system field. Nothing else changes, so the output is the same
-    quality — you just paste rather than click.
-    """
-    profile = profile or load_profile()
-    return (
-        f"{SYSTEM_PROMPT}\n\n"
-        f"Return your answer as readable sections — cover letter, talking "
-        f"points, gaps, and a one-line fit summary. (The JSON schema the "
-        f"automated version uses isn't needed here.)\n\n"
-        f"{'=' * 70}\n\n"
-        f"{_build_prompt(posting, profile)}"
-    )
-
-
-def generate(posting: dict, profile: str = None) -> dict:
-    """
-    Generate a packet for one posting. Returns the parsed dict.
-
-    Raises LetterError on anything the user needs to fix.
-    """
-    profile = profile or load_profile()
-    client = _client()
-
-    try:
-        response = client.messages.create(
-            model=config.LETTER_MODEL,
-            max_tokens=config.LETTER_MAX_TOKENS,
-            system=SYSTEM_PROMPT,
-            # Adaptive thinking: choosing WHICH two experiences match a given
-            # posting, and being honest about gaps, is a judgment task — worth
-            # letting the model reason before it writes.
-            thinking={"type": "adaptive"},
-            output_config={
-                "effort": config.LETTER_EFFORT,
-                # A JSON schema guarantees we get back the four fields we
-                # need, rather than prose we'd have to parse with regexes.
-                "format": {"type": "json_schema", "schema": OUTPUT_SCHEMA},
-            },
-            messages=[
-                {"role": "user", "content": _build_prompt(posting, profile)}
-            ],
-        )
-    except Exception as exc:
-        raise LetterError(_explain_api_error(exc)) from exc
-
-    # A refusal is a real outcome, not an exception — check before reading.
-    if response.stop_reason == "refusal":
-        raise LetterError(
-            "Claude declined to draft this one. That's unusual for a job "
-            "application — check the posting for anything odd."
-        )
-
-    text = next(
-        (b.text for b in response.content if b.type == "text"), None
-    )
-    if not text:
-        raise LetterError("Claude returned no text. Try again.")
-
-    try:
-        packet = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise LetterError(
-            f"Couldn't parse the response as JSON: {exc}"
-        ) from exc
-
-    packet["model"] = config.LETTER_MODEL
-    return packet
-
-
-MISSING_KEY_HELP = (
-    "No Anthropic API key found.\n\n"
-    "1. Get a key at https://console.anthropic.com/settings/keys\n"
-    "2. Add this line to ~/.zshrc:\n"
-    "       export ANTHROPIC_API_KEY='sk-ant-...'\n"
-    "3. Restart the dashboard so it picks up the new value:\n"
-    "       ./scripts/schedule.sh restart\n\n"
-    "The key is read from the environment and never stored in this repo."
-)
-
-
-def _explain_api_error(exc) -> str:
-    """Turn an SDK exception into something worth reading."""
-    import anthropic
-
-    # Missing credentials surface as a plain TypeError from the SDK's auth
-    # resolution — NOT as anthropic.AuthenticationError, which only fires
-    # when a key exists and the server rejects it. Checked first, because
-    # this is the error a new setup actually hits.
-    if isinstance(exc, TypeError) and "authentication" in str(exc).lower():
-        return MISSING_KEY_HELP
-
-    if isinstance(exc, anthropic.AuthenticationError):
-        return (
-            "Your API key was rejected.\n\n"
-            "Check it at https://console.anthropic.com/settings/keys, then:\n"
-            "    export ANTHROPIC_API_KEY='sk-ant-...'"
-        )
-    if isinstance(exc, anthropic.RateLimitError):
-        return "Rate limited by the API. Wait a moment and try again."
-    if isinstance(exc, anthropic.APIConnectionError):
-        return "Couldn't reach the API. Check your internet connection."
-    if isinstance(exc, anthropic.APIStatusError):
-        if exc.status_code >= 500:
-            return f"The API had a server error ({exc.status_code}). Retry."
-        if exc.status_code == 400 and "credit" in str(exc).lower():
-            return (
-                "Your Anthropic account is out of credit. Add some at "
-                "https://console.anthropic.com/settings/billing"
-            )
-        return f"API error {exc.status_code}: {exc}"
-    return f"Unexpected error: {exc}"
+Write the cover letter, then the talking points, then the gaps, then the fit
+check."""
 
 
 # =============================================================================
-# Saving drafts to disk
+# Work experience prompt
 # =============================================================================
 
-def _safe_filename(text: str) -> str:
-    """Turn a company/role into something safe to use as a filename."""
-    slug = re.sub(r"[^\w\s-]", "", text).strip().lower()
-    slug = re.sub(r"[\s_-]+", "-", slug)
-    return slug[:60] or "untitled"
-
-
-def save_markdown(posting: dict, packet: dict) -> str:
+def work_experience_prompt(posting: dict, profile: str = None,
+                           job_description: str = "") -> str:
     """
-    Write the packet to letters/ as readable markdown, and return the path.
+    Build the copy-paste prompt for rewriting work experience for one role.
 
-    The database is the source of truth; this is for reading, editing, and
-    copy-pasting. letters/ is gitignored — these are written in your name.
+    Many applications ask you to describe relevant experience in a text box,
+    separately from any resume upload. Pasting the same résumé bullets every
+    time wastes the one chance to speak directly to what this reviewer wants.
     """
-    os.makedirs(config.LETTERS_DIR, exist_ok=True)
+    profile = profile or load_profile()
+    guidance = _guidance(posting.get("role_family"))
 
-    name = f"{_safe_filename(posting['company'])}-" \
-           f"{_safe_filename(posting['role'])}.md"
-    path = os.path.join(config.LETTERS_DIR, name)
+    return f"""\
+You are helping a candidate fill in the "relevant work experience" section of
+a job application — the free-text box, not a resume upload. They will review
+and edit whatever you produce.
 
-    gaps = "\n".join(
-        f"- **{g['requirement']}** — {g['how_to_address']}"
-        for g in packet.get("gaps", [])
-    ) or "- None identified."
+{HONESTY_RULES}
 
-    points = "\n".join(
-        f"- {p}" for p in packet.get("talking_points", [])
-    ) or "- None."
+WHAT THIS PARTICULAR AUDIENCE CARES ABOUT
 
-    with open(path, "w", encoding="utf-8") as handle:
-        handle.write(f"""# {posting['company']} — {posting['role']}
+{guidance['emphasis']}
 
-**Fit score:** {posting['fit_score']}
-**Location:** {posting['location']}
-**Apply:** {posting.get('apply_url', '')}
+HOW TO FRAME THE EXPERIENCE FOR THIS ROLE
 
-> {packet.get('fit_summary', '')}
+{guidance['experience_framing']}
 
----
+{WHAT_WE_KNOW}
 
-## Cover letter
+WHAT TO PRODUCE
 
-{packet.get('cover_letter', '')}
+1. A SHORT VERSION (about 80 words, one paragraph). Many forms have a tight
+   character limit. This is the version that has to survive one.
 
----
+2. A FULL VERSION: the candidate's roles and projects, rewritten as bullets
+   aimed at THIS posting. Rules:
+   - Keep every real number and system name from the profile. The specifics
+     are the evidence; generalizing them destroys the value.
+   - Reorder so the most relevant experience is first. Relevance to this
+     posting decides the order, not chronology.
+   - Cut what doesn't serve this application. A shorter, sharper set beats a
+     complete one.
+   - Rewrite the emphasis, never the facts. Same work, aimed differently.
 
-## Talking points
+3. WHAT I CHANGED AND WHY: two or three lines telling the candidate what you
+   reordered or reframed for this role. They should understand the pitch
+   they're making, not just paste it.
 
-{points}
+===============================================================================
+THE POSTING
+===============================================================================
 
----
+{_posting_block(posting)}
 
-## Gaps to be ready for
+{_job_description_block(job_description)}\
+===============================================================================
+THE CANDIDATE PROFILE — the only source of facts about them
+===============================================================================
 
-{gaps}
+{profile}
 
----
+===============================================================================
 
-*Draft written by {packet.get('model', 'Claude')} from your profile.md.
-Read it before you send it — it's going out in your name.*
-""")
-
-    return path
+Produce the short version, then the full version, then what you changed."""

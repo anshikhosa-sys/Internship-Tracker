@@ -23,9 +23,6 @@
               {{ new_count }} new since your last visit
             </strong>
         {% endif %}
-        {% if prepped_total %}
-          · {{ prepped_total }} drafted
-        {% endif %}
         {% if applied_total %}
           · {{ applied_total }} applied
         {% endif %}
@@ -85,6 +82,31 @@
       </option>
     </select>
 
+    <select name="sort">
+      <option value="score"
+              {% if sort == 'score' %}selected{% endif %}>
+        Best to apply to now
+      </option>
+      <option value="preference"
+              {% if sort == 'preference' %}selected{% endif %}>
+        Most wanted (ignore odds and age)
+      </option>
+      <option value="candidacy"
+              {% if sort == 'candidacy' %}selected{% endif %}>
+        Strongest candidate
+      </option>
+      <option value="recency"
+              {% if sort == 'recency' %}selected{% endif %}>
+        Newest first
+      </option>
+    </select>
+
+    <label class="checkbox">
+      <input type="checkbox" name="fresh" value="1"
+             {% if filters.get('fresh') == '1' %}checked{% endif %}>
+      Fresh only
+    </label>
+
     <label class="checkbox">
       <input type="checkbox" name="show_low" value="1"
              {% if filters.get('show_low') == '1' %}checked{% endif %}>
@@ -105,7 +127,24 @@
     </p>
   {% else %}
 
-    <p class="result-count">Showing {{ postings|length }} postings</p>
+    <p class="result-count">
+      Showing {{ postings|length }} postings
+      {% if hidden_by_age and not showing_stale %}
+        · <span class="muted">{{ hidden_by_age }} hidden as older than
+          {{ max_age_days }} days</span>
+        <!-- Also lifts show_low. With the steep freshness curve every stale
+             posting scores under the low-fit cutoff, so a stale=1 link on its
+             own would appear to do nothing. -->
+        <a class="clear" href="{{ url_for('index', **dict(filters,
+                                          stale='1', show_low='1')) }}">show
+          them</a>
+      {% elif showing_stale %}
+        · <span class="muted">including stale postings</span>
+        <a class="clear" href="{{ url_for('index', **dict(filters,
+                                          stale='', show_low='')) }}">hide
+          them</a>
+      {% endif %}
+    </p>
 
     <ol class="postings">
       {% for posting in postings %}
@@ -123,6 +162,7 @@
             <div class="role-line">
               <span class="company">{{ posting.company }}</span>
               {% if posting.is_new %}<span class="tag tag-new">NEW</span>{% endif %}
+              {% if posting.is_fresh %}<span class="tag tag-fresh">{{ posting.freshness_label }}</span>{% endif %}
               {% if posting.is_faang %}<span class="tag">FAANG+</span>{% endif %}
               {% if posting.needs_advanced_degree %}
                 <span class="tag tag-warn">Adv. degree</span>
@@ -139,20 +179,41 @@
 
             <!-- Why it scored what it did — the same data as the tooltip,
                  but visible on click for anyone not using a mouse. -->
+            <!-- The score is three factors multiplied, so the breakdown
+                 shows all three rather than a single running total. -->
             <details class="why">
               <summary>Why this score?</summary>
-              <ul>
-                {% for reason in posting.score_reasons %}
+              <p class="formula">
+                want {{ '%.2f' % posting.preference }}
+                × can-get {{ '%.2f' % posting.candidacy_score }}
+                × still-open {{ '%.2f' % posting.freshness }}
+                = <strong>{{ posting.fit_score }}</strong>
+              </p>
+              <div class="factor">
+                <span class="factor-name">Do you want it</span>
+                <ul>
+                  {% for r in posting.preference_reasons %}
+                    <li><span class="pts">{{ r.detail }}</span> {{ r.label }}</li>
+                  {% endfor %}
+                </ul>
+              </div>
+              <div class="factor">
+                <span class="factor-name">Would they take you</span>
+                <ul>
+                  {% for r in posting.candidacy_reasons %}
+                    <li><span class="pts">{{ r.detail }}</span> {{ r.label }}</li>
+                  {% endfor %}
+                </ul>
+              </div>
+              <div class="factor">
+                <span class="factor-name">Is it still open</span>
+                <ul>
                   <li>
-                    <span class="pts {% if reason.points < 0 %}neg{% endif %}">
-                      {{ '%+d' % reason.points }}
-                    </span>
-                    {{ reason.label }}
+                    <span class="pts">x{{ '%.2f' % posting.freshness }}</span>
+                    {{ posting.freshness_label }}
                   </li>
-                {% else %}
-                  <li>No scoring signals matched this posting.</li>
-                {% endfor %}
-              </ul>
+                </ul>
+              </div>
             </details>
           </div>
 
@@ -162,11 +223,9 @@
             <a class="btn-apply" href="{{ posting.apply_url }}"
                target="_blank" rel="noopener noreferrer">Apply</a>
 
-            <!-- One button either way. The letter page decides what to
-                 show: an existing draft, or the two ways to make one. -->
-            <a class="btn-draft {% if posting.has_packet %}has-draft{% endif %}"
-               href="{{ url_for('packet_route', posting_id=posting.id) }}">
-              {% if posting.has_packet %}View letter{% else %}Cover letter{% endif %}
+            <a class="btn-draft"
+               href="{{ url_for('prompts_route', posting_id=posting.id) }}">
+              Application prep
             </a>
 
             <label class="checkbox applied-toggle">

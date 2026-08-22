@@ -20,8 +20,7 @@ THE ROUTES HERE
     POST /api/applied    mark a posting applied/not (called by JavaScript)
     POST /mark-seen      clear all NEW badges
     POST /refresh        re-fetch listings, then bounce back to the dashboard
-    POST /prep/<id>      draft a cover letter for one posting
-    GET  /packet/<id>    view a generated draft
+    GET  /prompts/<id>   copy-paste prompts for one posting
 
 WHY THERE'S NO LOGIN
 Single user, local only. The server binds to 127.0.0.1, which means it accepts
@@ -61,12 +60,25 @@ def _filtered(postings, new_ids, args):
     category = args.get("category") or ""
     status = args.get("status") or ""
     show_low = args.get("show_low") == "1"
+    fresh_only = args.get("fresh") == "1"
+    show_stale = args.get("stale") == "1"
 
     results = []
     for posting in postings:
         # Hide low-fit postings unless asked for. They're still in the
         # database and still scored — just collapsed by default.
         if not show_low and posting["fit_score"] < config.LOW_FIT_THRESHOLD:
+            continue
+
+        # The age cutoff. This HIDES postings rather than ranking them
+        # lower, so it's the one filter that can lose you something — hence
+        # the explicit override rather than a silent drop.
+        age = posting["age_days"]
+        too_old = age is not None and age > config.MAX_AGE_DAYS
+        if too_old and not show_stale:
+            continue
+
+        if fresh_only and not posting["is_fresh"]:
             continue
 
         if category and posting["category"] != category:
@@ -112,17 +124,42 @@ def index():
 
     last_run = storage.last_run_time(conn)
     applied_total = storage.applied_count(conn)
-    prepped_ids = storage.packet_ids(conn)
 
     conn.close()
 
-    # Decorate each posting with the display-only bits the template needs.
+    # Freshness and the final score are recomputed here rather than read from
+    # the database. They depend on today's date, so a stored value would be
+    # stale the morning after it was written.
     for posting in postings:
+        age = scorer.days_old(posting)
+        fresh, fresh_label = scorer.freshness(age)
+        posting["age_days"] = age
+        posting["freshness"] = fresh
+        posting["freshness_label"] = fresh_label
+        posting["is_fresh"] = scorer.is_fresh(age)
+        posting["fit_score"] = scorer.final_score(
+            posting["preference"], posting["candidacy_score"], fresh
+        )
         posting["is_new"] = posting["id"] in new_ids
         posting["fit"] = scorer.fit_label(posting["fit_score"])
-        posting["has_packet"] = posting["id"] in prepped_ids
+
+    hidden_by_age = sum(
+        1 for p in postings
+        if p["age_days"] is not None and p["age_days"] > config.MAX_AGE_DAYS
+    )
 
     visible = _filtered(postings, new_ids, request.args)
+
+    # Sorting happens after filtering, on the freshly computed numbers.
+    sort = request.args.get("sort") or config.DEFAULT_SORT
+    keys = {
+        "score": lambda p: -p["fit_score"],
+        "preference": lambda p: -p["preference"],
+        "candidacy": lambda p: -p["candidacy_score"],
+        # None sorts last: an unknown age shouldn't lead a recency sort.
+        "recency": lambda p: (p["age_days"] is None, p["age_days"] or 0),
+    }
+    visible.sort(key=keys.get(sort, keys["score"]))
 
     # Categories for the filter dropdown, taken from the data itself so it
     # stays correct if you change INGEST_CATEGORIES in config.py.
@@ -135,8 +172,11 @@ def index():
         total_count=len(postings),
         new_count=len(new_ids),
         applied_total=applied_total,
-        prepped_total=len(prepped_ids),
         last_run=last_run,
+        sort=sort,
+        hidden_by_age=hidden_by_age,
+        max_age_days=config.MAX_AGE_DAYS,
+        showing_stale=request.args.get("stale") == "1",
         filters=request.args,
         config=config,
     )
@@ -177,83 +217,50 @@ def mark_seen_route():
     return redirect(url_for("index", **request.args))
 
 
-@app.route("/prep/<path:posting_id>", methods=["POST"])
-def prep_route(posting_id):
+@app.route("/prompts/<path:posting_id>")
+def prompts_route(posting_id):
     """
-    Draft an application packet for one posting.
+    The application-prep page for one posting: a cover letter prompt and a
+    work experience prompt, both tailored to this role's family.
 
-    Synchronous, and it takes 15-30 seconds — the model is reasoning about
-    which of your experiences match this specific role. For a single-user
-    local tool, making you wait is honest; a hosted app would queue it.
+    Nothing here calls an API or costs anything — the page hands you text to
+    paste into whatever assistant you already use.
+
+    An optional `jd` query parameter carries a pasted job description, which
+    materially improves both prompts. It travels in the URL rather than a
+    database because it's per-application scratch, not something to keep.
     """
     conn = storage.connect()
     posting = next(
         (p for p in storage.load_postings(conn) if p["id"] == posting_id),
         None,
     )
+    conn.close()
 
     if posting is None:
-        conn.close()
         return render_template("error.html",
                                message="No such posting."), 404
+
+    job_description = request.args.get("jd", "")
 
     try:
-        packet = letters.generate(posting)
+        cover = letters.cover_letter_prompt(
+            posting, job_description=job_description
+        )
+        experience = letters.work_experience_prompt(
+            posting, job_description=job_description
+        )
+        error = None
     except letters.LetterError as exc:
-        # LetterError messages are written to be read by a person — missing
-        # profile, missing API key, no credit. Show it rather than a 500.
-        conn.close()
-        return render_template("error.html", message=str(exc)), 400
-
-    path = letters.save_markdown(posting, packet)
-    storage.save_packet(conn, posting_id, packet, path)
-    conn.close()
-
-    return redirect(url_for("packet_route", posting_id=posting_id))
-
-
-@app.route("/packet/<path:posting_id>")
-def packet_route(posting_id):
-    """
-    The cover letter page for one posting.
-
-    Two states:
-      - a draft already exists  -> show it
-      - no draft yet            -> offer both ways to get one:
-          the free copy-paste prompt, or generating it here via the API
-
-    Putting both on the same page is deliberate. The cost tradeoff belongs at
-    the moment you're deciding, not buried in a config file.
-    """
-    conn = storage.connect()
-    packet = storage.get_packet(conn, posting_id)
-    posting = next(
-        (p for p in storage.load_postings(conn) if p["id"] == posting_id),
-        None,
-    )
-    conn.close()
-
-    if posting is None:
-        return render_template("error.html",
-                               message="No such posting."), 404
-
-    # Building the paste prompt needs profile.md but no API key. If the
-    # profile is missing we still render the page — with the error where the
-    # prompt would go, rather than failing the whole request.
-    paste_prompt, profile_error = None, None
-    if packet is None:
-        try:
-            paste_prompt = letters.build_paste_prompt(posting)
-        except letters.LetterError as exc:
-            profile_error = str(exc)
+        cover, experience, error = None, None, str(exc)
 
     return render_template(
-        "packet.html",
-        packet=packet,
+        "prompts.html",
         posting=posting,
-        paste_prompt=paste_prompt,
-        profile_error=profile_error,
-        cost_estimate=config.LETTER_COST_ESTIMATE,
+        cover_prompt=cover,
+        experience_prompt=experience,
+        profile_error=error,
+        job_description=job_description,
     )
 
 

@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ posting.company }} — application prep</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <h1>{{ posting.company }}</h1>
+      <p class="sub">
+        {{ posting.role }} · {{ posting.location }}
+        {% if posting.role_family %}
+          · written for a <strong>{{ posting.role_family }}</strong> audience
+        {% endif %}
+      </p>
+    </div>
+    <div class="topbar-actions">
+      <a class="btn-secondary" href="{{ url_for('index') }}">Back to list</a>
+      <a class="btn-refresh" href="{{ posting.apply_url }}"
+         target="_blank" rel="noopener noreferrer">Open application</a>
+    </div>
+  </div>
+</header>
+
+<main class="packet">
+
+{% if profile_error %}
+  <div class="card"><pre class="error-message">{{ profile_error }}</pre></div>
+{% else %}
+
+  <p class="muted small">
+    These prompts are free — copy one into
+    <a href="https://claude.ai" target="_blank" rel="noopener">claude.ai</a>,
+    ChatGPT, or whatever you already use. Everything needed is included: the
+    posting, your profile, and what this kind of reviewer looks for.
+  </p>
+
+  <!-- Pasting the real job description is the single biggest quality lever,
+       since the source only gives us a title. Kept in the URL rather than
+       the database: it's per-application scratch, not something to store. -->
+  <section class="card">
+    <div class="card-head">
+      <h2>Paste the job description (optional, but worth it)</h2>
+    </div>
+    <p class="muted small">
+      The listing only gives us a job title. Paste the real description from
+      the company's page and both prompts below will use its actual wording —
+      which is what a human reviewer and an applicant-tracking system are both
+      scanning for.
+    </p>
+    <form method="get" class="jd-form">
+      <textarea name="jd" rows="5"
+                placeholder="Paste the job description here, then press Update…"
+                >{{ job_description }}</textarea>
+      <button type="submit" class="btn-refresh">Update prompts</button>
+      {% if job_description %}
+        <a class="clear" href="{{ url_for('prompts_route',
+                                          posting_id=posting.id) }}">Clear</a>
+      {% endif %}
+    </form>
+    {% if job_description %}
+      <p class="muted small jd-active">
+        Using the pasted description — both prompts below now reference it.
+      </p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>1 — Cover letter</h2>
+      <button class="btn-copy" data-copy="cover">Copy prompt</button>
+    </div>
+    <p class="muted small">
+      Produces a letter, reusable talking points, an honest list of gaps, and
+      a frank verdict on whether this one is worth your time.
+    </p>
+    <pre class="paste-prompt" id="cover">{{ cover_prompt }}</pre>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>2 — Work experience</h2>
+      <button class="btn-copy" data-copy="experience">Copy prompt</button>
+    </div>
+    <p class="muted small">
+      For the "describe your relevant experience" boxes. Rewrites your
+      experience aimed at this role — same facts, different emphasis — in both
+      a short version for character-limited fields and a full one.
+    </p>
+    <pre class="paste-prompt" id="experience">{{ experience_prompt }}</pre>
+  </section>
+
+  <div class="warn-banner">
+    Whatever comes back is a draft in your name. Read it before you send it —
+    and if it claims something your résumé doesn't support, cut that line.
+  </div>
+
+{% endif %}
+</main>
+
+<script>
+// Copy buttons. navigator.clipboard is async and can reject (permission
+// denied, insecure context), so the failure path has to be handled or the
+// button silently lies about having worked.
+document.querySelectorAll('.btn-copy').forEach(function (button) {
+  button.addEventListener('click', async function () {
+    const target = document.getElementById(button.dataset.copy);
+    if (!target) return;
+    const original = button.textContent;
+    try {
+      await navigator.clipboard.writeText(target.innerText.trim());
+      button.textContent = 'Copied';
+    } catch (err) {
+      button.textContent = 'Press Cmd+C';
+      // Select the text so the manual fallback actually works.
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    setTimeout(function () { button.textContent = original; }, 2000);
+  });
+});
+</script>
+
+</body>
+</html>

@@ -1,55 +1,71 @@
 """
-Scoring — turns a Posting into a fit score using the weights in config.py.
+Scoring — how worth applying to is this posting, today?
 
-This file contains NO numbers and NO keywords. That's deliberate: every value
-it uses is imported from config.py, so tuning the rankings never means editing
-any logic. If you find yourself wanting to change a number here, it belongs in
-config.py instead.
+This file contains NO numbers and NO keywords. Every value comes from
+config.py, so tuning never means editing logic.
 
-TWO SUBTLE DECISIONS WORTH UNDERSTANDING
-----------------------------------------
+THE MODEL
+---------
+Three factors, each 0 to 1, MULTIPLIED:
 
-1. WE MATCH ON WHOLE WORDS, NOT SUBSTRINGS.
-   The obvious way to check a keyword is `if "ai" in title`. That's a bug:
-   "ai" appears inside "training", "email", "chair", and "maintain". "ml"
-   appears inside "html". A naive substring check would hand out AI bonus
-   points to a role called "Email Platform Intern".
+    score = preference × candidacy × freshness × 100
 
-   So we build a regex with word boundaries (\b) for each keyword and match
-   that instead. "AI" matches; "training" doesn't.
+    preference   do you want it        (role family + topic)
+    candidacy    would they take you   (what your résumé proves)
+    freshness    is it still open      (age of the posting)
 
-2. FOCUS BONUSES MATCH THE ROLE TITLE ONLY — NOT THE CATEGORY.
-   This one took a moment to spot. The category "Data Science, AI & Machine
-   Learning" literally contains the words "AI", "Machine Learning", and "Data".
-   If focus bonuses were matched against the category text too, every single
-   posting in that section would automatically collect ~32 bonus points just
-   for existing there — on top of the category bonus it already gets. Generic
-   data-science listings would then outrank the Product Management roles you
-   actually prioritized.
+WHY MULTIPLY — THE BUG THIS REPLACED
+------------------------------------
+The first version ADDED a large constant for wanting a role: +150 for
+anything titled "forward deployed". Preference then swamped everything, and
+the top of the list filled with month-old postings at companies that take a
+handful of interns — real matches for the wish list, useless as actions.
 
-   Categories get their points from CATEGORY_BONUS. Titles get theirs from
-   FOCUS_BONUSES. No double-dipping.
+Multiplication encodes the real requirement: an application is worth making
+only if ALL THREE hold. You want it, AND you could plausibly get it, AND it's
+still open. A near-zero in any factor should sink the result, and here it
+does.
+
+Nothing is ever excluded by age or odds — a bad factor lowers a posting, it
+never hides it. Recruiters are consistent that old postings are still worth
+applying to, and the rarest top-tier roles are exactly the ones you'd hate to
+lose to a filter.
+
+THREE IMPLEMENTATION NOTES
+--------------------------
+1. WHOLE-WORD MATCHING, NOT SUBSTRINGS. `if "ai" in title` is a bug: "ai"
+   appears inside "training", "email", and "maintain"; "ml" inside "html".
+   Every keyword is matched with a word-boundary regex instead.
+
+2. FRESHNESS IS NEVER STORED. It changes daily for the same posting, so a
+   stored score would be wrong by morning. Preference and candidacy are
+   stable and get saved; freshness and the final score are recomputed every
+   time they're shown.
+
+3. PREFERENCE AND CANDIDACY STAY SEPARATE. Blending them would hide the two
+   cases that matter most: a role you'd love but can't get, and one you'd
+   walk into but hadn't considered. Those need different actions, so they get
+   different numbers.
 """
 
 import re
+from datetime import date
 
 import config
 
 
 # =============================================================================
-# Keyword matching helpers
+# Keyword matching
 # =============================================================================
 
-# Regexes are compiled once and reused, rather than rebuilt for all 400+
-# postings. This is a small cache: keyword -> compiled pattern.
 _PATTERN_CACHE = {}
 
 
 def _pattern_for(keyword: str):
     """Build (and cache) a whole-word regex for one keyword."""
     if keyword not in _PATTERN_CACHE:
-        # re.escape handles keywords containing regex-special characters,
-        # like the "+" in "c++" or the "-" in "forward-deployed".
+        # re.escape handles regex-special characters in keywords, like the
+        # "+" in "c++" or the "-" in "forward-deployed".
         _PATTERN_CACHE[keyword] = re.compile(
             r"\b" + re.escape(keyword) + r"\b", re.IGNORECASE
         )
@@ -57,8 +73,14 @@ def _pattern_for(keyword: str):
 
 
 def _matches(keyword: str, text: str) -> bool:
-    """True if `keyword` appears in `text` as a whole word."""
     return bool(_pattern_for(keyword).search(text))
+
+
+def _field(posting, name):
+    """Read a field from either a Posting object or a database row dict."""
+    if hasattr(posting, name):
+        return getattr(posting, name)
+    return posting.get(name)
 
 
 # =============================================================================
@@ -67,143 +89,251 @@ def _matches(keyword: str, text: str) -> bool:
 
 def is_internship(posting) -> bool:
     """
-    Does this posting look like an internship?
+    Does this look like an internship?
 
-    The Summer 2027 repo is internship-only, so today this passes essentially
-    everything. It earns its keep later, when you add New-Grad-Positions as a
-    second source and suddenly need to tell the two apart.
+    The Summer 2027 repo is internship-only, so today this passes nearly
+    everything. It earns its keep when a second source is added.
     """
     if not config.REQUIRE_INTERNSHIP:
         return True
-
-    text = posting.role
-    return any(_matches(kw, text) for kw in config.INTERNSHIP_KEYWORDS)
+    title = _field(posting, "role")
+    return any(_matches(kw, title) for kw in config.INTERNSHIP_KEYWORDS)
 
 
 # =============================================================================
-# The scorer
+# 1. Preference — do you want it?
 # =============================================================================
 
-def score(posting):
+def preference(posting):
     """
-    Compute a fit score for one posting.
+    How much you want this role, 0 to 1. Returns (value, reasons, family).
 
-    Returns (total_score, reasons) where `reasons` is a list of
-    {"label": str, "points": int} dicts explaining every point awarded.
-
-    Keeping the reasons is what makes the dashboard trustworthy: instead of an
-    unexplained "97", you can see it was 85 for the PM title, 30 for the
-    category, and -15 for requiring a Master's. When a ranking looks wrong,
-    the reasons tell you exactly which config value to edit.
+    `family` names the matched ROLE_FAMILIES entry; the letter generator uses
+    it to decide what a letter for this kind of role should emphasize.
     """
     reasons = []
-    total = 0
+    title = _field(posting, "role")
 
-    title = posting.role
-    category = posting.category
+    # -- role family: highest match wins ------------------------------------
+    # A posting can match several families ("Solutions Engineer" contains
+    # "engineer"). Taking the highest keeps families behaving like priorities,
+    # and stays correct if you reorder them in config.py.
+    best = None
+    for family in config.ROLE_FAMILIES:
+        if any(_matches(kw, title) for kw in family["keywords"]):
+            if best is None or family["preference"] > best["preference"]:
+                best = family
 
-    # -- 1. Role tier -------------------------------------------------------
-    # Find every tier this title matches, then keep only the best one.
-    #
-    # Why the best rather than the first: a title like "Solutions Engineer
-    # Intern" contains the word "engineer" and so also matches the generic
-    # Software Engineering tier. If tiers stacked, padded generic titles would
-    # beat true top-priority matches. Taking the highest-value match keeps the
-    # tiers behaving like priorities — and it stays correct even if you
-    # reorder the tiers in config.py.
-    best_tier = None
-    for tier in config.ROLE_TIERS:
-        if any(_matches(kw, title) for kw in tier["keywords"]):
-            if best_tier is None or tier["points"] > best_tier["points"]:
-                best_tier = tier
-
-    if best_tier:
-        total += best_tier["points"]
+    if best:
+        value = best["preference"]
+        family_name = best["name"]
         reasons.append({
-            "label": f"Role type: {best_tier['name']}",
-            "points": best_tier["points"],
+            "label": f"Role type: {family_name}",
+            "detail": f"base {value:.2f}",
         })
-
-    # -- 2. Category bonus --------------------------------------------------
-    for cat_name, points in config.CATEGORY_BONUS.items():
-        if cat_name.lower() in category.lower():
-            total += points
-            reasons.append({
-                "label": f"Listed under {cat_name}",
-                "points": points,
-            })
-            break   # a posting belongs to exactly one category
-
-    # -- 3. Focus bonuses (title only — see module docstring) ---------------
-    focus_total = 0
-    focus_hits = []
-    for keyword, points in config.FOCUS_BONUSES.items():
-        if _matches(keyword, title):
-            focus_total += points
-            focus_hits.append(keyword)
-
-    # Cap the focus total so a keyword-stuffed title can't run away with it.
-    # Without this, "AI/ML Data Platform Infrastructure Intern" would collect
-    # points for six overlapping keywords and outrank a genuine top-tier role.
-    if focus_total > config.MAX_FOCUS_BONUS:
-        focus_total = config.MAX_FOCUS_BONUS
-        capped = f" (capped at {config.MAX_FOCUS_BONUS})"
     else:
-        capped = ""
-
-    if focus_hits:
-        total += focus_total
+        value = config.UNKNOWN_FAMILY_PREFERENCE
+        family_name = ""
         reasons.append({
-            "label": f"Focus areas: {', '.join(focus_hits)}{capped}",
-            "points": focus_total,
+            "label": "Role type not recognized",
+            "detail": f"base {value:.2f}",
         })
 
-    # -- 4. Out-of-scope fields ---------------------------------------------
-    for keyword, points in config.OUT_OF_SCOPE_KEYWORDS.items():
+    # -- topic lift ---------------------------------------------------------
+    lift = 0.0
+    hits = []
+    for keyword, amount in config.FOCUS_LIFT.items():
         if _matches(keyword, title):
-            total += points     # values are already negative in config
+            lift += amount
+            hits.append(keyword)
+
+    if lift > config.MAX_FOCUS_LIFT:
+        lift = config.MAX_FOCUS_LIFT
+
+    if hits:
+        value = min(1.0, value + lift)
+        reasons.append({
+            "label": "Areas you want: " + ", ".join(hits),
+            "detail": f"+{lift:.2f}",
+        })
+
+    # -- out of scope: multiplies down --------------------------------------
+    for keyword, multiplier in config.OUT_OF_SCOPE.items():
+        if _matches(keyword, title):
+            value *= multiplier
             reasons.append({
-                "label": f"Outside this search's scope: {keyword}",
-                "points": points,
+                "label": f"Outside this search: {keyword}",
+                "detail": f"x{multiplier:.2f}",
             })
 
-    # -- 5. Flag-based adjustments ------------------------------------------
-    if posting.needs_advanced_degree and config.ADVANCED_DEGREE_PENALTY:
-        total += config.ADVANCED_DEGREE_PENALTY
+    return round(value, 3), reasons, family_name
+
+
+# =============================================================================
+# 2. Candidacy — would they take you?
+# =============================================================================
+
+def candidacy(posting):
+    """
+    How plausible a candidate you are, 0 to 1. Returns (value, reasons).
+
+    Grounded in what the résumé proves. This is the half the first version of
+    the tool was missing, and the reason it kept surfacing roles that weren't
+    realistic.
+    """
+    reasons = []
+    title = _field(posting, "role")
+
+    value = config.CANDIDACY_BASELINE
+    reasons.append({
+        "label": "Baseline for an undergrad with two internships",
+        "detail": f"base {value:.2f}",
+    })
+
+    # -- evidence from the résumé -------------------------------------------
+    evidence = 0.0
+    hits = []
+    for keyword, amount in config.CANDIDACY_EVIDENCE.items():
+        if _matches(keyword, title):
+            evidence += amount
+            hits.append(keyword)
+
+    if evidence > config.CANDIDACY_MAX_EVIDENCE:
+        evidence = config.CANDIDACY_MAX_EVIDENCE
+
+    if hits:
+        value = min(1.0, value + evidence)
+        reasons.append({
+            "label": "Your resume proves: " + ", ".join(hits),
+            "detail": f"+{evidence:.2f}",
+        })
+
+    # -- blockers: multiply down --------------------------------------------
+    for keyword, multiplier in config.CANDIDACY_BLOCKERS.items():
+        if _matches(keyword, title):
+            value *= multiplier
+            reasons.append({
+                "label": f"Works against you: {keyword}",
+                "detail": f"x{multiplier:.2f}",
+            })
+
+    # The repo's advanced-degree marker is set deliberately by maintainers, so
+    # it's more reliable than inferring from title wording.
+    if _field(posting, "needs_advanced_degree"):
+        value *= config.ADVANCED_DEGREE_MULTIPLIER
         reasons.append({
             "label": "Requires an advanced degree",
-            "points": config.ADVANCED_DEGREE_PENALTY,
+            "detail": f"x{config.ADVANCED_DEGREE_MULTIPLIER:.2f}",
         })
 
-    if posting.is_faang and config.FAANG_BONUS:
-        total += config.FAANG_BONUS
+    if _field(posting, "is_faang"):
+        value *= config.COMPETITIVE_EMPLOYER_MULTIPLIER
         reasons.append({
-            "label": "FAANG+ company",
-            "points": config.FAANG_BONUS,
+            "label": "Highly competitive employer",
+            "detail": f"x{config.COMPETITIVE_EMPLOYER_MULTIPLIER:.2f}",
         })
 
-    return total, reasons
+    return round(value, 3), reasons
+
+
+# =============================================================================
+# 3. Freshness — is it still open?
+# =============================================================================
+
+def days_old(posting):
+    """
+    Days since posting, or None if unknown.
+
+    Computed from `date_posted` — a real date — rather than the source's "Age"
+    text, so it keeps ageing correctly between refreshes instead of freezing
+    at whatever the last fetch happened to see.
+    """
+    posted = _field(posting, "date_posted")
+    if not posted:
+        return None
+    try:
+        return max(0, (date.today() - date.fromisoformat(posted)).days)
+    except (TypeError, ValueError):
+        return None
+
+
+def freshness(age_days):
+    """Multiplier for how likely this is still open. Returns (value, label)."""
+    if age_days is None:
+        return config.UNKNOWN_AGE_FRESHNESS, "Age unknown"
+
+    for threshold, multiplier in config.FRESHNESS_CURVE:
+        if age_days <= threshold:
+            if age_days == 0:
+                label = "Posted today"
+            elif age_days == 1:
+                label = "Posted yesterday"
+            else:
+                label = f"Posted {age_days} days ago"
+            return multiplier, label
+
+    return config.UNKNOWN_AGE_FRESHNESS, "Age unknown"
+
+
+def is_fresh(age_days) -> bool:
+    return age_days is not None and age_days <= config.FRESH_DAYS
+
+
+# =============================================================================
+# Putting it together
+# =============================================================================
+
+def final_score(pref_value, cand_value, fresh_value) -> int:
+    """The three factors multiplied, as a 0-100 number."""
+    return round(pref_value * cand_value * fresh_value * 100)
+
+
+def score_posting(posting) -> dict:
+    """
+    Score one posting completely.
+
+    Returns every component, not just the total, so the dashboard can show the
+    whole calculation instead of one opaque number.
+    """
+    pref, pref_reasons, family = preference(posting)
+    cand, cand_reasons = candidacy(posting)
+    age = days_old(posting)
+    fresh, fresh_label = freshness(age)
+
+    return {
+        "preference": pref,
+        "preference_reasons": pref_reasons,
+        "candidacy": cand,
+        "candidacy_reasons": cand_reasons,
+        "freshness": fresh,
+        "freshness_label": fresh_label,
+        "age_days": age,
+        "is_fresh": is_fresh(age),
+        "role_family": family,
+        "score": final_score(pref, cand, fresh),
+    }
 
 
 def score_all(postings) -> list:
     """
-    Score every posting, drop non-internships, and sort best-fit first.
+    Score every posting, drop non-internships, best first.
 
-    Scores are always recomputed from scratch — never read back from the
-    database. That's what lets you edit config.py, re-run, and immediately see
-    new rankings without clearing any stored state.
+    Recomputed from scratch every run, so editing config.py and re-running is
+    all it takes to change the rankings.
     """
     scored = []
-
     for posting in postings:
         if not is_internship(posting):
             continue
-        posting.fit_score, posting.score_reasons = score(posting)
+        result = score_posting(posting)
+        posting.preference = result["preference"]
+        posting.preference_reasons = result["preference_reasons"]
+        posting.candidacy_score = result["candidacy"]
+        posting.candidacy_reasons = result["candidacy_reasons"]
+        posting.role_family = result["role_family"]
+        posting.fit_score = result["score"]
         scored.append(posting)
 
-    # Sort by score descending. The secondary sort on company keeps the order
-    # stable and predictable for postings that tie, instead of shuffling
-    # between runs.
     scored.sort(
         key=lambda p: (-p.fit_score, p.company.lower(), p.role.lower())
     )
@@ -211,7 +341,7 @@ def score_all(postings) -> list:
 
 
 def fit_label(score_value: int) -> str:
-    """Turn a numeric score into a badge for the dashboard."""
+    """Turn a score into a badge name for the dashboard."""
     if score_value >= config.STRONG_FIT_THRESHOLD:
         return "strong"
     if score_value >= config.GOOD_FIT_THRESHOLD:

@@ -61,8 +61,16 @@ CREATE TABLE IF NOT EXISTS postings (
     needs_advanced_degree INTEGER,
     no_sponsorship       INTEGER,
     citizenship_required INTEGER,
-    fit_score            INTEGER,
-    score_reasons        TEXT,     -- JSON list of {label, points}
+    -- The score is three factors multiplied. preference and candidacy are
+    -- stable and stored; freshness is NOT — it changes daily, so it's
+    -- recomputed at display time. fit_score is a snapshot from the last run,
+    -- used by the CLI report and notifications.
+    preference           REAL,
+    preference_reasons   TEXT,     -- JSON list of {label, detail}
+    candidacy_score      REAL,
+    candidacy_reasons    TEXT,     -- JSON list of {label, detail}
+    role_family          TEXT,     -- matched ROLE_FAMILIES entry
+    fit_score            INTEGER,  -- snapshot: preference x candidacy x fresh
     first_seen           TEXT,     -- OUR timestamp: drives the NEW flag
     last_seen            TEXT,
     is_active            INTEGER   -- 0 once it drops off the source
@@ -89,20 +97,6 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE TABLE IF NOT EXISTS app_state (
     key   TEXT PRIMARY KEY,
     value TEXT
-);
-
--- Generated application drafts. Like `applications`, this is YOUR data, not
--- fetched data — a refresh must never touch it. It's also the expensive kind:
--- every row cost an API call, so we keep them rather than regenerating.
-CREATE TABLE IF NOT EXISTS packets (
-    posting_id     TEXT PRIMARY KEY,
-    cover_letter   TEXT,
-    talking_points TEXT,     -- JSON array
-    gaps           TEXT,     -- JSON array of {requirement, how_to_address}
-    fit_summary    TEXT,
-    model          TEXT,
-    file_path      TEXT,     -- the markdown copy in letters/
-    generated_at   TEXT
 );
 
 -- Indexes: make sorting by score and filtering by active fast.
@@ -176,9 +170,10 @@ def save_postings(conn, postings, run_time: str) -> dict:
                 id, source, company, role, category, location,
                 apply_url, simplify_url, age_text, date_posted,
                 is_faang, needs_advanced_degree, no_sponsorship,
-                citizenship_required, fit_score, score_reasons,
+                citizenship_required, preference, preference_reasons,
+                candidacy_score, candidacy_reasons, role_family, fit_score,
                 first_seen, last_seen, is_active
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
             ON CONFLICT(id) DO UPDATE SET
                 source        = excluded.source,
                 company       = excluded.company,
@@ -193,8 +188,12 @@ def save_postings(conn, postings, run_time: str) -> dict:
                 needs_advanced_degree = excluded.needs_advanced_degree,
                 no_sponsorship        = excluded.no_sponsorship,
                 citizenship_required  = excluded.citizenship_required,
-                fit_score     = excluded.fit_score,
-                score_reasons = excluded.score_reasons,
+                preference        = excluded.preference,
+                preference_reasons = excluded.preference_reasons,
+                candidacy_score   = excluded.candidacy_score,
+                candidacy_reasons = excluded.candidacy_reasons,
+                role_family       = excluded.role_family,
+                fit_score         = excluded.fit_score,
                 last_seen     = excluded.last_seen,
                 is_active     = 1
                 -- NOTE: first_seen is intentionally NOT updated here.
@@ -205,7 +204,12 @@ def save_postings(conn, postings, run_time: str) -> dict:
                 posting.simplify_url, posting.age_text, posting.date_posted,
                 int(posting.is_faang), int(posting.needs_advanced_degree),
                 int(posting.no_sponsorship), int(posting.citizenship_required),
-                posting.fit_score, json.dumps(posting.score_reasons),
+                posting.preference,
+                json.dumps(posting.preference_reasons),
+                posting.candidacy_score,
+                json.dumps(posting.candidacy_reasons),
+                posting.role_family,
+                posting.fit_score,
                 run_time, run_time,
             ),
         )
@@ -291,11 +295,12 @@ def load_postings(conn, include_inactive: bool = False) -> list:
     postings = []
     for row in rows:
         item = dict(row)
-        # score_reasons is stored as a JSON string; decode it for the template.
-        try:
-            item["score_reasons"] = json.loads(item["score_reasons"] or "[]")
-        except (json.JSONDecodeError, TypeError):
-            item["score_reasons"] = []
+        # Reason lists are stored as JSON strings; decode for the template.
+        for field in ("preference_reasons", "candidacy_reasons"):
+            try:
+                item[field] = json.loads(item.get(field) or "[]")
+            except (json.JSONDecodeError, TypeError):
+                item[field] = []
         postings.append(item)
 
     return postings
@@ -457,67 +462,4 @@ def applied_count(conn) -> int:
     row = conn.execute(
         "SELECT COUNT(*) AS n FROM applications WHERE applied = 1"
     ).fetchone()
-    return row["n"] if row else 0
-
-
-# =============================================================================
-# Application packets (generated cover letters)
-# =============================================================================
-
-def save_packet(conn, posting_id: str, packet: dict, file_path: str) -> None:
-    """Store a generated packet, replacing any earlier one for this posting."""
-    conn.execute(
-        """
-        INSERT INTO packets (
-            posting_id, cover_letter, talking_points, gaps,
-            fit_summary, model, file_path, generated_at
-        ) VALUES (?,?,?,?,?,?,?,?)
-        ON CONFLICT(posting_id) DO UPDATE SET
-            cover_letter   = excluded.cover_letter,
-            talking_points = excluded.talking_points,
-            gaps           = excluded.gaps,
-            fit_summary    = excluded.fit_summary,
-            model          = excluded.model,
-            file_path      = excluded.file_path,
-            generated_at   = excluded.generated_at
-        """,
-        (
-            posting_id,
-            packet.get("cover_letter", ""),
-            json.dumps(packet.get("talking_points", [])),
-            json.dumps(packet.get("gaps", [])),
-            packet.get("fit_summary", ""),
-            packet.get("model", ""),
-            file_path,
-            now_iso(),
-        ),
-    )
-    conn.commit()
-
-
-def get_packet(conn, posting_id: str):
-    """Load one packet, or None. JSON columns come back already decoded."""
-    row = conn.execute(
-        "SELECT * FROM packets WHERE posting_id = ?", (posting_id,)
-    ).fetchone()
-    if not row:
-        return None
-
-    packet = dict(row)
-    for field in ("talking_points", "gaps"):
-        try:
-            packet[field] = json.loads(packet[field] or "[]")
-        except (json.JSONDecodeError, TypeError):
-            packet[field] = []
-    return packet
-
-
-def packet_ids(conn) -> set:
-    """Which postings already have a draft — used to label the buttons."""
-    rows = conn.execute("SELECT posting_id FROM packets").fetchall()
-    return {r["posting_id"] for r in rows}
-
-
-def packet_count(conn) -> int:
-    row = conn.execute("SELECT COUNT(*) AS n FROM packets").fetchone()
     return row["n"] if row else 0

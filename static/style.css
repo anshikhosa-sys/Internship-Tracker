@@ -361,6 +361,42 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
   color: var(--muted);
 }
 
+.tag-fresh { background: var(--strong); color: #fff; }
+
+.formula {
+  font-size: 12.5px;
+  margin: 6px 0 10px;
+  padding: 6px 10px;
+  background: var(--bg);
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.factor { margin-bottom: 8px; }
+
+.factor-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.jd-form textarea {
+  width: 100%;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+  margin-bottom: 8px;
+}
+
+.jd-active { color: var(--strong); }
+
 .error-message {
   white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
