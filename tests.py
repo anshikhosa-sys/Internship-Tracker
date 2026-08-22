@@ -25,6 +25,7 @@ import tempfile
 from datetime import date, timedelta
 
 import config
+import dedupe
 import letters
 import scorer
 import storage
@@ -157,12 +158,16 @@ def test_preference():
 def test_candidacy():
     print("\nCANDIDACY — would they take you")
 
-    def cand(role, **kwargs):
-        return scorer.candidacy(make_posting(1, role=role, **kwargs))[0]
+    def cand(role, category="Software Engineering", **kwargs):
+        return scorer.candidacy(
+            make_posting(1, role=role, category=category, **kwargs)
+        )[0]
 
-    baseline = cand("Software Engineer Intern")
+    # An uncategorized posting with no skill keywords is the true baseline —
+    # a categorized one now picks up the category signal on top.
+    baseline = cand("Analyst Intern", category="Uncategorized")
     check(baseline == config.CANDIDACY_BASELINE,
-          "an unremarkable title sits at the baseline")
+          "an unremarkable, uncategorized title sits at the baseline")
 
     check(cand("Data Pipeline Engineer Intern") > baseline,
           "a title naming proven experience raises candidacy")
@@ -172,9 +177,14 @@ def test_candidacy():
           "a PhD requirement sinks candidacy")
     check(cand("Senior Software Engineer") < baseline / 2,
           "a senior title sinks candidacy")
-    check(cand("Software Engineer Intern", advanced_degree=True) < baseline,
+    check(cand("Applied AI Engineer Intern") > 0,
+          "a normal role keeps a usable candidacy value")
+    # Compare like with like: these must be measured against the same role
+    # in the same category, or the category signal swamps the effect.
+    plain = cand("Software Engineer Intern")
+    check(cand("Software Engineer Intern", advanced_degree=True) < plain,
           "the advanced-degree marker lowers candidacy")
-    check(cand("Software Engineer Intern", faang=True) < baseline,
+    check(cand("Software Engineer Intern", faang=True) < plain,
           "a highly competitive employer lowers candidacy slightly")
 
     check(0.0 <= cand("Compiler Engineer Intern") <= 1.0,
@@ -275,6 +285,149 @@ def test_scoring_model():
     check(scorer.is_internship(intern), "an intern role passes the gate")
     check(not scorer.is_internship(make_posting(1, role="Staff Engineer")),
           "a full-time role is filtered out")
+
+
+# =============================================================================
+def test_weighting():
+    """The exponents that make candidacy, not preference, drive the score."""
+    print("\nSCORE WEIGHTING")
+
+    w = config.SCORE_WEIGHTS
+    check(w["candidacy"] >= w["preference"],
+          "candidacy is weighted at least as heavily as preference")
+    check(w["preference"] < 1.0,
+          "preference is compressed rather than counted in full")
+
+    # A weight below 1 must actually compress the spread.
+    lo = scorer.final_score(0.5, 0.8, 1.0)
+    hi = scorer.final_score(1.0, 0.8, 1.0)
+    spread_pref = hi - lo
+    lo_c = scorer.final_score(0.8, 0.5, 1.0)
+    hi_c = scorer.final_score(0.8, 1.0, 1.0)
+    spread_cand = hi_c - lo_c
+    check(spread_cand > spread_pref,
+          f"the same 0.5-1.0 swing moves the score more via candidacy "
+          f"({spread_cand}) than preference ({spread_pref})")
+
+    # A zero anywhere must still sink the result. Python's 0 ** 0 == 1, so
+    # this would silently become a perfect score without an explicit guard.
+    check(scorer.final_score(0.0, 1.0, 1.0) == 0,
+          "zero preference still yields zero, despite the exponent")
+    check(scorer.final_score(1.0, 0.0, 1.0) == 0, "zero candidacy yields zero")
+    check(scorer.final_score(1.0, 1.0, 0.0) == 0, "zero freshness yields zero")
+
+    check(scorer.final_score(1.0, 1.0, 1.0) == 100,
+          "a perfect posting scores 100")
+
+
+# =============================================================================
+def test_candidacy_signals():
+    """Candidacy has to VARY to deserve the weight it carries."""
+    print("\nCANDIDACY SIGNALS")
+
+    swe = make_posting(1, role="Software Engineer Intern",
+                       category="Software Engineering")
+    pm = make_posting(2, role="Software Engineer Intern",
+                      category="Product Management")
+    check(scorer.candidacy(swe)[0] > scorer.candidacy(pm)[0],
+          "two SWE internships support a SWE role more than a PM one")
+
+    # Hiring volume: a company taking 100 interns is not a one-ticket lottery.
+    small = scorer.candidacy(swe, company_volume=1)[0]
+    large = scorer.candidacy(swe, company_volume=100)[0]
+    check(large > small,
+          f"a company posting 100 roles scores higher ({large}) than one "
+          f"posting 1 ({small})")
+
+    check(scorer.company_volumes(
+        [make_posting(1), make_posting(1), make_posting(2)]
+    )["company1"] == 2, "company volumes are counted across the list")
+
+
+# =============================================================================
+def test_dedupe():
+    """Merging the same job across three overlapping sources."""
+    print("\nDEDUPLICATION")
+
+    a = make_posting(1, role="Software Engineer Intern - Summer 2027")
+    a.source = "ListA"
+    a.category = "Software Engineering"
+
+    # Same job, different list: title noise differs, no category, has salary.
+    b = make_posting(1, role="Software Engineer Intern")
+    b.source = "ListB"
+    b.category = "Uncategorized"
+    b.salary = "$60/hr"
+    b.needs_advanced_degree = True
+
+    c = make_posting(2, role="Product Manager Intern")
+    c.source = "ListC"
+
+    merged, stats = dedupe.deduplicate([a, b, c])
+
+    check(stats["output"] == 2,
+          "the same job in two lists collapses to one posting")
+    check(stats["duplicates_merged"] == 1, "the merge is counted")
+
+    kept = merged[0]
+    check(kept.salary == "$60/hr",
+          "a salary from one list survives onto the merged record")
+    check(kept.category == "Software Engineering",
+          "a real category beats 'Uncategorized'")
+    check(kept.needs_advanced_degree,
+          "flags are OR-ed — one list marking a requirement counts")
+    check(set(kept.sources) == {"ListA", "ListB"},
+          "the merged record remembers every list it appeared in")
+
+    # Title noise must not prevent a match, and different jobs must not merge.
+    check(dedupe.key_for(a) == dedupe.key_for(b),
+          "'Summer 2027' noise doesn't stop two copies matching")
+    check(dedupe.key_for(a) != dedupe.key_for(c),
+          "genuinely different roles keep separate identities")
+
+    # Requisition numbers differ between lists for the same job.
+    d = make_posting(1, role="Software Engineer Intern JR2023492")
+    check(dedupe.key_for(a) == dedupe.key_for(d),
+          "requisition numbers are stripped before matching")
+
+
+# =============================================================================
+def test_markdown_sources():
+    """The markdown table reader the two newer sources share."""
+    print("\nMARKDOWN TABLE PARSING")
+
+    from sources import markdown_table as md
+
+    # Built from parts to keep the source lines short; the reader only
+    # cares that each row is a pipe-delimited line.
+    header = "| Company | Role | Location | Link | Date Posted |"
+    sep = "| --- | --- | --- | --- | --- |"
+    row1 = ('| Acme | Solutions Engineer Intern | TX '
+            '| <a href="https://a.com/x">A</a> | Aug 21 |')
+    row2 = ('| \u21b3 | Product Manager Intern | Remote '
+            '| <a href="https://a.com/y">A</a> | Aug 20 |')
+    table = "\n".join([header, sep, row1, row2])
+    rows = md.parse_rows(table)
+    check(len(rows) == 2, "reads the data rows and skips header/separator")
+    check(rows[0][0]["text"] == "Acme", "strips HTML to the visible text")
+    check(rows[0][3]["links"] == ["https://a.com/x"],
+          "pulls the href out of a cell")
+
+    company, last = md.resolve_company(rows[0][0]["text"], "")
+    check(company == "Acme", "reads a real company name")
+    company2, _ = md.resolve_company(rows[1][0]["text"], last)
+    check(company2 == "Acme", "the arrow inherits the company above it")
+
+    today = date(2026, 8, 22)
+    check(md.parse_absolute_date("Aug 21", today) == "2026-08-21",
+          "an absolute date parses without approximation")
+    # A date that would be in the future must belong to last year.
+    check(md.parse_absolute_date("Dec 15", today) == "2025-12-15",
+          "a future-looking date rolls back a year")
+    check(md.parse_relative_age("3d", today) == "2026-08-19",
+          "a relative age still parses")
+    check(md.parse_absolute_date("", today) is None,
+          "an empty date returns None rather than guessing")
 
 
 # =============================================================================
@@ -493,6 +646,10 @@ if __name__ == "__main__":
     test_candidacy()
     test_freshness()
     test_scoring_model()
+    test_weighting()
+    test_candidacy_signals()
+    test_dedupe()
+    test_markdown_sources()
     test_storage()
     test_visit_tracking()
     test_prompts()

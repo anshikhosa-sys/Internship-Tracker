@@ -10,5 +10,13 @@ came from.
 
 from .base import Posting, Source
 from .simplify_readme import SimplifyReadmeSource
+from .speedyapply_readme import SpeedyApplyReadmeSource
+from .vansh_readme import VanshReadmeSource
 
-__all__ = ["Posting", "Source", "SimplifyReadmeSource"]
+__all__ = [
+    "Posting",
+    "Source",
+    "SimplifyReadmeSource",
+    "VanshReadmeSource",
+    "SpeedyApplyReadmeSource",
+]

@@ -37,7 +37,12 @@ class Posting:
     # --- Provenance ---
     source: str = ""         # which source produced this posting
     simplify_url: str = ""   # Simplify's own posting page, when available
-    age_text: str = ""       # the raw "18d" / "1mo" string, kept for display
+    age_text: str = ""       # the raw "18d" / "Aug 21" string, for display
+    salary: str = ""         # only some sources publish this
+
+    # Every list this job appeared in, filled in by dedupe.py. Appearing in
+    # several is mild evidence the posting is real and still current.
+    sources: list = field(default_factory=list)
 
     # --- Flags the source repo marks with emoji ---
     is_faang: bool = False               # 🔥

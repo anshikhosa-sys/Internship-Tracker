@@ -101,11 +101,23 @@
       </option>
     </select>
 
-    <label class="checkbox">
-      <input type="checkbox" name="fresh" value="1"
-             {% if filters.get('fresh') == '1' %}checked{% endif %}>
-      Fresh only
-    </label>
+    <select name="within">
+      <option value="" {% if not within %}selected{% endif %}>
+        Any age (within cutoff)
+      </option>
+      <option value="0" {% if within == '0' %}selected{% endif %}>
+        Posted today only
+      </option>
+      <option value="1" {% if within == '1' %}selected{% endif %}>
+        Today or yesterday
+      </option>
+      <option value="3" {% if within == '3' %}selected{% endif %}>
+        Last 3 days
+      </option>
+      <option value="7" {% if within == '7' %}selected{% endif %}>
+        Last 7 days
+      </option>
+    </select>
 
     <label class="checkbox">
       <input type="checkbox" name="show_low" value="1"
@@ -163,6 +175,10 @@
               <span class="company">{{ posting.company }}</span>
               {% if posting.is_new %}<span class="tag tag-new">NEW</span>{% endif %}
               {% if posting.is_fresh %}<span class="tag tag-fresh">{{ posting.freshness_label }}</span>{% endif %}
+              {% if posting.salary %}<span class="tag tag-pay">{{ posting.salary }}</span>{% endif %}
+              {% if posting.sources and posting.sources|length > 1 %}
+                <span class="tag" title="Listed by {{ posting.sources|join(', ') }}">{{ posting.sources|length }} lists</span>
+              {% endif %}
               {% if posting.is_faang %}<span class="tag">FAANG+</span>{% endif %}
               {% if posting.needs_advanced_degree %}
                 <span class="tag tag-warn">Adv. degree</span>
@@ -174,7 +190,9 @@
             <div class="meta">
               {{ posting.location }}
               · {{ posting.category }}
-              {% if posting.age_text %} · posted {{ posting.age_text }} ago{% endif %}
+              {% if posting.age_days is not none %}
+                · posted {{ posting.freshness_label|lower }}
+              {% endif %}
             </div>
 
             <!-- Why it scored what it did — the same data as the tooltip,

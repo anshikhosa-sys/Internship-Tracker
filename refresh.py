@@ -30,15 +30,27 @@ import traceback
 
 import requests
 
+import dedupe
 import notify
 import scorer
 import storage
-from sources import SimplifyReadmeSource
+from sources import (
+    SimplifyReadmeSource,
+    SpeedyApplyReadmeSource,
+    VanshReadmeSource,
+)
 
 
 # Every source to pull from. Add new ones here.
+#
+# Order matters slightly: when the same job appears in several lists, the
+# FIRST one seen becomes the base record and later copies are merged into it.
+# Simplify leads because it's the only source that labels roles by category,
+# which the candidacy score uses.
 SOURCES = [
     SimplifyReadmeSource(),
+    VanshReadmeSource(),
+    SpeedyApplyReadmeSource(),
 ]
 
 
@@ -79,6 +91,17 @@ def refresh(verbose: bool = True, notifications: bool = True) -> dict:
         print("Check your internet connection, then try again.")
         conn.close()
         return {"total": 0, "new": 0, "notified": False, "failed": True}
+
+    # -- 1b. DEDUPLICATE ----------------------------------------------------
+    # The lists overlap heavily. Merging keeps the best field from each copy —
+    # an absolute date beats a derived one, a real category beats
+    # "Uncategorized", a salary beats none.
+    all_postings, dedupe_stats = dedupe.deduplicate(all_postings)
+    if verbose:
+        print(f"  {dedupe_stats['duplicates_merged']} duplicates merged "
+              f"-> {dedupe_stats['output']} unique postings")
+        print(f"  {dedupe_stats['in_multiple_sources']} appear in more than "
+              f"one list")
 
     # -- 2. SCORE -----------------------------------------------------------
     # Scores are always recomputed from scratch, so editing config.py and

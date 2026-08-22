@@ -362,6 +362,8 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
 }
 
 .tag-fresh { background: var(--strong); color: #fff; }
+.tag-pay { background: transparent; color: var(--strong);
+           border: 1px solid var(--strong); }
 
 .formula {
   font-size: 12.5px;

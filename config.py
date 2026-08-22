@@ -8,9 +8,19 @@ numbers exist anywhere else in the codebase.
 
 HOW SCORING WORKS
 -----------------
-A posting's score is three factors MULTIPLIED, each between 0 and 1:
+A posting's score is three factors combined, each between 0 and 1:
 
-    score = PREFERENCE × CANDIDACY × FRESHNESS × 100
+    score = preference^0.35  ×  candidacy^1.0  ×  freshness^0.75  × 100
+
+The exponents are the weights, and they are the most important numbers in
+this file. An exponent below 1 COMPRESSES a factor toward 1, making it matter
+less. Preference at 0.35 means the gap between a role you love and one you
+merely like shrinks from 0.50-1.00 down to about 0.78-1.00 — present, but no
+longer able to decide the ranking on its own.
+
+That is deliberate. The goal is roles you can actually GET, not a ranked list
+of things you'd enjoy. Candidacy carries full weight; wanting it is a
+tie-breaker.
 
     PREFERENCE   Do you want this role?
                  From the role family and the topics involved.
@@ -45,6 +55,8 @@ never hidden — but it stops crowding out things you can act on.
 
 TO TUNE IT
 ----------
+  - Want preference to matter more? Raise SCORE_WEIGHTS["preference"]
+    toward 1.0. At 1.0 all three factors count equally again.
   - A role type ranked too low?    Raise its number in ROLE_FAMILIES.
   - Irrelevant roles too high?     Add keywords to OUT_OF_SCOPE.
   - Not getting credit for a skill you have? Add it to CANDIDACY_EVIDENCE.
@@ -210,6 +222,37 @@ OUT_OF_SCOPE = {
 }
 
 
+# Some employers are out of scope for reasons the TITLE never reveals.
+# "Applied AI Engineer Intern" reads like a perfect match until you notice
+# the company is a hedge fund and the work is signal research.
+#
+# These multiply preference down, same as the keyword list above.
+#
+# DELIBERATELY NARROW. Only pure quant and high-frequency trading shops are
+# listed, because that's a genuinely different career track. Banks,
+# consultancies, and insurers hiring ordinary software interns — Amex,
+# Blackstone, Goldman, PwC — are NOT here: those are real engineering
+# internships and you said you'd take a good general one.
+OUT_OF_SCOPE_COMPANIES = {
+    "millennium": 0.35,
+    "citadel": 0.35,
+    "jane street": 0.35,
+    "two sigma": 0.35,
+    "hudson river trading": 0.30,
+    "de shaw": 0.35,
+    "point72": 0.35,
+    "jump trading": 0.30,
+    "optiver": 0.30,
+    "imc trading": 0.30,
+    "susquehanna": 0.30,
+    "sig": 0.30,
+    "akuna": 0.30,
+    "drw": 0.30,
+    "five rings": 0.30,
+    "old mission": 0.30,
+}
+
+
 # =============================================================================
 # 3. CANDIDACY — would they realistically interview you?  (0.0 to 1.0)
 # =============================================================================
@@ -324,6 +367,63 @@ ADVANCED_DEGREE_MULTIPLIER = 0.15
 # this tool useless in a different way. Set to 1.0 to ignore entirely.
 COMPETITIVE_EMPLOYER_MULTIPLIER = 0.85
 
+
+# =============================================================================
+# 3b. HOW THE THREE FACTORS ARE WEIGHTED
+# =============================================================================
+#
+# Each factor is raised to its exponent before multiplying. Lower exponent =
+# less influence. 1.0 = full influence. 0.0 = ignored entirely.
+#
+# The current setting says: rank by whether I can GET it, discounted by how
+# stale it is, nudged by whether I want it.
+SCORE_WEIGHTS = {
+    "preference": 0.35,   # a nudge, not a decision
+    "candidacy":  1.00,   # the thing being optimized
+    "freshness":  0.75,   # still matters a lot; rolling hiring is real
+}
+
+
+# =============================================================================
+# 3c. CANDIDACY SIGNALS BEYOND THE TITLE
+# =============================================================================
+#
+# Candidacy has to actually VARY to be worth weighting heavily. Measured
+# against real data, 54% of postings sat exactly at the baseline, because
+# most job titles contain no skill keywords at all. Two extra signals fix
+# that, and both come from data already in hand.
+
+# 1. WHICH CATEGORY THE ROLE IS IN.
+#
+# Your résumé is two software engineering internships. That's direct evidence
+# for a SWE role, adjacent evidence for data/ML (you've built pipelines that
+# feed models, which is not the same as training them), and thin evidence for
+# product management, where you have no prior title.
+#
+# This is the honest version of "would they take you" — a PM team reading a
+# pure-SWE résumé sees a career switcher, however good the engineering is.
+CANDIDACY_CATEGORY = {
+    "Software Engineering": 0.15,
+    "Data Science, AI & Machine Learning": 0.06,
+    "Product Management": -0.12,
+    "Uncategorized": 0.0,
+}
+
+# 2. HOW MANY ROLES THE COMPANY IS POSTING.
+#
+# A company listing 117 internships runs a large structured program and takes
+# many interns. A company listing one is a lottery with a single ticket. This
+# is real odds information, and it's derivable from the data we already have.
+#
+# It also happens to favour exactly the pipelines that work without a
+# referral — big structured programs screen on an online assessment, whereas a
+# one-role startup usually hires someone a founder already knows.
+CANDIDACY_VOLUME_TIERS = [
+    (50, 0.14),   # 50+ roles posted: hires at real scale
+    (15, 0.10),
+    (5,  0.05),
+    (0,  0.00),
+]
 
 # =============================================================================
 # 4. FRESHNESS — is it still open?  (0.0 to 1.0)

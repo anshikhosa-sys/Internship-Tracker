@@ -56,7 +56,9 @@ CREATE TABLE IF NOT EXISTS postings (
     apply_url            TEXT,
     simplify_url         TEXT,
     age_text             TEXT,
-    date_posted          TEXT,     -- approximate, derived from "Age"
+    date_posted          TEXT,     -- exact from some sources, derived others
+    salary               TEXT,     -- only some sources publish this
+    sources              TEXT,     -- JSON list of every list it appeared in
     is_faang             INTEGER,
     needs_advanced_degree INTEGER,
     no_sponsorship       INTEGER,
@@ -169,11 +171,12 @@ def save_postings(conn, postings, run_time: str) -> dict:
             INSERT INTO postings (
                 id, source, company, role, category, location,
                 apply_url, simplify_url, age_text, date_posted,
+                salary, sources,
                 is_faang, needs_advanced_degree, no_sponsorship,
                 citizenship_required, preference, preference_reasons,
                 candidacy_score, candidacy_reasons, role_family, fit_score,
                 first_seen, last_seen, is_active
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
             ON CONFLICT(id) DO UPDATE SET
                 source        = excluded.source,
                 company       = excluded.company,
@@ -184,6 +187,8 @@ def save_postings(conn, postings, run_time: str) -> dict:
                 simplify_url  = excluded.simplify_url,
                 age_text      = excluded.age_text,
                 date_posted   = excluded.date_posted,
+                salary        = excluded.salary,
+                sources       = excluded.sources,
                 is_faang      = excluded.is_faang,
                 needs_advanced_degree = excluded.needs_advanced_degree,
                 no_sponsorship        = excluded.no_sponsorship,
@@ -202,6 +207,7 @@ def save_postings(conn, postings, run_time: str) -> dict:
                 posting.id, posting.source, posting.company, posting.role,
                 posting.category, posting.location, posting.apply_url,
                 posting.simplify_url, posting.age_text, posting.date_posted,
+                posting.salary, json.dumps(posting.sources or []),
                 int(posting.is_faang), int(posting.needs_advanced_degree),
                 int(posting.no_sponsorship), int(posting.citizenship_required),
                 posting.preference,
@@ -296,7 +302,7 @@ def load_postings(conn, include_inactive: bool = False) -> list:
     for row in rows:
         item = dict(row)
         # Reason lists are stored as JSON strings; decode for the template.
-        for field in ("preference_reasons", "candidacy_reasons"):
+        for field in ("preference_reasons", "candidacy_reasons", "sources"):
             try:
                 item[field] = json.loads(item.get(field) or "[]")
             except (json.JSONDecodeError, TypeError):

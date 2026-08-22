@@ -63,6 +63,21 @@ def _filtered(postings, new_ids, args):
     fresh_only = args.get("fresh") == "1"
     show_stale = args.get("stale") == "1"
 
+    # Explicit "posted within N days" filter, independent of the global
+    # cutoff.
+    #
+    # None means "not set"; 0 means "today only". Those must stay distinct —
+    # an earlier version used 0 for both, and since 0 is falsy the "posted
+    # today only" option silently showed everything.
+    raw_within = args.get("within")
+    if raw_within in (None, ""):
+        within = None
+    else:
+        try:
+            within = max(0, int(raw_within))
+        except ValueError:
+            within = None
+
     results = []
     for posting in postings:
         # Hide low-fit postings unless asked for. They're still in the
@@ -76,6 +91,9 @@ def _filtered(postings, new_ids, args):
         age = posting["age_days"]
         too_old = age is not None and age > config.MAX_AGE_DAYS
         if too_old and not show_stale:
+            continue
+
+        if within is not None and (age is None or age > within):
             continue
 
         if fresh_only and not posting["is_fresh"]:
@@ -177,6 +195,7 @@ def index():
         hidden_by_age=hidden_by_age,
         max_age_days=config.MAX_AGE_DAYS,
         showing_stale=request.args.get("stale") == "1",
+        within=request.args.get("within", ""),
         filters=request.args,
         config=config,
     )
