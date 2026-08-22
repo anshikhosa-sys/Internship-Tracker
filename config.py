@@ -587,6 +587,86 @@ CANDIDACY_VOLUME_TIERS = [
 # listing up until an offer is signed. That's why the curve has a FLOOR and
 # nothing is ever excluded by age.
 
+# =============================================================================
+# COMPANY TIER — how fast does THIS company's pipeline close?
+# =============================================================================
+#
+# A role at a household-name company and one at a 30-person startup do not
+# decay at the same rate, and treating them identically wastes applications
+# at both ends: you miss big-tech roles by a day, and you skip startup roles
+# that were still wide open.
+#
+# WHAT THE EVIDENCE SAYS
+# ----------------------
+# Startup postings draw roughly 100-400 applications over about two weeks.
+# Big, brand-name entry-level postings hit similar or larger numbers inside
+# the FIRST week, and big programs review on a rolling basis and close once
+# a shortlist forms. Same total volume, very different clocks.
+#
+# So the practical rule: for big tech, apply the day it appears. For smaller
+# and nicher companies, three to seven days is usually still fine.
+#
+# HOW A TIER IS DECIDED
+# ---------------------
+# From data already in hand, not a hand-maintained company list:
+#   - the source's FAANG+/competitive marker, or
+#   - how many roles the company is currently posting.
+# A company listing 50+ roles is running a big structured program whatever
+# its name recognition.
+
+COMPANY_TIERS = {
+    # Big, brand-name, high-volume. Fills fastest — apply same day.
+    "big": {
+        "label": "Big tech",
+        "min_postings": 40,
+        "curve": [
+            (0, 1.00),
+            (1, 0.62),    # already meaningfully behind by day one
+            (2, 0.38),
+            (3, 0.22),
+            (5, 0.10),
+            (7, 0.05),
+            (14, 0.03),
+            (30, 0.02),
+            (999, 0.01),   # distinct tail steps keep the curve strictly
+        ],               # decreasing, so "older" always means "lower"
+    },
+    # Mid-size: recognizable, structured hiring, but not a brand-name rush.
+    "mid": {
+        "label": "Mid-size",
+        "min_postings": 5,
+        "curve": [
+            (0, 1.00),
+            (1, 0.88),
+            (3, 0.62),
+            (5, 0.42),
+            (7, 0.28),
+            (10, 0.14),
+            (21, 0.08),
+            (30, 0.05),
+            (999, 0.03),
+        ],
+    },
+    # Small and niche. Slower, batchier review — a week can still be fine,
+    # and these are also where a thoughtful application stands out most.
+    "niche": {
+        "label": "Small / niche",
+        "min_postings": 0,
+        "curve": [
+            (0, 1.00),
+            (1, 0.96),
+            (3, 0.85),
+            (5, 0.72),
+            (7, 0.58),
+            (14, 0.35),
+            (21, 0.20),
+            (30, 0.12),
+            (999, 0.06),
+        ],
+    },
+}
+
+# Fallback curve, used when a posting's tier can't be worked out.
 # (days old, multiplier) — first row whose threshold is >= the age wins.
 #
 # STEEP ON PURPOSE. Internship hiring is rolling: recruiters work top-of-funnel

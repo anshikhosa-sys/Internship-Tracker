@@ -392,6 +392,20 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
 .posting.stage-rejected,
 .posting.stage-ghosted { opacity: 0.5; }
 
+.new-banner {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 14px;
+  margin-bottom: 14px;
+}
+.new-banner a { color: #fff; text-decoration: underline; }
+
+.tier-big { background: #7c2d12; color: #fed7aa; }
+.tier-mid { background: var(--border); color: var(--muted); }
+.tier-niche { background: #14532d; color: #bbf7d0; }
+
 .tag-pay { background: transparent; color: var(--strong);
            border: 1px solid var(--strong); }
 

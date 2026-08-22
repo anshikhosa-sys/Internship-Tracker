@@ -94,6 +94,7 @@ class Posting:
     candidacy_score: float = 0.0
     candidacy_reasons: list = field(default_factory=list)
     role_family: str = ""     # matched ROLE_FAMILIES entry; drives letters
+    company_tier: str = ""    # big / mid / niche — sets the freshness curve
     fit_score: int = 0        # the three multiplied, 0-100
 
     @property

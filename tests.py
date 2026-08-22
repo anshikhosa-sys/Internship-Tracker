@@ -355,6 +355,31 @@ def test_scoring_model():
     finally:
         config.PUSH_TOPIC = original_topic
 
+    print("\nCOMPANY TIER AND FRESHNESS")
+    faang = make_posting(1, faang=True)
+    check(scorer.company_tier(faang) == "big",
+          "the competitive marker makes a company big-tier")
+    check(scorer.company_tier(make_posting(2), company_volume=100) == "big",
+          "a company posting 100 roles is big-tier")
+    check(scorer.company_tier(make_posting(3), company_volume=10) == "mid",
+          "a company posting 10 roles is mid-tier")
+    check(scorer.company_tier(make_posting(4), company_volume=1) == "niche",
+          "a company posting 1 role is niche")
+
+    # The whole point: the same age means different things per tier.
+    for age in (1, 3, 7):
+        big = scorer.freshness(age, "big")[0]
+        niche = scorer.freshness(age, "niche")[0]
+        check(niche > big,
+              f"at {age}d a niche role is fresher than a big-tech one "
+              f"({niche:.2f} vs {big:.2f})")
+
+    check(scorer.freshness(0, "big")[0] == scorer.freshness(0, "niche")[0],
+          "on day zero every tier is undiscounted")
+    # An unknown tier must fall back, not crash.
+    check(scorer.freshness(3, "nonsense")[0] > 0,
+          "an unrecognized tier falls back to the default curve")
+
     print("\nINTERNSHIP GATE")
     intern = make_posting(1, role="Software Engineer Intern")
     check(scorer.is_internship(intern), "an intern role passes the gate")

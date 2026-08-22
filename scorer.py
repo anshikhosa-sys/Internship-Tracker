@@ -396,12 +396,43 @@ def days_old(posting):
         return None
 
 
-def freshness(age_days):
-    """Multiplier for how likely this is still open. Returns (value, label)."""
+def company_tier(posting, company_volume=None) -> str:
+    """
+    Which tier this company's hiring falls into: "big", "mid", or "niche".
+
+    Decided from data already in hand — the source's competitive marker and
+    how many roles the company is posting — rather than a hand-maintained
+    list of company names that would go stale immediately.
+    """
+    if _field(posting, "is_faang"):
+        return "big"
+
+    volume = company_volume or 0
+    if volume >= config.COMPANY_TIERS["big"]["min_postings"]:
+        return "big"
+    if volume >= config.COMPANY_TIERS["mid"]["min_postings"]:
+        return "mid"
+    return "niche"
+
+
+def freshness(age_days, tier="mid"):
+    """
+    Multiplier for how likely this is still open. Returns (value, label).
+
+    The curve depends on the COMPANY, not just the calendar. A big-tech role
+    is meaningfully behind by day one; a small company's posting can still be
+    wide open a week later. Using one curve for both wastes applications at
+    both ends — missing big-tech roles by a day, and skipping startup roles
+    that were never closing.
+    """
     if age_days is None:
         return config.UNKNOWN_AGE_FRESHNESS, "Age unknown"
 
-    for threshold, multiplier in config.FRESHNESS_CURVE:
+    curve = config.COMPANY_TIERS.get(tier, {}).get(
+        "curve", config.FRESHNESS_CURVE
+    )
+
+    for threshold, multiplier in curve:
         if age_days <= threshold:
             if age_days == 0:
                 label = "Posted today"
@@ -504,7 +535,8 @@ def score_posting(posting, volumes=None) -> dict:
     pref, pref_reasons, family = preference(posting)
     cand, cand_reasons = candidacy(posting, company_volume=volume)
     age = days_old(posting)
-    fresh, fresh_label = freshness(age)
+    tier = company_tier(posting, volume)
+    fresh, fresh_label = freshness(age, tier)
 
     return {
         "preference": pref,
@@ -516,6 +548,8 @@ def score_posting(posting, volumes=None) -> dict:
         "age_days": age,
         "is_fresh": is_fresh(age),
         "role_family": family,
+        "company_tier": tier,
+        "tier_label": config.COMPANY_TIERS[tier]["label"],
         "score": final_score(pref, cand, fresh),
     }
 
@@ -539,6 +573,7 @@ def score_all(postings) -> list:
         posting.candidacy_score = result["candidacy"]
         posting.candidacy_reasons = result["candidacy_reasons"]
         posting.role_family = result["role_family"]
+        posting.company_tier = result["company_tier"]
         posting.fit_score = result["score"]
         scored.append(posting)
 

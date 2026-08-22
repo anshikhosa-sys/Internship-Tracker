@@ -77,6 +77,7 @@ def _filtered(postings, new_ids, args):
     show_low = args.get("show_low") == "1"
     fresh_only = args.get("fresh") == "1"
     show_stale = args.get("stale") == "1"
+    tier = args.get("tier") or ""
 
     if submitted:
         hide_coop = args.get("nocoop") == "1"
@@ -122,6 +123,9 @@ def _filtered(postings, new_ids, args):
             continue
 
         if hide_offseason and posting["is_off_season"]:
+            continue
+
+        if tier and posting["company_tier"] != tier:
             continue
 
         if fresh_only and not posting["is_fresh"]:
@@ -202,9 +206,21 @@ def index():
     # Freshness and the final score are recomputed here rather than read from
     # the database. They depend on today's date, so a stored value would be
     # stale the morning after it was written.
+    volumes = scorer.company_volumes(postings)
+
     for posting in postings:
         age = scorer.days_old(posting)
-        fresh, fresh_label = scorer.freshness(age)
+        # The freshness curve depends on the company tier: a big-tech role
+        # is behind by day one, a small company's can still be open a week
+        # later. Recomputed here, like freshness itself, because it depends
+        # on today's date.
+        volume = volumes.get((posting["company"] or "").strip().lower())
+        tier = posting.get("company_tier") or scorer.company_tier(
+            posting, volume
+        )
+        posting["company_tier"] = tier
+        posting["tier_label"] = config.COMPANY_TIERS[tier]["label"]
+        fresh, fresh_label = scorer.freshness(age, tier)
         posting["age_days"] = age
         posting["freshness"] = fresh
         posting["freshness_label"] = fresh_label
@@ -256,6 +272,8 @@ def index():
         within=_effective_within(request.args),
         hide_coop=_effective_hide_coop(request.args),
         hide_offseason=_effective_hide_offseason(request.args),
+        tiers=config.COMPANY_TIERS,
+        tier=request.args.get("tier", ""),
         filters=request.args,
         config=config,
     )

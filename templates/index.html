@@ -52,6 +52,18 @@
 
 <main>
 
+  <!-- A banner rather than only an OS notification.
+       macOS can silently suppress notifications (Focus mode, or Script
+       Editor lacking notification permission), and a notification you
+       never saw is indistinguishable from one that never fired. This
+       cannot be suppressed — if something new arrived, it's on the page. -->
+  {% if new_count %}
+    <div class="new-banner">
+      <strong>{{ new_count }} new</strong> since you last looked.
+      <a href="{{ url_for('index', **dict(filters, f='1', status='new')) }}">Show only those</a>
+    </div>
+  {% endif %}
+
   <!-- ==================== FILTERS ==================== -->
   <!-- method="get" puts the filters in the URL, so a filtered view can be
        bookmarked and survives a page reload. -->
@@ -106,6 +118,15 @@
               {% if sort == 'recency' %}selected{% endif %}>
         Newest first
       </option>
+    </select>
+
+    <select name="tier" title="Big-tech pipelines close in a day; small ones stay open longer">
+      <option value="" {% if not tier %}selected{% endif %}>All company sizes</option>
+      {% for key, spec in tiers.items() %}
+        <option value="{{ key }}" {% if tier == key %}selected{% endif %}>
+          {{ spec.label }} only
+        </option>
+      {% endfor %}
     </select>
 
     <select name="within">
@@ -196,6 +217,8 @@
               {% if posting.is_new %}<span class="tag tag-new">NEW</span>{% endif %}
               {% if posting.is_fresh %}<span class="tag tag-fresh">{{ posting.freshness_label }}</span>{% endif %}
               {% if posting.salary %}<span class="tag tag-pay">{{ posting.salary }}</span>{% endif %}
+              <span class="tag tier-{{ posting.company_tier }}"
+                    title="{% if posting.company_tier == 'big' %}Fills fast — apply the day it appears{% elif posting.company_tier == 'niche' %}Slower pipeline — a few days is usually still fine{% else %}Moderate pace{% endif %}">{{ posting.tier_label }}</span>
               {% if posting.is_coop %}<span class="tag tag-warn" title="Full-time during a school term — you'd take a semester off">CO-OP</span>{% endif %}
               {% if posting.is_off_season %}<span class="tag tag-warn" title="Runs during the academic year, not summer">OFF-SEASON</span>{% endif %}
               {% if posting.sources and posting.sources|length > 1 %}

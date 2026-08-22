@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS postings (
     candidacy_score      REAL,
     candidacy_reasons    TEXT,     -- JSON list of {label, detail}
     role_family          TEXT,     -- matched ROLE_FAMILIES entry
+    company_tier         TEXT,     -- big/mid/niche; sets the freshness curve
     fit_score            INTEGER,  -- snapshot: preference x candidacy x fresh
     first_seen           TEXT,     -- OUR timestamp: drives the NEW flag
     last_seen            TEXT,
@@ -185,6 +186,7 @@ _MIGRATIONS = {
         "candidacy_score": "REAL",
         "candidacy_reasons": "TEXT",
         "role_family": "TEXT",
+        "company_tier": "TEXT",
         "fit_score": "INTEGER",
         "first_seen": "TEXT",
         "last_seen": "TEXT",
@@ -297,9 +299,10 @@ def save_postings(conn, postings, run_time: str) -> dict:
                 salary, sources,
                 is_faang, needs_advanced_degree, no_sponsorship,
                 citizenship_required, preference, preference_reasons,
-                candidacy_score, candidacy_reasons, role_family, fit_score,
+                candidacy_score, candidacy_reasons, role_family,
+                company_tier, fit_score,
                 first_seen, last_seen, is_active
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
             ON CONFLICT(id) DO UPDATE SET
                 source        = excluded.source,
                 company       = excluded.company,
@@ -321,6 +324,7 @@ def save_postings(conn, postings, run_time: str) -> dict:
                 candidacy_score   = excluded.candidacy_score,
                 candidacy_reasons = excluded.candidacy_reasons,
                 role_family       = excluded.role_family,
+                company_tier      = excluded.company_tier,
                 fit_score         = excluded.fit_score,
                 last_seen     = excluded.last_seen,
                 is_active     = 1
@@ -338,6 +342,7 @@ def save_postings(conn, postings, run_time: str) -> dict:
                 posting.candidacy_score,
                 json.dumps(posting.candidacy_reasons),
                 posting.role_family,
+                posting.company_tier,
                 posting.fit_score,
                 run_time, run_time,
             ),
