@@ -345,7 +345,8 @@ def test_scoring_model():
           "an Intern/Co-op title is flagged")
     check(scorer.is_coop(make_posting(1, role="Data Enablement Co-op")),
           "a plain co-op title is flagged")
-    check(not scorer.is_coop(make_posting(1, role="Software Engineer Intern")),
+    ordinary = make_posting(1, role="Software Engineer Intern")
+    check(not scorer.is_coop(ordinary),
           "an ordinary internship is not flagged")
     # A label, not a filter: co-ops must still score normally, because many
     # "Intern/Co-op" listings are ordinary summer internships.
@@ -356,8 +357,8 @@ def test_scoring_model():
     print("\nOFF-SEASON DETECTION")
     winter = make_posting(1, role="SWE Intern - Winter 2027")
     check(scorer.is_off_season(winter), "a winter role is flagged")
-    check(scorer.is_off_season(make_posting(1, role="SWE Intern - Fall 2026")),
-          "a fall role is flagged")
+    fall = make_posting(1, role="SWE Intern - Fall 2026")
+    check(scorer.is_off_season(fall), "a fall role is flagged")
     check(not scorer.is_off_season(
         make_posting(1, role="Software Engineer Intern - Summer 2027")),
         "a summer role is not flagged")
@@ -993,6 +994,29 @@ def test_just_apply_gate():
         set(), {"f": "1", "show_low": "1", "within": "7"})
     check(len(shown) == 1,
           "'show low-fit' still reveals everything")
+
+    # A title naming a relevant SUBJECT but no job title — "Cloud, Data and
+    # AI Intern" — must not be dropped as unclassifiable while earning a
+    # large topic lift. The tool recognized the subject and discarded it.
+    topic = scorer.preference(
+        make_posting(1, role="Cloud, Data and AI Intern"))
+    check(topic[2] == config.TOPIC_MATCH_FAMILY,
+          "a strong topic signal classifies a role with no matching title")
+    check(topic[0] > config.UNKNOWN_FAMILY_PREFERENCE * 2,
+          "a topic-matched role scores well above an unknown one")
+
+    # One incidental keyword must NOT qualify.
+    weak = scorer.preference(
+        make_posting(1, role="Dealer Business Operations Intern"))
+    check(weak[2] != config.TOPIC_MATCH_FAMILY,
+          "one incidental keyword doesn't qualify as a topic match")
+
+    # "development" is not "developer" under whole-word matching, so this
+    # matched nothing and was dropped. Real roles were lost to it.
+    dev = scorer.preference(
+        make_posting(1, role="Software Development Intern"))
+    check(dev[2] == "Software Engineering",
+          "'Software Development Intern' is recognized as SWE")
 
     # And never applied to anything you've already applied to.
     check(len(dashboard._filtered(

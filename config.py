@@ -179,6 +179,14 @@ ROLE_FAMILIES = [
         "preference": 0.62,
         "keywords": [
             "software engineer", "software engineering", "swe",
+            # "development" is not "developer" under whole-word matching,
+            # so "Software Development Intern" matched nothing and was
+            # dropped as unclassifiable. Real roles at Raytheon and RTX
+            # were lost to this.
+            "software development", "software developer",
+            "application engineering", "applications engineer",
+            "application developer", "systems engineer",
+            "qa engineer", "quality engineering", "test engineer",
             "developer", "programmer", "data engineer",
             "machine learning engineer", "ml engineer",
             "research engineer", "data scientist",
@@ -206,6 +214,21 @@ ROLE_FAMILIES = [
 # keywords to a family above — which also makes it rank properly rather
 # than merely surviving.
 UNKNOWN_FAMILY_PREFERENCE = 0.10
+
+# ...UNLESS the topic is clearly relevant.
+#
+# Titles like "Cloud, Data and AI Intern" or "Digital & AI Technology Intern"
+# match no family keyword — they name a subject, not a job title — and were
+# being dropped as unclassifiable at 0.10 despite earning +0.28 of topic
+# lift. The tool plainly recognized the subject and then discarded the role.
+#
+# So: a posting with no family match but strong topic signal is treated as a
+# technical role rather than an unknown one. The bar is deliberately high
+# enough that one incidental keyword ("data" in a business title) doesn't
+# qualify — it takes several, or one strong one.
+TOPIC_MATCH_THRESHOLD = 0.20
+TOPIC_MATCH_FAMILY = "Technical (topic match)"
+TOPIC_MATCH_PREFERENCE = 0.58
 
 # Topics that make a role MORE interesting, added to the family's preference
 # and capped at 1.0. These are about what you want to work on — CANDIDACY
@@ -991,6 +1014,18 @@ PUSH_TOPIC = ""
 # posting window opens, and late afternoon for anything that slipped out.
 # A notification only fires when something NEW clears the threshold, so extra
 # runs don't mean extra interruptions — most find nothing.
+# Catch-up refresh: if the data is older than this when you open the
+# dashboard, refresh before rendering.
+#
+# WHY: launchd reliably fires a missed run when the Mac WAKES from sleep,
+# but a machine that was powered OFF through a scheduled slot is less
+# certain, and a laptop shut for a weekend can miss several. Rather than
+# depend on that, the dashboard checks the data's age itself. Opening the
+# page is the moment you actually need it to be current.
+#
+# Costs under a second, and only triggers when the data is genuinely stale.
+STALE_DATA_HOURS = 6
+
 REFRESH_TIMES = [
     (7, 30),    # before class: yesterday afternoon's postings
     (11, 30),   # the posting window — the important one

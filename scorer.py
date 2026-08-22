@@ -211,6 +211,18 @@ def preference(posting):
     if lift > config.MAX_FOCUS_LIFT:
         lift = config.MAX_FOCUS_LIFT
 
+    # A title naming a relevant SUBJECT but no recognizable job title —
+    # "Cloud, Data and AI Intern" — was being dropped as unclassifiable
+    # while simultaneously earning a large topic lift. If the topic signal
+    # is strong, treat it as a technical role rather than an unknown one.
+    if not family_name and lift >= config.TOPIC_MATCH_THRESHOLD:
+        family_name = config.TOPIC_MATCH_FAMILY
+        value = config.TOPIC_MATCH_PREFERENCE
+        reasons[0] = {
+            "label": f"Role type: {family_name}",
+            "detail": f"base {value:.2f}",
+        }
+
     if hits:
         value = min(1.0, value + lift)
         reasons.append({

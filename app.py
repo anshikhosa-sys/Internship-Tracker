@@ -32,6 +32,7 @@ there's no password: there's no one else to keep out.
 """
 
 import sys
+from datetime import datetime, timezone
 
 from flask import (
     Flask, jsonify, redirect, render_template, request, url_for
@@ -211,9 +212,46 @@ def _effective_hide_offseason(args) -> bool:
 # Routes
 # =============================================================================
 
+def _catch_up_if_stale() -> bool:
+    """
+    Refresh before rendering if the data has gone stale.
+
+    launchd fires a missed schedule when the Mac wakes from sleep, but a
+    machine powered OFF through a slot — or shut for a weekend — can miss
+    runs entirely. Rather than rely on that, the page checks for itself:
+    opening the dashboard is exactly when the data needs to be current.
+
+    Returns True if it refreshed. Failures are swallowed deliberately —
+    stale listings are far better than an error page, and the header shows
+    the last-updated date either way.
+    """
+    conn = storage.connect()
+    last_run = storage.last_run_time(conn)
+    conn.close()
+
+    if last_run:
+        try:
+            then = datetime.fromisoformat(last_run)
+            if then.tzinfo is None:
+                then = then.replace(tzinfo=timezone.utc)
+            hours = (datetime.now(timezone.utc) - then).total_seconds() / 3600
+            if hours < config.STALE_DATA_HOURS:
+                return False
+        except (TypeError, ValueError):
+            pass
+
+    try:
+        run_refresh(verbose=False, notifications=True)
+        return True
+    except Exception:
+        return False
+
+
 @app.route("/")
 def index():
     """The dashboard: ranked postings, best fit first."""
+    caught_up = _catch_up_if_stale()
+
     conn = storage.connect()
 
     postings = storage.load_postings(conn)
@@ -292,6 +330,7 @@ def index():
         applied_total=applied_total,
         last_run=last_run,
         sort=sort,
+        caught_up=caught_up,
         stages=config.APPLICATION_STAGES,
         stage_counts=stage_counts,
         hidden_by_age=hidden_by_age,

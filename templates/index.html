@@ -57,6 +57,12 @@
        Editor lacking notification permission), and a notification you
        never saw is indistinguishable from one that never fired. This
        cannot be suppressed — if something new arrived, it's on the page. -->
+  {% if caught_up %}
+    <div class="new-banner">
+      Data was out of date, so this was refreshed just now.
+    </div>
+  {% endif %}
+
   {% if new_count %}
     <div class="new-banner">
       <strong>{{ new_count }} new</strong> since you last looked.
