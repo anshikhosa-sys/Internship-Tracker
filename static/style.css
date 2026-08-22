@@ -402,6 +402,8 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
 }
 .new-banner a { color: #fff; text-decoration: underline; }
 
+.tag-mine { background: var(--accent); color: #fff; }
+
 .tier-big { background: #7c2d12; color: #fed7aa; }
 .tier-mid { background: var(--border); color: var(--muted); }
 .tier-niche { background: #14532d; color: #bbf7d0; }

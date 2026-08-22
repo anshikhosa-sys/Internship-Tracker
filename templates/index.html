@@ -214,6 +214,9 @@
           <div class="details">
             <div class="role-line">
               <span class="company">{{ posting.company }}</span>
+              {% if posting.status %}
+                <span class="tag tag-mine" title="You've applied — always shown, whatever the filters">{{ posting.status|upper }}</span>
+              {% endif %}
               {% if posting.is_new %}<span class="tag tag-new">NEW</span>{% endif %}
               {% if posting.is_fresh %}<span class="tag tag-fresh">{{ posting.freshness_label }}</span>{% endif %}
               {% if posting.salary %}<span class="tag tag-pay">{{ posting.salary }}</span>{% endif %}

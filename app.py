@@ -103,9 +103,23 @@ def _filtered(postings, new_ids, args):
 
     results = []
     for posting in postings:
+        # ANYTHING YOU'VE APPLIED TO IS ALWAYS VISIBLE.
+        #
+        # The discovery filters exist to narrow down what to apply to NEXT.
+        # Once you've applied, the posting stops being a candidate and starts
+        # being a record, and a record that disappears because it aged past
+        # "posted today" looks exactly like lost data — which is how this was
+        # first reported.
+        #
+        # The search box and the status dropdown still apply below, so you
+        # can deliberately narrow the list; only the age, fit, co-op and
+        # season filters are bypassed.
+        in_pipeline = bool(posting.get("status"))
+
         # Hide low-fit postings unless asked for. They're still in the
         # database and still scored — just collapsed by default.
-        if not show_low and posting["fit_score"] < config.LOW_FIT_THRESHOLD:
+        if (not in_pipeline and not show_low
+                and posting["fit_score"] < config.LOW_FIT_THRESHOLD):
             continue
 
         # The age cutoff. This HIDES postings rather than ranking them
@@ -113,16 +127,17 @@ def _filtered(postings, new_ids, args):
         # the explicit override rather than a silent drop.
         age = posting["age_days"]
         too_old = age is not None and age > config.MAX_AGE_DAYS
-        if too_old and not show_stale:
+        if too_old and not show_stale and not in_pipeline:
             continue
 
-        if within is not None and (age is None or age > within):
+        if (within is not None and not in_pipeline
+                and (age is None or age > within)):
             continue
 
-        if hide_coop and posting["is_coop"]:
+        if hide_coop and posting["is_coop"] and not in_pipeline:
             continue
 
-        if hide_offseason and posting["is_off_season"]:
+        if hide_offseason and posting["is_off_season"] and not in_pipeline:
             continue
 
         if tier and posting["company_tier"] != tier:

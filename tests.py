@@ -760,6 +760,61 @@ def test_pipeline():
 
 
 # =============================================================================
+def test_applied_always_visible():
+    """
+    A posting you've applied to must never be filtered out of the list.
+
+    Reported as "I lose the status of ones I've applied to when I refresh".
+    The mark was never lost — the posting aged past the "posted today only"
+    filter and vanished from view, which looks identical to data loss.
+    """
+    print("\nAPPLIED POSTINGS STAY VISIBLE")
+
+    import app as dashboard
+
+    def row(status="", age_days=5, score=80, coop=False, off=False):
+        return {
+            "id": "job:x", "company": "Acme", "role": "SWE Intern",
+            "location": "NYC", "category": "Software Engineering",
+            "status": status, "applied": bool(status), "fit_score": score,
+            "age_days": age_days, "is_fresh": age_days <= 3,
+            "is_coop": coop, "is_off_season": off,
+            "company_tier": "mid",
+        }
+
+    # Bare load = today only. A 5-day-old unapplied posting is filtered out.
+    unapplied = dashboard._filtered([row()], set(), {})
+    check(len(unapplied) == 0,
+          "an old unapplied posting is hidden by the age filter")
+
+    # The same posting, applied, must survive.
+    applied = dashboard._filtered([row(status="applied")], set(), {})
+    check(len(applied) == 1,
+          "an old APPLIED posting stays visible despite the age filter")
+
+    # And survive every other discovery filter too.
+    check(len(dashboard._filtered(
+        [row(status="applied", score=1)], set(), {})) == 1,
+        "a low-scoring applied posting stays visible")
+    check(len(dashboard._filtered(
+        [row(status="applied", coop=True)], set(), {})) == 1,
+        "an applied co-op stays visible")
+    check(len(dashboard._filtered(
+        [row(status="applied", off=True)], set(), {})) == 1,
+        "an applied off-season role stays visible")
+    check(len(dashboard._filtered(
+        [row(status="applied", age_days=400)], set(), {})) == 1,
+        "an applied posting past the hard cutoff stays visible")
+
+    # But a deliberate narrowing must still work — otherwise you could never
+    # filter down to just the new ones.
+    only_new = dashboard._filtered(
+        [row(status="applied")], set(), {"f": "1", "status": "new"})
+    check(len(only_new) == 0,
+          "an explicit status filter still applies to applied postings")
+
+
+# =============================================================================
 def test_storage():
     print("\nSTORAGE: the NEW flag across runs")
 
@@ -984,6 +1039,7 @@ if __name__ == "__main__":
     test_migration()
     test_defaults()
     test_pipeline()
+    test_applied_always_visible()
     test_storage()
     test_visit_tracking()
     test_prompts()
