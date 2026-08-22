@@ -469,22 +469,10 @@ PROFILE_PATH = "profile.md"
 # Where generated drafts are written. Also gitignored.
 LETTERS_DIR = "letters"
 
-# YOU DON'T HAVE TO PAY FOR THIS. Every letter page offers a "copy this
-# prompt" option that costs nothing — paste it into claude.ai, ChatGPT, or
-# anything else. The settings below only affect the one-click button.
-#
-# MEASURED COST per letter (~1,700 input, ~2,300 output including thinking
-# tokens, which bill as output):
-#
-#     claude-opus-5     effort=high     $0.066     $3.31 per 50
-#     claude-opus-5     effort=low      $0.039     $1.93 per 50
-#     claude-sonnet-5   effort=high     $0.026     $1.32 per 50
-#     claude-haiku-4-5  effort=high     $0.013     $0.66 per 50
-#     copy-paste                        free       free
-LETTER_MODEL = "claude-opus-5"
-LETTER_EFFORT = "high"
-LETTER_MAX_TOKENS = 8000
-LETTER_COST_ESTIMATE = "about 7¢"
+# NOTHING HERE COSTS MONEY. The prompts are assembled locally and
+# copied into whatever assistant you already use. There is no API
+# client installed, no key to set, and no request that could be
+# billed. tests.py asserts letters.py never regains an API call.
 
 
 # =============================================================================
