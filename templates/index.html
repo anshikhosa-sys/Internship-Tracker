@@ -119,6 +119,12 @@
       </option>
     </select>
 
+    <label class="checkbox" title="Co-ops are full-time during a school term">
+      <input type="checkbox" name="nocoop" value="1"
+             {% if filters.get('nocoop') == '1' %}checked{% endif %}>
+      Hide co-ops
+    </label>
+
     <label class="checkbox">
       <input type="checkbox" name="show_low" value="1"
              {% if filters.get('show_low') == '1' %}checked{% endif %}>
@@ -176,6 +182,7 @@
               {% if posting.is_new %}<span class="tag tag-new">NEW</span>{% endif %}
               {% if posting.is_fresh %}<span class="tag tag-fresh">{{ posting.freshness_label }}</span>{% endif %}
               {% if posting.salary %}<span class="tag tag-pay">{{ posting.salary }}</span>{% endif %}
+              {% if posting.is_coop %}<span class="tag tag-warn" title="Full-time during a school term — you'd take a semester off">CO-OP</span>{% endif %}
               {% if posting.sources and posting.sources|length > 1 %}
                 <span class="tag" title="Listed by {{ posting.sources|join(', ') }}">{{ posting.sources|length }} lists</span>
               {% endif %}

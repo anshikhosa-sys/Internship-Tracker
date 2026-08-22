@@ -337,6 +337,18 @@ def freshness(age_days):
     return config.UNKNOWN_AGE_FRESHNESS, "Age unknown"
 
 
+def is_coop(posting) -> bool:
+    """
+    Does this look like a co-op — full-time during a school term?
+
+    Deliberately a label rather than a filter. Many listings read
+    "Intern/Co-op" and are ordinary summer internships, so hiding them
+    automatically would cost real roles.
+    """
+    title = _field(posting, "role") or ""
+    return any(_matches(kw, title) for kw in config.COOP_KEYWORDS)
+
+
 def is_fresh(age_days) -> bool:
     return age_days is not None and age_days <= config.FRESH_DAYS
 

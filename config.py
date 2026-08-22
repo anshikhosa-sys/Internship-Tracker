@@ -512,6 +512,15 @@ DEFAULT_SORT = "score"
 
 REQUIRE_INTERNSHIP = True
 
+# Words that mean "full-time during a school term", i.e. you take a semester
+# off rather than working over the summer.
+#
+# These only BADGE a posting, they don't hide it — plenty of listings say
+# "Intern/Co-op" and are perfectly normal summer internships. Use the
+# dashboard's co-op filter to hide them when you want a clean summer-only
+# list.
+COOP_KEYWORDS = ["co-op", "coop", "cooperative education"]
+
 INTERNSHIP_KEYWORDS = [
     "intern", "internship", "co-op", "coop", "summer", "student",
 ]

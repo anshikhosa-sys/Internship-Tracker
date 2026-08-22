@@ -280,6 +280,19 @@ def test_scoring_model():
           f"a near-ideal posting ({best}) can reach the STRONG band "
           f"({config.STRONG_FIT_THRESHOLD})")
 
+    print("\nCO-OP DETECTION")
+    check(scorer.is_coop(make_posting(1, role="SWE Intern/Co-op")),
+          "an Intern/Co-op title is flagged")
+    check(scorer.is_coop(make_posting(1, role="Data Enablement Co-op")),
+          "a plain co-op title is flagged")
+    check(not scorer.is_coop(make_posting(1, role="Software Engineer Intern")),
+          "an ordinary internship is not flagged")
+    # A label, not a filter: co-ops must still score normally, because many
+    # "Intern/Co-op" listings are ordinary summer internships.
+    check(scorer.score_posting(
+        make_posting(1, role="Software Engineer Intern/Co-op")
+    )["score"] > 0, "a co-op still scores rather than being zeroed")
+
     print("\nINTERNSHIP GATE")
     intern = make_posting(1, role="Software Engineer Intern")
     check(scorer.is_internship(intern), "an intern role passes the gate")

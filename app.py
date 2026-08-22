@@ -62,6 +62,7 @@ def _filtered(postings, new_ids, args):
     show_low = args.get("show_low") == "1"
     fresh_only = args.get("fresh") == "1"
     show_stale = args.get("stale") == "1"
+    hide_coop = args.get("nocoop") == "1"
 
     # Explicit "posted within N days" filter, independent of the global
     # cutoff.
@@ -94,6 +95,9 @@ def _filtered(postings, new_ids, args):
             continue
 
         if within is not None and (age is None or age > within):
+            continue
+
+        if hide_coop and posting["is_coop"]:
             continue
 
         if fresh_only and not posting["is_fresh"]:
@@ -155,6 +159,7 @@ def index():
         posting["freshness"] = fresh
         posting["freshness_label"] = fresh_label
         posting["is_fresh"] = scorer.is_fresh(age)
+        posting["is_coop"] = scorer.is_coop(posting)
         posting["fit_score"] = scorer.final_score(
             posting["preference"], posting["candidacy_score"], fresh
         )
