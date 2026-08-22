@@ -444,6 +444,151 @@ def test_markdown_sources():
 
 
 # =============================================================================
+def test_stable_ids():
+    """
+    Posting identity must survive everything the sources throw at it.
+
+    This is the most safety-critical property in the project: the id is what
+    an applied mark is filed under, so an id that shifts means silent data
+    loss with no error to notice.
+    """
+    print("\nSTABLE POSTING IDS")
+
+    def mk(source, location, role, company="Acme"):
+        return Posting(company=company, role=role, category="x",
+                       location=location, apply_url="u", source=source)
+
+    base = mk("Simplify", "NYC", "Software Engineer Intern")
+    check(base.id == mk("Vansh", "NYC", "Software Engineer Intern").id,
+          "the id does not depend on which source supplied it")
+    check(base.id == mk("Simplify", "New York, NY",
+                        "Software Engineer Intern").id,
+          "a location edit does not mint a new id")
+    check(base.id == mk("Simplify", "NYC",
+                        "Software Engineer Intern - Summer 2027").id,
+          "season noise in the title does not mint a new id")
+    check(base.id == mk("Simplify", "NYC",
+                        "Software Engineer Intern JR2029481").id,
+          "a requisition number does not mint a new id")
+    check(base.id != mk("Simplify", "NYC", "Product Manager Intern").id,
+          "genuinely different roles keep different ids")
+    check(base.id != mk("Simplify", "NYC", "Software Engineer Intern",
+                        company="Globex").id,
+          "the same role at another company keeps a different id")
+
+    # Identity and deduplication must agree, or a job could merge under one
+    # rule while its applied mark is filed under another.
+    a = mk("Simplify", "NYC", "Software Engineer Intern - Summer 2027")
+    b = mk("Vansh", "New York, NY", "Software Engineer Intern")
+    check((dedupe.key_for(a) == dedupe.key_for(b)) == (a.id == b.id),
+          "dedupe matching and id equality never disagree")
+
+
+# =============================================================================
+def test_applied_marks_survive():
+    """Applied marks are the only unrecoverable data here."""
+    print("\nAPPLIED MARKS SURVIVE")
+
+    db_path = os.path.join(tempfile.mkdtemp(), "marks.db")
+    conn = storage.connect(db_path)
+
+    posting = make_posting(1, role="Software Engineer Intern")
+    scorer.score_all([posting])
+    storage.save_postings(conn, [posting], "2026-08-01T00:00:00+00:00")
+    storage.record_run(conn, "2026-08-01T00:00:00+00:00", 1, 0)
+    storage.set_applied(conn, posting.id, True)
+
+    # The mark records company and role as a recovery key.
+    row = conn.execute(
+        "SELECT company, role FROM applications WHERE posting_id = ?",
+        (posting.id,),
+    ).fetchone()
+    check(row["company"] == posting.company,
+          "an applied mark stores the company as a recovery key")
+    check(row["role"] == posting.role,
+          "an applied mark stores the role as a recovery key")
+
+    # Simulate an id that moved: file the mark under a stale id.
+    conn.execute("DELETE FROM applications")
+    conn.execute(
+        "INSERT INTO applications (posting_id, applied, updated_at, "
+        "company, role) VALUES (?,?,?,?,?)",
+        ("stale:id", 1, "2026-08-01T00:00:00+00:00",
+         posting.company, posting.role),
+    )
+    conn.commit()
+    check(storage.applied_count(conn) == 1, "the stale mark exists")
+
+    recovered = storage.reattach_orphaned_marks(conn)
+    check(recovered == 1, "an orphaned mark is recovered")
+    rows = {r["id"]: r for r in storage.load_postings(conn)}
+    check(rows[posting.id]["applied"] == 1,
+          "the recovered mark is re-attached to the live posting")
+    check(storage.applied_count(conn) == 1,
+          "recovery does not duplicate the mark")
+
+    conn.close()
+
+
+# =============================================================================
+def test_migration():
+    """A schema change must never require deleting the database."""
+    print("\nSCHEMA MIGRATION")
+
+    import sqlite3
+    db_path = os.path.join(tempfile.mkdtemp(), "old.db")
+
+    # An old database: postings without the columns added later.
+    old = sqlite3.connect(db_path)
+    old.execute("CREATE TABLE postings (id TEXT PRIMARY KEY, company TEXT)")
+    old.execute("CREATE TABLE applications (posting_id TEXT PRIMARY KEY, "
+                "applied INTEGER, notes TEXT, updated_at TEXT)")
+    old.execute("INSERT INTO applications VALUES ('x', 1, '', 'then')")
+    old.commit()
+    old.close()
+
+    conn = storage.connect(db_path)
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(postings)")}
+    check("salary" in columns, "a missing column is added by migration")
+    check("candidacy_score" in columns, "every new column is added")
+
+    app_cols = {
+        r["name"] for r in conn.execute("PRAGMA table_info(applications)")
+    }
+    check("company" in app_cols, "the applications table migrates too")
+
+    check(storage.applied_count(conn) == 1,
+          "existing applied marks survive the migration")
+    conn.close()
+
+
+# =============================================================================
+def test_defaults():
+    """The dashboard opens with the settings that were asked for."""
+    print("\nDASHBOARD DEFAULTS")
+
+    check(config.DEFAULT_SORT == "candidacy",
+          "opens sorted by strongest candidate")
+    check(config.DEFAULT_WITHIN_DAYS == 0, "opens showing today only")
+    check(config.DEFAULT_HIDE_COOP is True, "opens with co-ops hidden")
+
+    import app as dashboard
+    # A bare load uses the defaults.
+    check(dashboard._effective_hide_coop({}) is True,
+          "a bare page load hides co-ops")
+    check(dashboard._effective_within({}) == "0",
+          "a bare page load shows today only")
+
+    # A submitted form with the box unticked must actually untick it. This
+    # is the case a naive implementation gets wrong, because an unchecked
+    # HTML checkbox sends nothing at all.
+    check(dashboard._effective_hide_coop({"f": "1"}) is False,
+          "unticking Hide co-ops is respected, not overridden by the default")
+    check(dashboard._effective_hide_coop({"f": "1", "nocoop": "1"}) is True,
+          "leaving it ticked is respected")
+
+
+# =============================================================================
 def test_storage():
     print("\nSTORAGE: the NEW flag across runs")
 
@@ -663,6 +808,10 @@ if __name__ == "__main__":
     test_candidacy_signals()
     test_dedupe()
     test_markdown_sources()
+    test_stable_ids()
+    test_applied_marks_survive()
+    test_migration()
+    test_defaults()
     test_storage()
     test_visit_tracking()
     test_prompts()

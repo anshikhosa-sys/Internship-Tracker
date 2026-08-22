@@ -116,6 +116,14 @@ def refresh(verbose: bool = True, notifications: bool = True) -> dict:
 
     # -- 3. STORE -----------------------------------------------------------
     result = storage.save_postings(conn, scored, run_time)
+
+    # If any posting ids moved, re-link the applied marks that pointed at
+    # the old ones. Normally recovers nothing; when it does, say so, because
+    # silently losing these is the worst failure this tool has.
+    recovered = storage.reattach_orphaned_marks(conn)
+    if recovered:
+        print(f"  re-linked {recovered} applied marks whose posting id moved")
+
     storage.record_run(conn, run_time, result["total"], len(result["new_ids"]))
 
     # -- 4. REPORT ----------------------------------------------------------

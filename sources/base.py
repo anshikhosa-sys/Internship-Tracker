@@ -18,8 +18,39 @@ WHY BOTHER WITH THIS?
 """
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from typing import Optional
+
+
+# Noise words the aggregators sprinkle through titles that carry no identity.
+_NOISE = re.compile(
+    r"\b("
+    r"summer|fall|winter|spring|intern|internship|co-?op|"
+    r"20\d\d|program|opportunity|student|"
+    r"remote|hybrid|onsite|us|usa|"
+    r"early career|university|new grad"
+    r")\b",
+    re.IGNORECASE,
+)
+_REQ = re.compile(r"\b[a-z]{0,3}\d{4,}\b", re.IGNORECASE)
+_PUNCT = re.compile(r"[^\w\s]")
+_SPACE = re.compile(r"\s+")
+
+
+def normalize(text: str) -> str:
+    """
+    Reduce a company or role to a comparable core.
+
+    Used for BOTH deduplication and posting identity, so the two can never
+    disagree about whether two records are the same job.
+    """
+    text = (text or "").lower()
+    text = _REQ.sub(" ", text)
+    text = _PUNCT.sub(" ", text)
+    text = _NOISE.sub(" ", text)
+    text = _SPACE.sub(" ", text)
+    return text.strip()
 
 
 @dataclass
@@ -70,33 +101,36 @@ class Posting:
         """
         A stable unique ID for this posting.
 
-        Stability matters a lot here: it's how we know on the next run whether
-        we've seen a posting before (which drives the NEW flag) and which
-        posting your "applied" checkbox belongs to. If IDs changed between
-        runs, everything would look new every time and your applied marks
-        would detach.
+        THIS IS THE MOST SAFETY-CRITICAL FUNCTION IN THE PROJECT. The ID is
+        what your "applied" mark is filed under. If it changes between runs,
+        the mark is orphaned and the posting looks brand new — silent data
+        loss, with nothing to alert you.
 
-        Simplify gives each posting a UUID in its URL, like
-            https://simplify.jobs/p/6b73883a-ab74-444e-93ce-5fd790148177
-        That UUID is the best ID available — it survives the company renaming
-        the role or editing the location.
+        WHAT AN EARLIER VERSION GOT WRONG
+        ---------------------------------
+        It preferred Simplify's UUID and otherwise hashed
+        source|company|role|location. Both halves were fragile once several
+        sources were merged:
 
-        If there's no Simplify URL, we fall back to hashing the fields that
-        identify the posting. That fallback is slightly fragile (if the company
-        edits the role title, it looks like a brand-new posting), which is
-        exactly why we prefer the UUID when we can get it.
+          - The SOURCE was part of the hash. When a job dropped off Simplify
+            but another list still carried it, the merged record's primary
+            source changed and the hash changed with it.
+          - The LOCATION was part of the hash, so a company editing "NYC" to
+            "New York, NY" minted a new ID.
+          - A UUID-based ID and a hash-based ID for the same job never
+            matched, so a posting appearing in a different list first would
+            change identity.
+
+        WHAT IT DOES NOW
+        ----------------
+        Hash the normalized company and role, and nothing else. Same rule the
+        deduplicator uses, so identity and merging can never disagree. It
+        survives a source dropping the posting, a location edit, a
+        requisition-number change, and "Summer 2027" being added to a title.
         """
-        if self.simplify_url and "/p/" in self.simplify_url:
-            uuid = self.simplify_url.split("/p/")[1].split("?")[0].strip("/")
-            if uuid:
-                return f"simplify:{uuid}"
-
-        # Fallback: hash the identifying fields.
-        raw = "|".join(
-            [self.source, self.company, self.role, self.location]
-        ).lower()
+        raw = f"{normalize(self.company)}|{normalize(self.role)}"
         digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
-        return f"hash:{digest}"
+        return f"job:{digest}"
 
 
 class Source:

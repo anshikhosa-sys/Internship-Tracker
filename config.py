@@ -102,8 +102,37 @@ INGEST_CATEGORIES = [
 
 ROLE_FAMILIES = [
     {
+        # THE THESIS ROLE.
+        #
+        # This is the bet the résumé is built around: that AI/ML
+        # infrastructure — the data and serving layer beneath models rather
+        # than the modelling itself — is where the work grows fastest.
+        #
+        # It sits at the top because preference and candidacy AGREE here,
+        # which is rare. It's the work most wanted AND the work the résumé
+        # most directly proves: pipelines feeding ML models, scaled image
+        # ingestion, a developer platform, a batch microservice on AWS.
+        #
+        # Note what's deliberately absent: "research", "scientist",
+        # "modeling". Those are a different job that wants publications and
+        # usually a PhD, and they're in CANDIDACY_BLOCKERS.
+        "name": "AI/ML Infrastructure & Platform",
+        "preference": 0.95,
+        "keywords": [
+            "ml infrastructure", "ml platform", "ml systems",
+            "machine learning infrastructure", "machine learning platform",
+            "ai infrastructure", "ai platform", "ai systems",
+            "mlops", "ml ops", "model serving", "inference",
+            "training infrastructure", "ml engineer", "ai engineer",
+            "applied ai", "llm infrastructure", "llm platform",
+            "data platform", "data infrastructure", "data engineering",
+            "data engineer", "feature store", "vector database",
+            "ml tooling", "ai tooling", "genai platform",
+        ],
+    },
+    {
         "name": "Forward-Deployed / Solutions",
-        "preference": 1.00,
+        "preference": 0.95,
         "keywords": [
             "forward deployed", "forward-deployed", "fde",
             "solutions engineer", "solutions architect",
@@ -114,8 +143,11 @@ ROLE_FAMILIES = [
         ],
     },
     {
+        # Still high — a technical PM role at an AI/infra company is squarely
+        # on thesis. Slightly below the engineering families because the
+        # résumé proves less of it (see CANDIDACY_CATEGORY).
         "name": "Technical PM / APM",
-        "preference": 0.92,
+        "preference": 0.85,
         "keywords": [
             "product manager", "product management",
             "associate product manager", "apm", "technical product",
@@ -134,12 +166,17 @@ ROLE_FAMILIES = [
     },
     {
         "name": "Software Engineering",
-        # 0.50 is the FLOOR for a generic SWE role, not the ceiling. The
+        # 0.62 is the FLOOR for a generic SWE role, not the ceiling.
+        #
+        # Raised from 0.50 deliberately: the goal is achievable roles, not a
+        # narrow bet on one specialty. A plain software engineering
+        # internship is a good outcome, and the FOCUS_LIFT values below
+        # still push the infra/data/AI ones above it. The
         # FOCUS_LIFT values below raise it toward 1.0 when the role is in an
         # area you actually want — infrastructure, data platform, developer
         # tools. A plain "Software Engineer Intern" stays at 0.50; a "Software
         # Engineer Intern, Data Platform" lands around 0.80.
-        "preference": 0.50,
+        "preference": 0.62,
         "keywords": [
             "software engineer", "software engineering", "swe",
             "developer", "programmer", "data engineer",
@@ -159,9 +196,9 @@ UNKNOWN_FAMILY_PREFERENCE = 0.30
 # below is the separate question of whether you're qualified for it.
 FOCUS_LIFT = {
     # Infrastructure and platform — the strongest signal for your targets
-    "infrastructure": 0.18,
-    "infra": 0.18,
-    "platform": 0.15,
+    "infrastructure": 0.22,
+    "infra": 0.22,
+    "platform": 0.18,
     "developer experience": 0.22,
     "developer tools": 0.22,
     "internal tools": 0.18,
@@ -174,17 +211,17 @@ FOCUS_LIFT = {
     "site reliability": 0.12,
 
     # Data
-    "data platform": 0.20,
-    "data infrastructure": 0.20,
-    "data engineering": 0.16,
-    "data pipeline": 0.18,
+    "data platform": 0.25,
+    "data infrastructure": 0.25,
+    "data engineering": 0.20,
+    "data pipeline": 0.22,
     "database": 0.12,
     "data": 0.08,
 
     # AI, applied rather than research — see CANDIDACY_BLOCKERS for why
     # research-heavy roles are treated differently
-    "llm": 0.18,
-    "genai": 0.16,
+    "llm": 0.22,
+    "genai": 0.20,
     "generative": 0.14,
     "ai": 0.10,
     "ml": 0.08,
@@ -217,8 +254,26 @@ OUT_OF_SCOPE = {
     "verilog": 0.10, "rtl": 0.15, "silicon": 0.15, "analog": 0.15,
     "circuit": 0.15, "mechanical": 0.10, "electrical": 0.20,
 
-    "recruiting": 0.15, "marketing": 0.25, "accounting": 0.10,
-    "sales development": 0.25,
+    "recruiting": 0.15, "accounting": 0.10, "sales development": 0.25,
+
+    # Non-technical roles that read like tech roles until you look. A
+    # "Product Marketing Intern" matches "product" and sails up the list
+    # otherwise.
+    "marketing": 0.12,
+    "product marketing": 0.08,
+    "brand": 0.10,
+    "communications": 0.12,
+    "public relations": 0.10,
+    "human resources": 0.10,
+    "talent": 0.15,
+    "social media": 0.10,
+    "content": 0.20,
+    "audit": 0.15,
+    "tax": 0.10,
+    "actuarial": 0.15,
+    "underwriting": 0.15,
+    "supply chain": 0.25,
+    "procurement": 0.15,
 }
 
 
@@ -289,8 +344,13 @@ CANDIDACY_BASELINE = 0.60
 CANDIDACY_EVIDENCE = {
     # Directly evidenced by shipped work
     "python": 0.15,
-    "data pipeline": 0.20,
-    "pipelines": 0.15,
+    "data pipeline": 0.24,
+    "pipelines": 0.18,
+    "ml infrastructure": 0.24,
+    "ml platform": 0.24,
+    "data platform": 0.24,
+    "inference": 0.16,
+    "model serving": 0.16,
     "etl": 0.15,
     "backend": 0.15,
     "sql": 0.14,
@@ -349,6 +409,9 @@ CANDIDACY_BLOCKERS = {
     # still be considered — but honestly long odds against people who've done
     # exactly this.
     "research scientist": 0.20,
+    "research intern": 0.35,
+    "applied scientist": 0.25,
+    "phd research": 0.10,
     "compiler": 0.35,
     "kernel": 0.30,
     "cryptography": 0.30,
@@ -503,7 +566,27 @@ FRESH_DAYS = 3
 #   "preference"  how much you want it, ignoring odds and age
 #   "candidacy"   where you're strongest
 #   "recency"     newest first
-DEFAULT_SORT = "score"
+#
+# WHAT THE DASHBOARD OPENS WITH
+# -----------------------------
+# These three apply on a bare page load. The moment you touch the filter
+# form they stop applying and your choices are used instead — including
+# unticking a box that defaults to on, which needs the hidden `f=1` marker
+# to distinguish "unticked" from "never submitted". See _filtered() in app.py.
+DEFAULT_SORT = "candidacy"
+
+# Only show postings at most this many days old on a bare page load.
+# 0 = today only. None = fall back to MAX_AGE_DAYS.
+#
+# Note this is tight: on a typical day it leaves about 5-7 roles. That's the
+# point if you only apply same-day — but if the daily list feels too thin,
+# 1 (today or yesterday) roughly triples it and is still well inside the
+# window the evidence supports.
+DEFAULT_WITHIN_DAYS = 0
+
+# Hide co-ops by default — full-time during a school term, so you'd take a
+# semester off rather than working over the summer.
+DEFAULT_HIDE_COOP = True
 
 
 # =============================================================================

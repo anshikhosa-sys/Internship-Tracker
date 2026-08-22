@@ -56,13 +56,29 @@ def _filtered(postings, new_ids, args):
     grew to hundreds of thousands of rows, this is the piece you'd push down
     into the database query.
     """
+    # Has the filter form been submitted, or is this a bare page load?
+    #
+    # This matters because of how HTML checkboxes work: an unchecked box
+    # sends NOTHING. Without a marker there's no way to tell "the user
+    # unticked Hide co-ops" from "the user just opened the page", so a
+    # default-on checkbox could never be switched off.
+    #
+    # The form carries a hidden `f=1`. Its presence means "these are the
+    # user's choices, use them exactly"; its absence means "use the defaults
+    # from config.py".
+    submitted = args.get("f") == "1"
+
     query = (args.get("q") or "").strip().lower()
     category = args.get("category") or ""
     status = args.get("status") or ""
     show_low = args.get("show_low") == "1"
     fresh_only = args.get("fresh") == "1"
     show_stale = args.get("stale") == "1"
-    hide_coop = args.get("nocoop") == "1"
+
+    if submitted:
+        hide_coop = args.get("nocoop") == "1"
+    else:
+        hide_coop = config.DEFAULT_HIDE_COOP
 
     # Explicit "posted within N days" filter, independent of the global
     # cutoff.
@@ -72,7 +88,7 @@ def _filtered(postings, new_ids, args):
     # today only" option silently showed everything.
     raw_within = args.get("within")
     if raw_within in (None, ""):
-        within = None
+        within = None if submitted else config.DEFAULT_WITHIN_DAYS
     else:
         try:
             within = max(0, int(raw_within))
@@ -124,6 +140,24 @@ def _filtered(postings, new_ids, args):
         results.append(posting)
 
     return results
+
+
+def _effective_within(args):
+    """What the age dropdown should show as selected."""
+    if args.get("f") == "1":
+        return args.get("within", "")
+    raw = args.get("within")
+    if raw not in (None, ""):
+        return raw
+    default = config.DEFAULT_WITHIN_DAYS
+    return "" if default is None else str(default)
+
+
+def _effective_hide_coop(args) -> bool:
+    """Whether the Hide co-ops box should render ticked."""
+    if args.get("f") == "1":
+        return args.get("nocoop") == "1"
+    return config.DEFAULT_HIDE_COOP
 
 
 # =============================================================================
@@ -200,7 +234,8 @@ def index():
         hidden_by_age=hidden_by_age,
         max_age_days=config.MAX_AGE_DAYS,
         showing_stale=request.args.get("stale") == "1",
-        within=request.args.get("within", ""),
+        within=_effective_within(request.args),
+        hide_coop=_effective_hide_coop(request.args),
         filters=request.args,
         config=config,
     )

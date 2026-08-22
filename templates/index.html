@@ -53,6 +53,10 @@
   <!-- method="get" puts the filters in the URL, so a filtered view can be
        bookmarked and survives a page reload. -->
   <form class="filters" method="get">
+    <!-- Marks the form as submitted, so an unticked checkbox is read as a
+         real choice rather than as "page just loaded". Without this a
+         default-on filter could never be switched off. -->
+    <input type="hidden" name="f" value="1">
     <input type="search" name="q" placeholder="Search company, role, location…"
            value="{{ filters.get('q', '') }}">
 
@@ -121,7 +125,7 @@
 
     <label class="checkbox" title="Co-ops are full-time during a school term">
       <input type="checkbox" name="nocoop" value="1"
-             {% if filters.get('nocoop') == '1' %}checked{% endif %}>
+             {% if hide_coop %}checked{% endif %}>
       Hide co-ops
     </label>
 

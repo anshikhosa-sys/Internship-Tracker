@@ -83,7 +83,13 @@ CREATE TABLE IF NOT EXISTS applications (
     posting_id  TEXT PRIMARY KEY,
     applied     INTEGER NOT NULL DEFAULT 0,
     notes       TEXT DEFAULT '',
-    updated_at  TEXT
+    updated_at  TEXT,
+    -- The company and role are stored ALONGSIDE the id deliberately.
+    -- If a posting's id ever changes anyway, these let the mark be found
+    -- and re-attached instead of silently orphaned. This is the only data
+    -- in the database that cannot be regenerated, so it gets a backup key.
+    company     TEXT DEFAULT '',
+    role        TEXT DEFAULT ''
 );
 
 -- One row per refresh, so we know what "since last time" means.
@@ -101,7 +107,15 @@ CREATE TABLE IF NOT EXISTS app_state (
     value TEXT
 );
 
--- Indexes: make sorting by score and filtering by active fast.
+"""
+
+# Indexes are created SEPARATELY, after the migration runs.
+#
+# They reference columns (fit_score) that an older database won't have yet.
+# Creating them inside SCHEMA means they execute before ALTER TABLE has
+# added those columns, and SQLite fails with "no such column" — turning a
+# routine upgrade into a crash on startup. A test pins the order.
+INDEXES = """
 CREATE INDEX IF NOT EXISTS idx_postings_score ON postings(fit_score DESC);
 CREATE INDEX IF NOT EXISTS idx_postings_active ON postings(is_active);
 """
@@ -109,16 +123,91 @@ CREATE INDEX IF NOT EXISTS idx_postings_active ON postings(is_active);
 
 def connect(path: str = None) -> sqlite3.Connection:
     """
-    Open (and if needed create) the database.
+    Open (and if needed create) the database, migrating it if the schema has
+    grown since it was made.
 
     row_factory = sqlite3.Row makes query results behave like dictionaries —
-    row["company"] instead of row[2] — which is far easier to read and doesn't
+    row["company"] instead of row[2] — which is easier to read and doesn't
     break when the column order changes.
+
+    WHY THE MIGRATION EXISTS
+    ------------------------
+    CREATE TABLE IF NOT EXISTS does nothing to a table that already exists,
+    so adding a column to SCHEMA above would leave older databases missing
+    it, and every insert would fail. The tempting fix is to delete the
+    database and start over — which is exactly how you lose applied marks,
+    the one thing in here that can't be regenerated.
+
+    So instead: compare the columns that exist against the columns the schema
+    wants, and ADD the missing ones. Nothing is ever dropped or rewritten.
     """
     conn = sqlite3.connect(path or config.DATABASE_PATH)
     conn.row_factory = sqlite3.Row
-    conn.executescript(SCHEMA)
+    conn.executescript(SCHEMA)      # tables first
+    _migrate(conn)                  # then any columns added since
+    conn.executescript(INDEXES)     # only then indexes, which need those
     return conn
+
+
+# EVERY non-primary-key column the current schema expects, with its type.
+#
+# Deliberately the full list rather than only "columns added recently". A
+# database can be missing any of them — one written by an older version, or
+# one restored from a partial backup — and listing only the recent additions
+# leaves the older gaps unfixed until something fails at query time.
+#
+# Adding a column to SCHEMA above means adding it here too. Anything present
+# is left exactly as it is; nothing is ever dropped or rewritten.
+_MIGRATIONS = {
+    "postings": {
+        "source": "TEXT",
+        "company": "TEXT",
+        "role": "TEXT",
+        "category": "TEXT",
+        "location": "TEXT",
+        "apply_url": "TEXT",
+        "simplify_url": "TEXT",
+        "age_text": "TEXT",
+        "date_posted": "TEXT",
+        "salary": "TEXT",
+        "sources": "TEXT",
+        "is_faang": "INTEGER",
+        "needs_advanced_degree": "INTEGER",
+        "no_sponsorship": "INTEGER",
+        "citizenship_required": "INTEGER",
+        "preference": "REAL",
+        "preference_reasons": "TEXT",
+        "candidacy_score": "REAL",
+        "candidacy_reasons": "TEXT",
+        "role_family": "TEXT",
+        "fit_score": "INTEGER",
+        "first_seen": "TEXT",
+        "last_seen": "TEXT",
+        "is_active": "INTEGER",
+    },
+    "applications": {
+        "applied": "INTEGER NOT NULL DEFAULT 0",
+        "notes": "TEXT DEFAULT ''",
+        "updated_at": "TEXT",
+        "company": "TEXT DEFAULT ''",
+        "role": "TEXT DEFAULT ''",
+    },
+}
+
+
+def _migrate(conn) -> None:
+    """Add any columns the current schema wants that this database lacks."""
+    for table, columns in _MIGRATIONS.items():
+        existing = {
+            row["name"]
+            for row in conn.execute(f"PRAGMA table_info({table})")
+        }
+        for name, column_type in columns.items():
+            if name not in existing:
+                conn.execute(
+                    f"ALTER TABLE {table} ADD COLUMN {name} {column_type}"
+                )
+    conn.commit()
 
 
 def now_iso() -> str:
@@ -449,18 +538,81 @@ def mark_all_seen(conn) -> None:
 # =============================================================================
 
 def set_applied(conn, posting_id: str, applied: bool) -> None:
-    """Mark a posting as applied / not applied."""
+    """
+    Mark a posting as applied / not applied.
+
+    The company and role are copied in alongside the id. They're redundant
+    while ids are stable — and they're the recovery key if one ever isn't.
+    """
+    row = conn.execute(
+        "SELECT company, role FROM postings WHERE id = ?", (posting_id,)
+    ).fetchone()
+    company = row["company"] if row else ""
+    role = row["role"] if row else ""
+
     conn.execute(
         """
-        INSERT INTO applications (posting_id, applied, updated_at)
-        VALUES (?,?,?)
+        INSERT INTO applications
+            (posting_id, applied, updated_at, company, role)
+        VALUES (?,?,?,?,?)
         ON CONFLICT(posting_id) DO UPDATE SET
             applied    = excluded.applied,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            company    = excluded.company,
+            role       = excluded.role
         """,
-        (posting_id, int(applied), now_iso()),
+        (posting_id, int(applied), now_iso(), company, role),
     )
     conn.commit()
+
+
+def reattach_orphaned_marks(conn) -> int:
+    """
+    Re-link applied marks whose posting id no longer exists.
+
+    Runs on every refresh. If a posting's id changed — a source dropped it, a
+    title was edited, an id scheme changed — the mark is matched back by
+    company and role and re-filed under the new id.
+
+    Returns how many were recovered. Should normally be 0; anything else is
+    worth noticing, because it means ids moved.
+    """
+    orphans = conn.execute(
+        """
+        SELECT a.posting_id, a.applied, a.notes, a.company, a.role
+        FROM applications a
+        LEFT JOIN postings p ON p.id = a.posting_id
+        WHERE p.id IS NULL AND a.company != '' AND a.role != ''
+        """
+    ).fetchall()
+
+    recovered = 0
+    for orphan in orphans:
+        match = conn.execute(
+            "SELECT id FROM postings WHERE company = ? AND role = ?",
+            (orphan["company"], orphan["role"]),
+        ).fetchone()
+        if not match:
+            continue
+        conn.execute(
+            """
+            INSERT INTO applications
+                (posting_id, applied, notes, updated_at, company, role)
+            VALUES (?,?,?,?,?,?)
+            ON CONFLICT(posting_id) DO UPDATE SET
+                applied = excluded.applied
+            """,
+            (match["id"], orphan["applied"], orphan["notes"] or "",
+             now_iso(), orphan["company"], orphan["role"]),
+        )
+        conn.execute(
+            "DELETE FROM applications WHERE posting_id = ?",
+            (orphan["posting_id"],),
+        )
+        recovered += 1
+
+    conn.commit()
+    return recovered
 
 
 def applied_count(conn) -> int:

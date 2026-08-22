@@ -36,40 +36,18 @@ wholesale:
 That way adding a source can only ever improve a record.
 """
 
-import re
-
-
-# Words every list sprinkles through titles that carry no identity.
-_NOISE = re.compile(
-    r"\b("
-    r"summer|fall|winter|spring|intern|internship|co-?op|"
-    r"20\d\d|program|opportunity|student|"
-    r"remote|hybrid|onsite|us|usa|"
-    r"early career|university|new grad"
-    r")\b",
-    re.IGNORECASE,
-)
-
-_PUNCT = re.compile(r"[^\w\s]")
-_SPACE = re.compile(r"\s+")
-
-# Trailing requisition numbers: "- R2023492", "(JR12345)"
-_REQ = re.compile(r"\b[a-z]{0,3}\d{4,}\b", re.IGNORECASE)
-
-
-def _normalize(text: str) -> str:
-    """Reduce a company or role to a comparable core."""
-    text = (text or "").lower()
-    text = _REQ.sub(" ", text)
-    text = _PUNCT.sub(" ", text)
-    text = _NOISE.sub(" ", text)
-    text = _SPACE.sub(" ", text)
-    return text.strip()
+from sources.base import normalize
 
 
 def key_for(posting) -> tuple:
-    """The identity of a job, independent of which list it came from."""
-    return (_normalize(posting.company), _normalize(posting.role))
+    """
+    The identity of a job, independent of which list it came from.
+
+    Uses the SAME normalization as Posting.id, imported rather than
+    reimplemented — if these two ever disagreed, a job could merge under one
+    rule while its applied mark was filed under another.
+    """
+    return (normalize(posting.company), normalize(posting.role))
 
 
 def _better_date(a, b):
