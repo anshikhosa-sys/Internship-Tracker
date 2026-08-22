@@ -153,6 +153,36 @@ def test_preference():
     check(pref("Quantitative Trading Intern") < 0.2,
           "out-of-scope roles are worth a fraction of a real match")
 
+    # ADJACENT FIELDS THAT AREN'T SOFTWARE ENGINEERING.
+    # Every one of these reached the top of a real list, scoring 42-53,
+    # because one word in the title read as technical.
+    for role in ("Textile Engineering Intern",
+                 "Geoscience Intern",
+                 "Predictive Modeler Intern",
+                 "Computational Engineering Graduate Intern",
+                 "Actuarial Intern"):
+        check(pref(role) < 0.15, f"'{role}' scores near zero")
+
+    # DATA ANALYSIS is not DATA ENGINEERING. The resume proves pipelines and
+    # platforms, not statistics and dashboards.
+    check(pref("Data Engineer Intern") > pref("Data Analyst Intern") * 2,
+          "data engineering outranks data analysis by a wide margin")
+    check(pref("Data Engineer Intern") > pref("Data Scientist Intern") * 2,
+          "data engineering outranks data science by a wide margin")
+
+    # ML INFRASTRUCTURE is not ML RESEARCH. The infra half is a top family;
+    # the modelling half wants publications and usually a PhD.
+    check(pref("ML Platform Engineer Intern") >
+          pref("Computer Vision Research Intern") * 2,
+          "ML infrastructure outranks ML research by a wide margin")
+
+    # An unclassifiable title must default to near-zero, not to a guess.
+    # This was 0.30 and governed 56% of the live list.
+    check(config.UNKNOWN_FAMILY_PREFERENCE <= 0.15,
+          "an unrecognized role type defaults to near-zero, not a guess")
+    check(pref("Dealer Business Operations Intern") < 0.2,
+          "an unclassifiable business role scores near zero")
+
 
 # =============================================================================
 def test_candidacy():

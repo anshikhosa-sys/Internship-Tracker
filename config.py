@@ -188,8 +188,24 @@ ROLE_FAMILIES = [
     },
 ]
 
-# Preference for a posting that matched no family at all.
-UNKNOWN_FAMILY_PREFERENCE = 0.30
+# Preference for a posting that matched NO role family at all.
+#
+# DELIBERATELY LOW. This was 0.30, and an audit found it was being applied
+# to 56% of the live list — a guess governing more than half the ranking.
+# What it let through, all scoring 42-53 and sitting near the top:
+#
+#     Textile Engineering Intern        (a window blinds manufacturer)
+#     Geoscience Intern                 (oil and gas)
+#     Predictive Modeler Intern         (insurance actuarial)
+#     Computational Engineering GRADUATE Intern
+#     Dealer Business Operations & Analytics Intern
+#
+# None are worth an application. The correct default for "this title
+# doesn't look like any role I'm targeting" is near-zero, not one-third.
+# If a genuinely relevant role gets caught by this, the fix is to add its
+# keywords to a family above — which also makes it rank properly rather
+# than merely surviving.
+UNKNOWN_FAMILY_PREFERENCE = 0.10
 
 # Topics that make a role MORE interesting, added to the family's preference
 # and capped at 1.0. These are about what you want to work on — CANDIDACY
@@ -267,6 +283,50 @@ OUT_OF_SCOPE = {
     "circuit": 0.15, "mechanical": 0.10, "electrical": 0.20,
 
     "recruiting": 0.15, "accounting": 0.10, "sales development": 0.25,
+
+    # --- Adjacent fields that are NOT software engineering -------------
+    # Every one of these appeared near the top of a real list. They read as
+    # technical because of one word, and are a different discipline.
+    "textile": 0.05,
+    "geoscience": 0.05,
+    "geology": 0.05,
+    "petroleum": 0.05,
+    "chemical": 0.10,
+    "civil": 0.10,
+    "biomedical": 0.10,
+    "aerospace": 0.15,
+    "manufacturing": 0.15,
+    "industrial": 0.20,
+    "actuarial": 0.05,
+    "predictive modeler": 0.10,
+    "computational science": 0.20,
+    "computational engineering": 0.20,
+
+    # --- Data ANALYSIS, as distinct from data ENGINEERING --------------
+    # Your resume proves pipelines, warehouses, and platforms. It does not
+    # prove statistics, modelling, or dashboarding, which is what these ask
+    # for. "Data Engineer" stays a top-tier match; these do not.
+    "data analyst": 0.20,
+    "data analytics": 0.25,
+    "business analyst": 0.15,
+    "business intelligence": 0.25,
+    "data scientist": 0.20,
+    "data science": 0.20,
+    "statistician": 0.10,
+    "statistics": 0.15,
+    "biostatistics": 0.05,
+    "econometrics": 0.10,
+
+    # --- Research and specialised ML, as distinct from ML INFRA --------
+    # The modelling half of AI, which wants publications and usually a PhD.
+    # The infrastructure half is a top-tier family above.
+    "research scientist": 0.10,
+    "applied scientist": 0.15,
+    "computer vision": 0.20,
+    "perception": 0.20,
+    "robotics": 0.15,
+    "speech recognition": 0.20,
+    "reinforcement learning": 0.20,
 
     # Non-technical roles that read like tech roles until you look. A
     # "Product Marketing Intern" matches "product" and sails up the list
