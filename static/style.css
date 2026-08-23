@@ -494,3 +494,8 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
 .tag.emp-big_tech { background: #dbeafe; color: #1d4ed8; }
 .tag.emp-tech     { background: #e0e7ff; color: #4338ca; }
 .tag.emp-non_tech { background: #ffe4e6; color: #9f1239; }
+
+/* Application quota. Amber rather than red: a remaining slot is useful
+   information, not a warning — it only becomes one at zero, and at zero
+   the card is gone from the list anyway. */
+.tag.tag-quota { background: #fef3c7; color: #92400e; }

@@ -220,6 +220,50 @@ def _effective_hide_offseason(args) -> bool:
 # Routes
 # =============================================================================
 
+def _quota_group(company):
+    """
+    The APPLICATION_LIMITS entry covering this company, or None.
+
+    Whole-word matching, like the employer lists: a substring test would
+    file "Tiktokenizer" under TikTok's quota.
+    """
+    name = (company or "").strip().lower()
+    if not name:
+        return None
+    for group in config.APPLICATION_LIMITS:
+        for candidate in group["companies"]:
+            if scorer._matches(candidate, name):
+                return group
+    return None
+
+
+def _quota_state(postings):
+    """
+    How much of each capped company's quota you've already spent.
+
+    Keyed by the group's name. Counts anything with a status — an
+    application at any stage, including a rejection, still consumed a slot.
+    """
+    used = {}
+    for posting in postings:
+        if not posting.get("status"):
+            continue
+        group = _quota_group(posting.get("company"))
+        if group:
+            used[group["name"]] = used.get(group["name"], 0) + 1
+
+    state = {}
+    for group in config.APPLICATION_LIMITS:
+        spent = used.get(group["name"], 0)
+        state[group["name"]] = {
+            "name": group["name"],
+            "limit": group["limit"],
+            "used": spent,
+            "left": max(0, group["limit"] - spent),
+        }
+    return state
+
+
 def _relative_time(iso_string):
     """
     "12 minutes ago" for a stored timestamp, or None.
@@ -377,7 +421,14 @@ def index():
     # Applied after sorting, so the roles kept are each company's best. The
     # held-back ones stay in the database and in every count — this only
     # decides what the page shows, and `allper=1` lifts it.
+    # Quota state is computed over EVERY posting, not just the visible ones,
+    # so an application made months ago still counts against the limit even
+    # when its posting has aged off the list.
+    quotas = _quota_state(postings)
+
     crowded = {}
+    exhausted = []
+    quota_limited = {}
     if config.MAX_PER_COMPANY and request.args.get("allper") != "1":
         per_company = {}
         capped = []
@@ -388,14 +439,42 @@ def index():
             if posting.get("status"):
                 capped.append(posting)
                 continue
-            per_company[name] = per_company.get(name, 0) + 1
-            if per_company[name] <= config.MAX_PER_COMPANY:
+
+            # A capped company's real limit is what's LEFT of its quota, not
+            # MAX_PER_COMPANY. Showing three TikTok roles when one
+            # application remains isn't a shortlist, it's three ways to
+            # waste the last slot.
+            group = _quota_group(posting["company"])
+            if group:
+                key = group["name"]
+                allowance = min(config.MAX_PER_COMPANY, quotas[key]["left"])
+            else:
+                key = name
+                allowance = config.MAX_PER_COMPANY
+
+            per_company[key] = per_company.get(key, 0) + 1
+            if per_company[key] <= allowance:
                 capped.append(posting)
+            elif group:
+                # Held back by the quota, not by ordinary crowding. Reported
+                # separately because the two have different remedies: one
+                # you can lift, the other is a fact about the employer.
+                if quotas[key]["left"] == 0:
+                    if key not in exhausted:
+                        exhausted.append(key)
+                else:
+                    quota_limited[key] = quota_limited.get(key, 0) + 1
             else:
                 crowded[posting["company"]] = crowded.get(
                     posting["company"], 0
                 ) + 1
         visible = capped
+
+    # Tell each surviving card how much of its company's quota is left, so
+    # the constraint is visible at the moment you're deciding to apply.
+    for posting in visible:
+        group = _quota_group(posting["company"])
+        posting["quota"] = quotas[group["name"]] if group else None
 
     # Categories for the filter dropdown, taken from the data itself so it
     # stays correct if you change INGEST_CATEGORIES in config.py.
@@ -417,6 +496,9 @@ def index():
         hidden_by_age=hidden_by_age,
         max_age_days=config.MAX_AGE_DAYS,
         showing_stale=request.args.get("stale") == "1",
+        quotas=[q for q in quotas.values() if q["used"]],
+        exhausted=[quotas[k] for k in exhausted],
+        quota_limited=[(quotas[k], n) for k, n in quota_limited.items()],
         crowded=sorted(crowded.items(), key=lambda kv: -kv[1]),
         crowded_total=sum(crowded.values()),
         max_per_company=config.MAX_PER_COMPANY,

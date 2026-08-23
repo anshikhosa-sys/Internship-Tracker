@@ -50,7 +50,17 @@ def is_available() -> bool:
 
 def send(title: str, message: str, subtitle: str = "") -> bool:
     """
-    Show a notification. Returns True if it was displayed.
+    Ask macOS to show a notification.
+
+    Returns True if the request was ACCEPTED, which is not the same as
+    delivered and must not be reported as such. `osascript` exits 0 whether
+    the banner appears or is silently dropped — by a Focus mode, by Script
+    Editor's alert style being None, or by the notification going straight
+    to Notification Center unseen. Nothing available to a background job
+    can distinguish those cases, so this promises only what it knows.
+
+    That is also why the dashboard banner exists: it is the channel that
+    cannot be suppressed. See `python3 notify.py` to test delivery by eye.
 
     Never raises — see the module docstring for why.
     """
@@ -114,3 +124,68 @@ def notify_strong_matches(new_postings) -> bool:
         message += f"  (+{len(matches) - 1} more)"
 
     return send(title, message, subtitle=f"Best fit score: {best.fit_score}")
+
+
+# =============================================================================
+# Self-test
+# =============================================================================
+#
+# `python3 notify.py` sends a real notification and tells you what to do if
+# it doesn't appear. Delivery cannot be detected in software, so the only
+# honest test is one where you look at the screen.
+
+INSTRUCTIONS = """
+If no banner appeared, macOS suppressed it. Notifications sent this way are
+attributed to SCRIPT EDITOR, not to this project, so that is the app to look
+for in Settings.
+
+On macOS 15 (Sequoia):
+
+  1. System Settings > Notifications
+  2. Scroll to "Script Editor" under Application Notifications
+     (if it is absent, run this script once more — sending a notification is
+     what registers the app in that list, and it takes a moment to appear)
+  3. Turn ON "Allow notifications"
+  4. Set the alert style to "Banners" or "Alerts"
+       - Banners disappear on their own
+       - Alerts stay until dismissed, which is the better choice here:
+         a refresh can fire while you are away from the machine
+  5. Turn ON "Show in Notification Center" and "Show on Lock Screen"
+
+Then check Focus:
+
+  - Control Centre > Focus. Any active mode silences banners.
+  - System Settings > Focus > [your mode] > Allowed Notifications, and add
+    Script Editor, if you want alerts to come through while focused.
+
+Two things worth knowing:
+
+  - A notification that arrives while the screen is locked or asleep goes
+    to Notification Center without a banner. It is not lost; click the
+    clock in the top-right corner to see it.
+  - The dashboard banner always shows new postings and cannot be
+    suppressed by any of the above. Notifications are a convenience; the
+    dashboard is the reliable channel.
+"""
+
+
+if __name__ == "__main__":
+    if not is_available():
+        print("Not macOS, or osascript is missing — notifications are off.")
+        raise SystemExit(0)
+
+    accepted = send(
+        "Internship Finder",
+        "If you can read this, notifications are working.",
+        subtitle="Test notification",
+    )
+
+    if not accepted:
+        print("osascript refused the request. Notifications will not work.")
+        raise SystemExit(1)
+
+    print("Sent. Look at the top-right of your screen now.")
+    print()
+    print("macOS accepted the request — but it exits 0 even when it drops")
+    print("the notification, so this cannot confirm you saw anything.")
+    print(INSTRUCTIONS)

@@ -123,6 +123,11 @@ Two details that matter:
   "would they take you" alone and discarded two of the three factors — the
   landing page opened with a 26 at the top and the 65 below the fold. The
   landing view is the product; it opens on the number the product computes.
+- **Some employers cap applications per cycle** (`APPLICATION_LIMITS`).
+  TikTok and ByteDance share a pool of 2. The ranked list shows only what
+  is LEFT of a quota, not `MAX_PER_COMPANY` — offering three TikTok roles
+  when one application remains is three ways to waste the last slot. A
+  rejection still spent the slot, so anything with a status counts.
 - **One company is capped at `MAX_PER_COMPANY` rows.** TikTok posts 191
   roles and took 7 of the top 20 on score alone. A "just apply" list that is
   mostly one employer is not a list of actions. Display rule only, liftable
@@ -139,6 +144,12 @@ Two details that matter:
 - **The advanced-degree penalty lives in candidacy, not preference.** It's a
   statement about eligibility, not desire. Applying it in both would
   double-count.
+- **Notification delivery cannot be verified in software.** `osascript`
+  exits 0 whether macOS shows the banner or silently drops it (Focus, alert
+  style None, screen locked). So `notify.send()` promises only that the
+  request was accepted, the health check says delivery is uncheckable, and
+  `python3 notify.py` exists to test it by eye. The dashboard banner is the
+  channel that cannot be suppressed.
 - **Cover letters are prompts, never submissions.** Application portals
   prohibit automated submission and an application cannot be unsent, so the
   irreversible step stays manual.

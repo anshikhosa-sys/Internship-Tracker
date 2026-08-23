@@ -22,7 +22,7 @@ import os
 import platform
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import config
 
@@ -83,6 +83,49 @@ def check_profile():
            f"keywords appear in your resume")
 
 
+def _daily_coverage(conn, days=7):
+    """
+    Did a refresh actually LAND on each of the last `days` days?
+
+    The plist says 07:30/11:30/16:30. Whether runs happened depends on
+    whether the Mac was awake, so this reads the record rather than
+    trusting the schedule. Returns a dict; the caller prints it, so this
+    can run before the connection closes.
+    """
+    rows = conn.execute(
+        "SELECT date(ran_at) AS day, COUNT(*) AS n "
+        "FROM runs GROUP BY day ORDER BY day DESC LIMIT ?",
+        (days,),
+    ).fetchall()
+    counts = {row["day"]: row["n"] for row in rows}
+
+    first = conn.execute("SELECT MIN(date(ran_at)) AS d FROM runs").fetchone()
+    today = date.today()
+
+    # Only judge days the tool has actually existed for — a project three
+    # days old has not "missed" the four days before it was written.
+    lifetime = days
+    if first and first["d"]:
+        lifetime = max(1, min(days, (today - date.fromisoformat(first["d"])).days + 1))
+
+    covered, marks = 0, []
+    for offset in range(lifetime):
+        day = (today - timedelta(days=offset)).isoformat()
+        if counts.get(day):
+            covered += 1
+            marks.append("+")
+        else:
+            marks.append(".")
+    marks.reverse()
+
+    return {
+        "status": PASS if covered >= lifetime else WARN,
+        "detail": (f"refreshed on {covered} of the last {lifetime} day"
+                   f"{'s' if lifetime != 1 else ''}  "
+                   f"[{''.join(marks)}]  oldest left, today right"),
+    }
+
+
 def check_database():
     print("\nDATABASE")
     import storage
@@ -97,6 +140,7 @@ def check_database():
     last_run = storage.last_run_time(conn)
     applied = storage.applied_count(conn)
     pipeline = storage.pipeline(conn)
+    coverage = _daily_coverage(conn)
     conn.close()
 
     if not postings:
@@ -118,6 +162,8 @@ def check_database():
             report(WARN, "last refresh", "timestamp unreadable")
     else:
         report(WARN, "last refresh", "never")
+
+    report(coverage["status"], "daily coverage", coverage["detail"])
 
     report(PASS, "your data",
            f"{applied} marked applied, {len(pipeline)} in the pipeline")
@@ -223,9 +269,8 @@ def check_notifications():
 
     report(PASS, "notification path", "osascript present and callable")
     report(WARN, "delivery",
-           "macOS can accept a notification and still suppress it. If you "
-           "see none, allow 'Script Editor' in System Settings > "
-           "Notifications, and check Focus is off")
+           "cannot be checked in software — osascript exits 0 even when "
+           "macOS drops the banner. Run: python3 notify.py")
     report(PASS, "dashboard banner",
            "new postings also show as a banner, which cannot be suppressed")
 

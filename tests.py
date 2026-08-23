@@ -388,6 +388,73 @@ def test_crowding():
 
 
 # =============================================================================
+def test_quotas():
+    """
+    Some employers cap applications per cycle. Once the cap is spent, the
+    remaining roles there are not opportunities and must stop being offered.
+    """
+    print("\nAPPLICATION QUOTAS")
+
+    import app
+
+    group = app._quota_group("TikTok")
+    check(group is not None, "TikTok is covered by a quota")
+    check(app._quota_group("ByteDance") is group,
+          "ByteDance shares TikTok's pool — one parent, one quota")
+    check(app._quota_group("Zipline") is None,
+          "a company with no cap has no quota")
+    check(app._quota_group("Tiktokenizer Inc") is None,
+          "whole-word matching: 'Tiktokenizer' is not TikTok")
+
+    limit = group["limit"]
+
+    def state(applied_count):
+        postings = [{"company": "TikTok", "status": "applied"}
+                    for _ in range(applied_count)]
+        postings.append({"company": "Zipline", "status": ""})
+        return app._quota_state(postings)[group["name"]]
+
+    check(state(0)["left"] == limit, "an unused quota has every slot left")
+    check(state(1)["left"] == limit - 1, "one application spends one slot")
+    check(state(limit)["left"] == 0, "spending the quota leaves none")
+    check(state(limit + 5)["left"] == 0,
+          "over-applying clamps at zero rather than going negative")
+
+    # A rejection still consumed the slot — the cap is on applications sent,
+    # not on applications that went well.
+    mixed = app._quota_state([
+        {"company": "TikTok", "status": "rejected"},
+        {"company": "ByteDance", "status": "interview"},
+    ])[group["name"]]
+    check(mixed["used"] == 2,
+          "a rejection and an interview both count against the quota")
+    check(mixed["left"] == max(0, limit - 2),
+          "the pool is shared across the parent and its subsidiaries")
+
+
+# =============================================================================
+def test_notify_honesty():
+    """
+    osascript exits 0 whether or not macOS actually showed the notification,
+    so a truthful API cannot promise delivery.
+    """
+    print("\nNOTIFICATIONS")
+
+    import notify
+
+    check(hasattr(notify, "send"), "notify.send exists")
+    check("deliver" in (notify.send.__doc__ or "").lower()
+          or "displayed" not in (notify.send.__doc__ or "").lower(),
+          "send() does not claim the notification was displayed")
+
+    # Escaping matters: company and role names come from a third-party README.
+    check('\\"' in notify._escape('a "quoted" name'),
+          "quotes in a posting title are escaped, not injected")
+    check("\\\\" in notify._escape("back\\slash"),
+          "backslashes are escaped")
+
+
+# =============================================================================
 def test_candidacy():
     print("\nCANDIDACY — would they take you")
 
@@ -1425,6 +1492,8 @@ def test_prompts():
 if __name__ == "__main__":
     test_parser()
     test_preference()
+    test_quotas()
+    test_notify_honesty()
     test_employer()
     test_pay()
     test_crowding()

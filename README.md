@@ -42,6 +42,7 @@ configure and nothing to decide.
 | Command | What it does |
 |---|---|
 | `python3 healthcheck.py` | Is everything actually working? |
+| `python3 notify.py` | Test macOS notifications, with fix instructions |
 | `python3 refresh.py` | Force a refresh now |
 | `./scripts/schedule.sh status` | Are the background jobs alive? |
 | `python3 tests.py` | Run the test suite |
@@ -85,6 +86,17 @@ non-tech penalty — that work is real wherever it happens.
 
 Tick **Tech employers only** to hide non-tech employers entirely. Promoting
 a company is a one-line edit to `EMPLOYER_NAMES` in `config.py`.
+
+### Companies that cap applications
+
+Some employers only accept so many applications per cycle — TikTok and
+ByteDance share a pool of **2**. `APPLICATION_LIMITS` in `config.py` makes
+that a fact the tool knows rather than one you have to remember.
+
+Once you mark an application, the list stops offering more roles there than
+you have slots left, and every card shows `1 of 2 left`. When a quota is
+spent, that company's remaining roles drop off the list entirely — they are
+no longer things you can do. **show anyway** brings them back.
 
 ### One company can't take over the list
 

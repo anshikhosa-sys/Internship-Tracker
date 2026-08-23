@@ -215,6 +215,26 @@
           them</a>
       {% endif %}
 
+      {# A company that caps applications per cycle. Stated plainly, because
+         the reason its roles vanished is otherwise invisible. #}
+      {# Quota-limited: the list is showing only what you can still act on. #}
+      {% for q, held in quota_limited %}
+        · <span class="muted">{{ q.name }}: showing your best
+          {{ q.left }} — you've used {{ q.used }} of {{ q.limit }}
+          applications, so {{ held }} other role{{ 's' if held != 1 }}
+          {{ 'are' if held != 1 else 'is' }} hidden</span>
+        <a class="clear" href="{{ url_for('index', **dict(filters,
+                                          allper='1')) }}">show anyway</a>
+      {% endfor %}
+
+      {% for q in exhausted %}
+        · <span class="muted">{{ q.name }} quota used
+          ({{ q.used }} of {{ q.limit }}) — its remaining roles are
+          hidden</span>
+        <a class="clear" href="{{ url_for('index', **dict(filters,
+                                          allper='1')) }}">show anyway</a>
+      {% endfor %}
+
       {# One company shouldn't be the whole list. Says which, and how many,
          so the cap is never silent. #}
       {% if crowded_total and not showing_all_per %}
@@ -260,6 +280,11 @@
               {% if posting.salary %}<span class="tag tag-pay">{{ posting.salary }}</span>{% endif %}
               <span class="tag tier-{{ posting.company_tier }}"
                     title="{% if posting.company_tier == 'big' %}Fills fast — apply the day it appears{% elif posting.company_tier == 'niche' %}Slower pipeline — a few days is usually still fine{% else %}Moderate pace{% endif %}">{{ posting.tier_label }}</span>
+              {% if posting.quota %}
+                <span class="tag tag-quota"
+                      title="{{ posting.quota.name }} accepts {{ posting.quota.limit }} applications per cycle. You've used {{ posting.quota.used }}.">{{ posting.quota.left }} of
+                  {{ posting.quota.limit }} left</span>
+              {% endif %}
               {% if posting.is_coop %}<span class="tag tag-warn" title="Full-time during a school term — you'd take a semester off">CO-OP</span>{% endif %}
               {% if posting.is_off_season %}<span class="tag tag-warn" title="Runs during the academic year, not summer">OFF-SEASON</span>{% endif %}
               {% if posting.sources and posting.sources|length > 1 %}

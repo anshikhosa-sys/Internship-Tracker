@@ -1191,6 +1191,29 @@ STALE_APPLICATION_DAYS = 21
 # None = no cap.
 MAX_PER_COMPANY = 3
 
+# =============================================================================
+# APPLICATION QUOTAS — companies that cap how many roles you may apply to
+# =============================================================================
+#
+# Several large employers limit applications per recruiting cycle. TikTok and
+# ByteDance share a pool of 2; exceeding it doesn't get you rejected, it gets
+# the extra applications ignored, which is worse — you spent the slot.
+#
+# This makes the cap a fact the tool knows rather than one you have to hold in
+# your head. Once you've used a quota, the remaining roles at that company
+# stop appearing in the ranked list, because they are no longer things you
+# can do. They're still in the database and still reachable with `allper=1`.
+#
+# `companies` is matched whole-word against the company name, so one entry
+# can cover a parent and its subsidiaries sharing a single pool.
+APPLICATION_LIMITS = [
+    {
+        "name": "TikTok / ByteDance",
+        "companies": ["tiktok", "bytedance"],
+        "limit": 2,
+    },
+]
+
 # Hide co-ops by default — full-time during a school term, so you'd take a
 # semester off rather than working over the summer.
 DEFAULT_HIDE_COOP = True
