@@ -73,19 +73,32 @@
   <section class="card">
     <div class="card-head">
       <h2>1 — Cover letter</h2>
-      <button class="btn-copy" data-copy="cover">Copy prompt</button>
+      <button class="btn-copy" data-copy="cover"
+              data-src="{{ url_for('prompt_text_route',
+                                   posting_id=posting.id, kind='cover',
+                                   jd=job_description or None) }}">Copy prompt</button>
     </div>
     <p class="muted small">
       Produces a letter, reusable talking points, an honest list of gaps, and
       a frank verdict on whether this one is worth your time.
     </p>
     <pre class="paste-prompt" id="cover">{{ cover_prompt }}</pre>
+    <p class="muted small">
+      <a href="{{ url_for('prompt_text_route', posting_id=posting.id,
+                          kind='cover', jd=job_description or None) }}"
+         target="_blank" rel="noopener">Open as plain text</a>
+      — if the copy button ever misbehaves, this page is the whole prompt
+      and nothing else: Cmd+A, Cmd+C.
+    </p>
   </section>
 
   <section class="card">
     <div class="card-head">
       <h2>2 — Work experience</h2>
-      <button class="btn-copy" data-copy="experience">Copy prompt</button>
+      <button class="btn-copy" data-copy="experience"
+              data-src="{{ url_for('prompt_text_route',
+                                   posting_id=posting.id, kind='experience',
+                                   jd=job_description or None) }}">Copy prompt</button>
     </div>
     <p class="muted small">
       For the "describe your relevant experience" boxes. Rewrites your
@@ -93,6 +106,13 @@
       a short version for character-limited fields and a full one.
     </p>
     <pre class="paste-prompt" id="experience">{{ experience_prompt }}</pre>
+    <p class="muted small">
+      <a href="{{ url_for('prompt_text_route', posting_id=posting.id,
+                          kind='experience', jd=job_description or None) }}"
+         target="_blank" rel="noopener">Open as plain text</a>
+      — if the copy button ever misbehaves, this page is the whole prompt
+      and nothing else: Cmd+A, Cmd+C.
+    </p>
   </section>
 
   <div class="warn-banner">
@@ -104,27 +124,68 @@
 </main>
 
 <script>
-// Copy buttons. navigator.clipboard is async and can reject (permission
-// denied, insecure context), so the failure path has to be handled or the
-// button silently lies about having worked.
+// Copy buttons.
+//
+// The text comes from the SERVER, not from the <pre> on this page. Reading
+// the DOM with innerText was the bug behind prompts pasting in blank or
+// mangled: innerText returns text as LAID OUT, so it is affected by this
+// element's max-height, overflow-y, white-space: pre-wrap and word-break.
+// Fetching the source removes all of that.
+//
+// Three layers, because clipboard access fails for reasons a page cannot
+// predict — an unfocused document, a denied permission, an insecure
+// context — and a button that silently lies is worse than no button.
 document.querySelectorAll('.btn-copy').forEach(function (button) {
+  const original = button.textContent;
+
+  function flash(text, ms) {
+    button.textContent = text;
+    setTimeout(function () { button.textContent = original; }, ms || 2000);
+  }
+
+  // Last resort: select the prompt so the user's own Cmd+C works. Uses
+  // textContent semantics via a range over the element's contents.
+  function selectFallback(target) {
+    const range = document.createRange();
+    range.selectNodeContents(target);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    flash('Press Cmd+C', 4000);
+  }
+
   button.addEventListener('click', async function () {
     const target = document.getElementById(button.dataset.copy);
-    if (!target) return;
-    const original = button.textContent;
+    const source = button.dataset.src;
+    button.textContent = 'Copying…';
+
+    let text = '';
     try {
-      await navigator.clipboard.writeText(target.innerText.trim());
-      button.textContent = 'Copied';
+      const response = await fetch(source, {headers: {'Accept': 'text/plain'}});
+      if (!response.ok) throw new Error('HTTP ' + response.status);
+      text = await response.text();
     } catch (err) {
-      button.textContent = 'Press Cmd+C';
-      // Select the text so the manual fallback actually works.
-      const range = document.createRange();
-      range.selectNodeContents(target);
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
+      // Server unreachable — fall back to what is already on the page.
+      text = target ? target.textContent : '';
     }
-    setTimeout(function () { button.textContent = original; }, 2000);
+
+    // Never report success for an empty clipboard. This is the check that
+    // would have caught the original bug at the moment it happened.
+    if (!text.trim()) {
+      flash('Nothing to copy', 4000);
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+      flash('Copied ' + text.length.toLocaleString() + ' chars');
+    } catch (err) {
+      if (target) {
+        selectFallback(target);
+      } else {
+        flash('Copy failed', 4000);
+      }
+    }
   });
 });
 </script>

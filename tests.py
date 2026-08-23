@@ -388,6 +388,77 @@ def test_crowding():
 
 
 # =============================================================================
+def test_prompt_text_endpoint():
+    """
+    The copy button reads the prompt from the SERVER, not from the DOM.
+
+    It used to scrape the rendered <pre> with innerText — a rendering-
+    dependent API affected by max-height, overflow-y, white-space and
+    word-break, all of which that element sets. Prompts pasted in blank or
+    mangled. This endpoint is the source text, with no layout involved.
+    """
+    print("\nPROMPT TEXT ENDPOINT")
+
+    import app as app_module
+
+    client = app_module.app.test_client()
+
+    # Seed a posting rather than relying on whatever happens to be stored.
+    # The first version of this test read the (empty) test database, found
+    # nothing, and reported PASS for a check it had skipped — which is the
+    # same class of dishonesty as the bug it exists to catch.
+    conn = storage.connect()
+    seeded = make_posting(1, role="Software Engineer Intern")
+    scorer.score_all([seeded])
+    storage.save_postings(conn, [seeded], "2026-08-01T00:00:00+00:00")
+    conn.close()
+
+    posting_id = seeded.id
+    check(bool(posting_id), "a posting is seeded for the endpoint test")
+
+    for kind in ("cover", "experience"):
+        resp = client.get(f"/prompts/{posting_id}/{kind}.txt")
+        check(resp.status_code == 200, f"{kind}.txt returns 200")
+
+        # Exactly one charset. mimetype= appends its own, which produced
+        # "text/plain; charset=utf-8; charset=utf-8".
+        ctype = resp.headers.get("Content-Type", "")
+        check(ctype.startswith("text/plain"), f"{kind}.txt is text/plain")
+        check(ctype.count("charset") == 1,
+              f"{kind}.txt declares charset exactly once")
+
+        body = resp.get_data(as_text=True)
+        check(len(body) > 1000,
+              f"{kind}.txt carries the whole prompt ({len(body)} chars)")
+        check(body.strip() == body.strip().strip("\x00"),
+              f"{kind}.txt has no null bytes")
+        # The bug's signature: a response that is technically fine but empty.
+        check(body.strip() != "", f"{kind}.txt is not blank")
+
+    # A pasted job description must reach the plain-text prompt, since that
+    # is now what actually gets copied.
+    marker = "ZZQXMARKER distributed feature stores"
+    resp = client.get(f"/prompts/{posting_id}/cover.txt",
+                      query_string={"jd": marker})
+    check(marker.split()[0] in resp.get_data(as_text=True),
+          "a pasted job description reaches the copied text")
+
+    # The HTML page must point the button at the same text.
+    resp = client.get(f"/prompts/{posting_id}",
+                      headers={"Accept": "text/html"})
+    page = resp.get_data(as_text=True)
+    check(f"/prompts/{posting_id}/cover.txt" in page,
+          "the page wires the copy button to the plain-text URL")
+    check("Open as plain text" in page,
+          "a no-JavaScript fallback link is offered")
+
+    check(client.get(f"/prompts/{posting_id}/bogus.txt").status_code == 404,
+          "an unknown prompt kind is 404, not a blank 200")
+    check(client.get("/prompts/job:nosuchid/cover.txt").status_code == 404,
+          "an unknown posting is 404, not a blank 200")
+
+
+# =============================================================================
 def test_probes_dont_consume_badges():
     """
     A health check must not clear the NEW badges it is reporting on.
@@ -1551,6 +1622,7 @@ def test_prompts():
 if __name__ == "__main__":
     test_parser()
     test_preference()
+    test_prompt_text_endpoint()
     test_probes_dont_consume_badges()
     test_quotas()
     test_notify_honesty()

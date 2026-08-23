@@ -35,7 +35,7 @@ import sys
 from datetime import datetime, timezone
 
 from flask import (
-    Flask, jsonify, redirect, render_template, request, url_for
+    Flask, Response, jsonify, redirect, render_template, request, url_for
 )
 
 import config
@@ -686,6 +686,55 @@ def prompts_route(posting_id):
         profile_error=error,
         job_description=job_description,
     )
+
+
+@app.route("/prompts/<path:posting_id>/<kind>.txt")
+def prompt_text_route(posting_id, kind):
+    """
+    One prompt as plain text, nothing else on the page.
+
+    THIS IS WHAT THE COPY BUTTON READS. It used to scrape the rendered <pre>
+    with innerText, which is a rendering-dependent API: it reflows the
+    element, is affected by CSS (this one has max-height, overflow-y: auto,
+    white-space: pre-wrap and word-break: break-word), and returns the text
+    as LAID OUT rather than as written. Prompts were arriving mangled or
+    empty. Fetching the source text from the server removes every one of
+    those variables.
+
+    It doubles as the manual escape hatch: open this URL and Cmd+A, Cmd+C
+    works with no JavaScript at all.
+    """
+    if kind not in ("cover", "experience"):
+        return "Unknown prompt.", 404
+
+    conn = storage.connect()
+    posting = next(
+        (p for p in storage.load_postings(conn) if p["id"] == posting_id),
+        None,
+    )
+    conn.close()
+
+    if posting is None:
+        return "No such posting.", 404
+
+    job_description = request.args.get("jd", "")
+    try:
+        if kind == "cover":
+            body = letters.cover_letter_prompt(
+                posting, job_description=job_description
+            )
+        else:
+            body = letters.work_experience_prompt(
+                posting, job_description=job_description
+            )
+    except letters.LetterError as exc:
+        return str(exc), 500
+
+    # text/plain so the browser shows it rather than downloading it, and an
+    # explicit charset because the prompt contains en dashes and accents.
+    # content_type, not mimetype: mimetype appends its own charset and you
+    # end up with "text/plain; charset=utf-8; charset=utf-8".
+    return Response(body, content_type="text/plain; charset=utf-8")
 
 
 @app.route("/refresh", methods=["POST"])

@@ -252,7 +252,11 @@ def check_dashboard():
         with urllib.request.urlopen(config.DASHBOARD_HEALTH_URL,
                                     timeout=5) as resp:
             body = resp.read().decode("utf-8", "replace")
-        if resp.status == 200 and "postings" in body:
+        # /healthz answers JSON, not the dashboard HTML. The old check
+        # looked for "postings" in the body, which was only ever true
+        # because this probe used to fetch "/" — the fetch that was
+        # clearing the NEW badges.
+        if resp.status == 200 and '"ok"' in body:
             report(PASS, "responding", config.DASHBOARD_URL)
         else:
             report(WARN, "responding", f"HTTP {resp.status}, unexpected body")

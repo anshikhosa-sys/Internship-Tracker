@@ -175,6 +175,26 @@ The third is the real guarantee: the data is current whenever you are looking
 at it, which is the only moment it needs to be. A full refresh of all five
 sources takes under a second, so this is not felt as a page delay.
 
+## The copy button reads the server, not the DOM
+
+Prompts were pasting into an assistant blank or mangled. The button copied
+`target.innerText`, and `innerText` returns text **as laid out**, not as
+written: it forces a reflow and is affected by the element's CSS. That
+element sets `max-height: 320px`, `overflow-y: auto`, `white-space:
+pre-wrap` and `word-break: break-word` — four separate reasons for the
+copied text to differ from the source.
+
+So `/prompts/<id>/<kind>.txt` serves the prompt as `text/plain` and the
+button fetches that. No layout is involved. It doubles as the manual escape
+hatch — the page links to it, and Cmd+A/Cmd+C there needs no JavaScript.
+
+The button now also refuses to report success for an empty clipboard
+("Nothing to copy") and reports the character count on success, so this
+class of failure announces itself instead of being discovered days later.
+
+Use `content_type=`, not `mimetype=`, on the Response: `mimetype` appends
+its own charset and you get `text/plain; charset=utf-8; charset=utf-8`.
+
 ## A health check must not destroy what it reports on
 
 `healthcheck.py` and `schedule.sh status` both fetched `/` to prove the
