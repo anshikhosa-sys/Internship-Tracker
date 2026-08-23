@@ -62,10 +62,12 @@ PYTHON_BIN="$PROJECT_DIR/.venv/bin/python"
 
 REFRESH_LABEL="com.internship-finder.daily"
 DASH_LABEL="com.internship-finder.dashboard"
+SELFCHECK_LABEL="com.internship-finder.selfcheck"
 
 PLIST_DIR="$HOME/Library/LaunchAgents"
 REFRESH_PLIST="$PLIST_DIR/$REFRESH_LABEL.plist"
 DASH_PLIST="$PLIST_DIR/$DASH_LABEL.plist"
+SELFCHECK_PLIST="$PLIST_DIR/$SELFCHECK_LABEL.plist"
 
 LOG_DIR="$PROJECT_DIR/logs"
 
@@ -199,6 +201,54 @@ write_dashboard_plist() {
 PLIST
 }
 
+# The weekly self-check. Silent when everything works; notifies only on a
+# real failure. This is what makes "never touch it" true rather than
+# aspirational — you find out something broke because it tells you, not
+# because you eventually notice stale listings.
+write_selfcheck_plist() {
+  cat > "$SELFCHECK_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>$SELFCHECK_LABEL</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>$PYTHON_BIN</string>
+        <string>$PROJECT_DIR/selfcheck.py</string>
+        <string>--quiet</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>$PROJECT_DIR</string>
+
+    <!-- Sunday at 09:00. Weekly is the right cadence: often enough that a
+         break is caught within days, rare enough that the notification
+         still means something when it fires. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict>
+            <key>Weekday</key><integer>0</integer>
+            <key>Hour</key><integer>9</integer>
+            <key>Minute</key><integer>0</integer>
+        </dict>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>$LOG_DIR/selfcheck.log</string>
+    <key>StandardErrorPath</key>
+    <string>$LOG_DIR/selfcheck.error.log</string>
+</dict>
+</plist>
+PLIST
+}
+
 do_install() {
   require_venv
   mkdir -p "$PLIST_DIR" "$LOG_DIR"
@@ -206,12 +256,15 @@ do_install() {
   # Unload first so we cleanly replace anything already there.
   launchctl unload "$REFRESH_PLIST" 2>/dev/null || true
   launchctl unload "$DASH_PLIST" 2>/dev/null || true
+  launchctl unload "$SELFCHECK_PLIST" 2>/dev/null || true
 
   write_refresh_plist
   write_dashboard_plist
+  write_selfcheck_plist
 
   launchctl load "$REFRESH_PLIST"
   launchctl load "$DASH_PLIST"
+  launchctl load "$SELFCHECK_PLIST"
 
   # Give Flask a moment to bind the port before we report success.
   sleep 3
@@ -219,6 +272,7 @@ do_install() {
   printf '%s\n' \
     "Installed. Nothing to run by hand from now on." \
     "" \
+    "  Weekly check:   Sundays 09:00 (notifies only if something breaks)" \
     "  Refresh runs:   $(cd "$PROJECT_DIR" && "$PYTHON_BIN" -c "import config; print(', '.join('%02d:%02d' % t for t in config.REFRESH_TIMES))")" \
     "  Dashboard:      http://127.0.0.1:$DASH_PORT  (always on)" \
     "  Logs:           $LOG_DIR/" \
@@ -234,7 +288,7 @@ do_install() {
 
 do_uninstall() {
   local found=0
-  for plist in "$REFRESH_PLIST" "$DASH_PLIST"; do
+  for plist in "$REFRESH_PLIST" "$DASH_PLIST" "$SELFCHECK_PLIST"; do
     if [ -f "$plist" ]; then
       launchctl unload "$plist" 2>/dev/null || true
       rm -f "$plist"
@@ -276,6 +330,7 @@ do_status() {
   echo "JOBS"
   report_job "$REFRESH_LABEL" "$REFRESH_PLIST" "Daily refresh"
   report_job "$DASH_LABEL" "$DASH_PLIST" "Dashboard    "
+  report_job "$SELFCHECK_LABEL" "$SELFCHECK_PLIST" "Weekly check "
 
   echo
   echo "DASHBOARD"

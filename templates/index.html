@@ -187,6 +187,21 @@
     <a class="clear" href="{{ url_for('index') }}">Clear</a>
   </form>
 
+  {# The weekly self-check found something broken. Shown here because a
+     notification fired while you were away from the machine is gone, and
+     this is the one thing that should never be silently missed. #}
+  {% if selfcheck %}
+    <div class="warn-banner selfcheck-banner">
+      <strong>Something needs attention</strong>
+      — the weekly check{% if selfcheck.when %} ({{ selfcheck.when }}){% endif %}
+      found {{ selfcheck.failures|length }} problem{{ '' if selfcheck.failures|length == 1 else 's' }}:
+      <ul>
+        {% for failure in selfcheck.failures %}<li>{{ failure }}</li>{% endfor %}
+      </ul>
+      Run <code>python3 healthcheck.py</code> for the detail.
+    </div>
+  {% endif %}
+
   <!-- ==================== RESULTS ==================== -->
   {% if not postings %}
     <p class="empty">

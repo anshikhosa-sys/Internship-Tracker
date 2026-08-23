@@ -82,7 +82,7 @@
       Produces a letter, reusable talking points, an honest list of gaps, and
       a frank verdict on whether this one is worth your time.
     </p>
-    <pre class="paste-prompt" id="cover">{{ cover_prompt }}</pre>
+    <textarea class="paste-prompt" id="cover" readonly spellcheck="false" wrap="soft">{{ cover_prompt }}</textarea>
     <p class="muted small">
       <a href="{{ url_for('prompt_text_route', posting_id=posting.id,
                           kind='cover', jd=job_description or None) }}"
@@ -105,7 +105,7 @@
       experience aimed at this role — same facts, different emphasis — in both
       a short version for character-limited fields and a full one.
     </p>
-    <pre class="paste-prompt" id="experience">{{ experience_prompt }}</pre>
+    <textarea class="paste-prompt" id="experience" readonly spellcheck="false" wrap="soft">{{ experience_prompt }}</textarea>
     <p class="muted small">
       <a href="{{ url_for('prompt_text_route', posting_id=posting.id,
                           kind='experience', jd=job_description or None) }}"
@@ -126,66 +126,76 @@
 <script>
 // Copy buttons.
 //
-// The text comes from the SERVER, not from the <pre> on this page. Reading
-// the DOM with innerText was the bug behind prompts pasting in blank or
-// mangled: innerText returns text as LAID OUT, so it is affected by this
-// element's max-height, overflow-y, white-space: pre-wrap and word-break.
-// Fetching the source removes all of that.
+// TWO BUGS LIVED HERE. Both were invisible on screen, which is why they
+// survived: the button said "Copied" and the clipboard held nothing.
 //
-// Three layers, because clipboard access fails for reasons a page cannot
-// predict — an unfocused document, a denied permission, an insecure
-// context — and a button that silently lies is worse than no button.
+// 1. It read target.innerText. innerText returns text AS LAID OUT — it
+//    reflows the element and is shaped by CSS. This prompt sets
+//    max-height, overflow-y, white-space: pre-wrap and word-break, so the
+//    copied text differed from the source. Fixed by putting the prompt in
+//    a <textarea>, whose .value is the raw string the server rendered.
+//
+// 2. The replacement fetched the text and then called
+//    navigator.clipboard.writeText(). Measured in a real browser with no
+//    pre-granted permission: a synchronous writeText fails with
+//    NotAllowedError, and one after an awaited fetch fails outright.
+//    document.execCommand('copy') from a selected <textarea> is the only
+//    one of the three that works. It is deprecated and universally
+//    supported; the modern API is tried too, but cannot be relied on.
+//
+// So: select the textarea, execCommand, verify, and only then report.
 document.querySelectorAll('.btn-copy').forEach(function (button) {
   const original = button.textContent;
 
   function flash(text, ms) {
     button.textContent = text;
-    setTimeout(function () { button.textContent = original; }, ms || 2000);
+    setTimeout(function () { button.textContent = original; }, ms || 2500);
   }
 
-  // Last resort: select the prompt so the user's own Cmd+C works. Uses
-  // textContent semantics via a range over the element's contents.
-  function selectFallback(target) {
-    const range = document.createRange();
-    range.selectNodeContents(target);
-    const selection = window.getSelection();
-    selection.removeAllRanges();
-    selection.addRange(range);
-    flash('Press Cmd+C', 4000);
-  }
-
-  button.addEventListener('click', async function () {
+  button.addEventListener('click', function () {
     const target = document.getElementById(button.dataset.copy);
-    const source = button.dataset.src;
-    button.textContent = 'Copying…';
+    if (!target) { flash('Nothing to copy', 4000); return; }
 
-    let text = '';
+    const text = target.value || '';
+    if (!text.trim()) { flash('Nothing to copy', 4000); return; }
+
+    // The path that actually works. Synchronous, no permission prompt.
+    let copied = false;
+    const scroll = target.scrollTop;
     try {
-      const response = await fetch(source, {headers: {'Accept': 'text/plain'}});
-      if (!response.ok) throw new Error('HTTP ' + response.status);
-      text = await response.text();
+      target.removeAttribute('readonly');   // iOS Safari won't select a
+      target.focus();                       // readonly field
+      target.setSelectionRange(0, text.length);
+      copied = document.execCommand('copy');
     } catch (err) {
-      // Server unreachable — fall back to what is already on the page.
-      text = target ? target.textContent : '';
+      copied = false;
+    } finally {
+      target.setAttribute('readonly', 'readonly');
+      target.scrollTop = scroll;
     }
 
-    // Never report success for an empty clipboard. This is the check that
-    // would have caught the original bug at the moment it happened.
-    if (!text.trim()) {
-      flash('Nothing to copy', 4000);
+    if (copied) {
+      flash('Copied ' + text.length.toLocaleString() + ' chars');
       return;
     }
 
-    try {
-      await navigator.clipboard.writeText(text);
-      flash('Copied ' + text.length.toLocaleString() + ' chars');
-    } catch (err) {
-      if (target) {
-        selectFallback(target);
-      } else {
-        flash('Copy failed', 4000);
-      }
+    // Modern API as a second try, for browsers that have dropped
+    // execCommand. Called with no await before it so the click's user
+    // activation is still live.
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        flash('Copied ' + text.length.toLocaleString() + ' chars');
+      }).catch(function () {
+        target.focus();
+        target.setSelectionRange(0, text.length);
+        flash('Selected — press Cmd+C', 6000);
+      });
+      return;
     }
+
+    target.focus();
+    target.setSelectionRange(0, text.length);
+    flash('Selected — press Cmd+C', 6000);
   });
 });
 </script>

@@ -43,6 +43,8 @@ configure and nothing to decide.
 |---|---|
 | `python3 healthcheck.py` | Is everything actually working? |
 | `python3 notify.py` | Test macOS notifications, with fix instructions |
+| `python3 browser_tests.py` | Drive the real UI in a real browser |
+| `python3 selfcheck.py` | Run every check and notify if anything failed |
 | `python3 refresh.py` | Force a refresh now |
 | `./scripts/schedule.sh status` | Are the background jobs alive? |
 | `python3 tests.py` | Run the test suite |
@@ -105,6 +107,23 @@ turns a list of actions into a wall of one employer. The page shows your best
 `MAX_PER_COMPANY` (3) at each company and says how many it held back, with a
 **show all** link. Nothing is dropped from the database, and anything you've
 applied to is never hidden by it.
+
+## It checks itself
+
+A LaunchAgent runs the full health check every Sunday at 09:00. It is
+**silent when everything works** and notifies only when something actually
+broke — never for warnings, because an alert that cries wolf gets ignored.
+If you were away when it fired, the dashboard shows a banner until it's
+fixed.
+
+`healthcheck.py` includes `browser_tests.py`, which drives a real Chromium
+through the real interface: it clicks the copy buttons and reads the
+clipboard back, changes an application stage and reloads to confirm it
+saved, types a note and reloads to confirm it persisted. It runs against a
+**copy** of your database, so it can never touch your real applications.
+
+Two copy-button bugs once shipped while every Python test passed — because
+neither bug was in Python. That is what this exists to prevent.
 
 ## Your data is in a separate file
 

@@ -356,9 +356,17 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
   border-radius: 8px;
   padding: 12px;
   margin: 10px 0 0;
-  max-height: 320px;   /* long prompt shouldn't swallow the page */
+  height: 320px;       /* long prompt shouldn't swallow the page */
   overflow-y: auto;
   color: var(--muted);
+  /* It is a <textarea> so the copied text is .value — the raw string —
+     rather than innerText, which returns text as laid out and was
+     silently mangling the copy. Styled to look like the <pre> it
+     replaced. */
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
 }
 
 .tag-fresh { background: var(--strong); color: #fff; }
@@ -499,3 +507,13 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
    information, not a warning — it only becomes one at zero, and at zero
    the card is gone from the list anyway. */
 .tag.tag-quota { background: #fef3c7; color: #92400e; }
+
+/* The weekly self-check banner. Only rendered when something is actually
+   broken, so it can afford to be loud. */
+.selfcheck-banner ul { margin: 6px 0 0; padding-left: 18px; }
+.selfcheck-banner li { margin: 2px 0; }
+.selfcheck-banner code {
+  background: rgba(0, 0, 0, 0.08);
+  padding: 1px 5px;
+  border-radius: 4px;
+}

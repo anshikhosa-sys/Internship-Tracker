@@ -1,3 +1,14 @@
 # Two dependencies — everything else is Python's standard library.
 requests==2.32.3    # fetching the README over HTTP
 Flask==3.1.0        # the local dashboard
+
+# Testing the interface in a real browser. Optional — nothing at runtime
+# needs it, and browser_tests.py says so plainly if it is missing rather
+# than skipping quietly.
+#
+# Two copy-button bugs shipped while every Python test passed, because
+# neither bug was in Python. This is the dependency that catches that class.
+#
+#   pip install playwright
+#   python3 -m playwright install chromium
+playwright>=1.40

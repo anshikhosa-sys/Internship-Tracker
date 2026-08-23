@@ -41,6 +41,7 @@ from flask import (
 import config
 import letters
 import scorer
+import selfcheck
 import storage
 from refresh import refresh as run_refresh
 
@@ -262,6 +263,22 @@ def _quota_state(postings):
             "left": max(0, group["limit"] - spent),
         }
     return state
+
+
+def _selfcheck_banner():
+    """The last weekly self-check, but only if it found something wrong."""
+    conn = storage.connect()
+    try:
+        result = selfcheck.last_result(conn)
+    finally:
+        conn.close()
+
+    if not result or not result.get("failures"):
+        return None
+    return {
+        "failures": result["failures"],
+        "when": _relative_time(result.get("ran_at")),
+    }
 
 
 def _relative_time(iso_string):
@@ -515,6 +532,9 @@ def index():
         applied_total=applied_total,
         last_run=last_run,
         last_run_relative=_relative_time(last_run),
+        # A notification you were away for is not lost: the last weekly
+        # self-check result shows here too.
+        selfcheck=_selfcheck_banner(),
         sort=sort,
         caught_up=caught_up,
         stages=config.APPLICATION_STAGES,

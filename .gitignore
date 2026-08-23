@@ -58,3 +58,8 @@ __pycache__/
 
 # Logs from the scheduled daily refresh.
 logs/
+
+# Playwright's downloaded browsers live in ~/Library/Caches, but its test
+# artifacts land here.
+test-results/
+playwright-report/

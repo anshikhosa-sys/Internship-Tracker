@@ -175,25 +175,68 @@ The third is the real guarantee: the data is current whenever you are looking
 at it, which is the only moment it needs to be. A full refresh of all five
 sources takes under a second, so this is not felt as a page delay.
 
-## The copy button reads the server, not the DOM
+## Why this got buggy, and what changed
 
-Prompts were pasting into an assistant blank or mangled. The button copied
-`target.innerText`, and `innerText` returns text **as laid out**, not as
-written: it forces a reflow and is affected by the element's CSS. That
-element sets `max-height: 320px`, `overflow-y: auto`, `white-space:
-pre-wrap` and `word-break: break-word` — four separate reasons for the
-copied text to differ from the source.
+Two copy-button bugs shipped in a row. Both were in JavaScript. `tests.py`
+passed through both, and had to — it exercises Python, and neither bug was
+in Python. Both were also invisible on screen: the button said "Copied"
+while the clipboard held mangled text, then nothing at all.
 
-So `/prompts/<id>/<kind>.txt` serves the prompt as `text/plain` and the
-button fetches that. No layout is involved. It doubles as the manual escape
-hatch — the page links to it, and Cmd+A/Cmd+C there needs no JavaScript.
+The fix is not more care. It is `browser_tests.py`, which drives a real
+Chromium through the real UI and is wired into `healthcheck.py`. It was
+validated the only way a regression test can be: the old bug was
+reintroduced and the suite failed on it (`0 chars copied`), then reverted.
 
-The button now also refuses to report success for an empty clipboard
-("Nothing to copy") and reports the character count on success, so this
-class of failure announces itself instead of being discovered days later.
+**Any change to a template's JavaScript must be verified with
+`python3 browser_tests.py`.** Server-side tests cannot see this class of
+bug, and neither can reading the code.
+
+A related rule, learned the same way: a test that skips itself must not
+report PASS. The first version of the prompt-endpoint test read the empty
+test database, found no postings, and passed. `browser_tests.py` exits 2
+and says so when playwright is missing.
+
+## How the copy button has to work
+
+Measured in a real browser, with no pre-granted clipboard permission —
+which is what an ordinary browser does:
+
+| Approach | Result |
+|---|---|
+| `navigator.clipboard.writeText()`, called synchronously | `NotAllowedError` |
+| `writeText()` after an `await fetch()` | fails outright |
+| `document.execCommand('copy')` from a selected `<textarea>` | **works** |
+
+So the prompt lives in a `<textarea>`, not a `<pre>`. Two reasons, and both
+were bugs:
+
+- `.value` is the raw string the server rendered. `innerText`, which the
+  first version used, returns text **as laid out** — it reflows the element
+  and is shaped by CSS, and this one sets `max-height`, `overflow-y`,
+  `white-space: pre-wrap` and `word-break: break-word`.
+- A textarea can be selected and copied with `execCommand`, synchronously,
+  with no permission prompt. The second version fetched the text and then
+  called `writeText()`, which a browser refuses.
+
+`navigator.clipboard` is still tried as a second attempt, with no `await`
+before it so the click's user activation is still live. `/prompts/<id>/<kind>.txt`
+remains as the no-JavaScript escape hatch, linked from the page.
+
+The button reports the character count on success and "Nothing to copy" on
+an empty clipboard. Both bugs were silent; this one announces itself.
 
 Use `content_type=`, not `mimetype=`, on the Response: `mimetype` appends
 its own charset and you get `text/plain; charset=utf-8; charset=utf-8`.
+
+## The weekly self-check
+
+`selfcheck.py` runs `healthcheck.py` on a LaunchAgent (Sundays 09:00) and
+**notifies only on FAIL, never on a warning**. A notification that fires for
+non-problems gets ignored, and then the one that matters gets ignored too.
+
+The result is recorded in `app_state`, and the dashboard shows a banner when
+the last check failed — so a notification that fired while you were away
+from the machine is not lost.
 
 ## A health check must not destroy what it reports on
 

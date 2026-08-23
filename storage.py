@@ -628,6 +628,21 @@ def _set_state(conn, key: str, value: str) -> None:
     )
 
 
+def get_state(conn, key: str):
+    """
+    Read a value from the small key/value table.
+
+    Public counterpart to _get_state, for callers outside this module —
+    selfcheck.py records its last result here so the dashboard can show it.
+    """
+    return _get_state(conn, key)
+
+
+def set_state(conn, key: str, value: str) -> None:
+    """Write a value to the small key/value table. Caller commits."""
+    _set_state(conn, key, value)
+
+
 def register_visit(conn) -> str:
     """
     Record that the dashboard was opened, and return the timestamp that NEW

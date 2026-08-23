@@ -280,6 +280,47 @@ def check_notifications():
            "new postings also show as a banner, which cannot be suppressed")
 
 
+def check_ui():
+    """
+    Is the interface actually usable, or only serving 200s?
+
+    Two copy-button bugs shipped while every Python test passed, because
+    neither bug was in Python. This runs the real browser suite if it is
+    installed, and says plainly when it isn't — a check that quietly skips
+    is how both bugs reached you.
+    """
+    print("\nINTERFACE (real browser)")
+
+    try:
+        import playwright  # noqa: F401
+    except ImportError:
+        report(WARN, "browser tests", "playwright not installed — the UI "
+                                      "is NOT being checked. Install with: "
+                                      "pip install playwright && python3 -m "
+                                      "playwright install chromium")
+        return
+
+    import subprocess
+    result = subprocess.run(
+        [sys.executable, "browser_tests.py"],
+        capture_output=True, text=True, timeout=180,
+    )
+    summary = ""
+    for line in reversed(result.stdout.splitlines()):
+        if "browser checks" in line:
+            summary = line.strip()
+            break
+
+    if result.returncode == 0:
+        report(PASS, "browser tests", summary or "all passed")
+    else:
+        failures = [l.strip() for l in result.stdout.splitlines()
+                    if "[FAIL]" in l]
+        report(FAIL, "browser tests",
+               (summary or "failed") +
+               ((" — " + failures[0]) if failures else ""))
+
+
 def check_prompts():
     print("\nAPPLICATION PROMPTS")
     import letters
@@ -314,7 +355,7 @@ if __name__ == "__main__":
 
     for check in (check_config, check_profile, check_database,
                   check_sources, check_jobs, check_dashboard,
-                  check_notifications, check_prompts):
+                  check_notifications, check_prompts, check_ui):
         try:
             check()
         except Exception as exc:
