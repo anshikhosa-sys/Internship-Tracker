@@ -249,7 +249,8 @@ def check_dashboard():
     import urllib.error
     import urllib.request
     try:
-        with urllib.request.urlopen(config.DASHBOARD_URL, timeout=5) as resp:
+        with urllib.request.urlopen(config.DASHBOARD_HEALTH_URL,
+                                    timeout=5) as resp:
             body = resp.read().decode("utf-8", "replace")
         if resp.status == 200 and "postings" in body:
             report(PASS, "responding", config.DASHBOARD_URL)

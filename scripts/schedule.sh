@@ -224,7 +224,7 @@ do_install() {
     "  Logs:           $LOG_DIR/" \
     ""
 
-  if curl -sf -o /dev/null "http://127.0.0.1:$DASH_PORT/"; then
+  if curl -sf -o /dev/null "http://127.0.0.1:$DASH_PORT/healthz"; then
     echo "  Dashboard is up. Bookmark http://127.0.0.1:$DASH_PORT"
   else
     echo "  NOTE: the dashboard didn't answer yet. Check with:"
@@ -279,7 +279,7 @@ do_status() {
 
   echo
   echo "DASHBOARD"
-  if curl -sf -o /dev/null "http://127.0.0.1:$DASH_PORT/"; then
+  if curl -sf -o /dev/null "http://127.0.0.1:$DASH_PORT/healthz"; then
     echo "  Responding at http://127.0.0.1:$DASH_PORT"
   else
     echo "  Not responding on port $DASH_PORT"

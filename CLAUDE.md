@@ -175,6 +175,28 @@ The third is the real guarantee: the data is current whenever you are looking
 at it, which is the only moment it needs to be. A full refresh of all five
 sources takes under a second, so this is not felt as a page delay.
 
+## A health check must not destroy what it reports on
+
+`healthcheck.py` and `schedule.sh status` both fetched `/` to prove the
+dashboard was alive. Fetching `/` calls `register_visit()`, which is what
+decides the NEW badges — so **running the health check silently cleared the
+badges it was reporting on**, and nothing in its output would ever have
+shown it.
+
+Two defences, because one wasn't enough:
+
+- `/healthz` — a liveness endpoint that reads and writes nothing. Probes
+  use this (`config.DASHBOARD_HEALTH_URL`).
+- A guard on `/` — a visit is registered only when the request's `Accept`
+  header names `text/html` explicitly. Note this tests the RAW header
+  rather than `request.accept_mimetypes.accept_html`, which returns True
+  for the `*/*` that curl sends: wildcard matching makes every probe look
+  like a browser.
+
+`storage.current_visit_basis()` is the read-only counterpart to
+`register_visit()`. It returns `""` rather than falling back to "now" —
+falling back made two consecutive reads disagree.
+
 ## Gotchas in the data source
 
 1. **Listings are HTML `<table>` blocks inside the README, not markdown

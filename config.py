@@ -1312,6 +1312,12 @@ NOTIFY_THRESHOLD = GOOD_FIT_THRESHOLD
 # Where the dashboard lives, used to make a phone notification tappable.
 DASHBOARD_URL = "http://127.0.0.1:5000"
 
+# Liveness probe. A SEPARATE endpoint from the dashboard on purpose: fetching
+# "/" registers a visit, which is what decides your NEW badges. Health checks
+# were fetching "/" and silently clearing badges you had never seen — the
+# check was destroying what it was meant to report on.
+DASHBOARD_HEALTH_URL = "http://127.0.0.1:5000/healthz"
+
 # PHONE NOTIFICATIONS (optional, free, no account).
 #
 # Install the "ntfy" app, subscribe to a topic, and put the same topic

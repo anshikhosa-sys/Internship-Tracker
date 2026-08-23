@@ -661,6 +661,23 @@ def register_visit(conn) -> str:
     return visit_basis or now
 
 
+def current_visit_basis(conn) -> str:
+    """
+    The visit basis WITHOUT recording a visit.
+
+    For callers that need to know what counts as new but must not change
+    it — health probes, and anything else that isn't a person looking at
+    the page. Read-only by construction.
+
+    Returns "" if no visit has ever been registered. It must NOT fall back
+    to "now": that would make two reads return different answers, and a
+    probe would report a different set of new postings each time it ran.
+    new_since_last_visit() treats "" as "nothing is new", which is the
+    right answer for a caller that isn't a person.
+    """
+    return _get_state(conn, "visit_basis") or ""
+
+
 def _minutes_between(earlier_iso: str, later_iso: str) -> float:
     """Minutes between two ISO timestamps. Returns a huge number if unparseable
     so that a corrupt value starts a new visit rather than freezing badges."""

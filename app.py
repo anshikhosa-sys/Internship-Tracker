@@ -332,6 +332,20 @@ def _catch_up_if_stale() -> bool:
         return False
 
 
+@app.route("/healthz")
+def healthz():
+    """
+    Liveness check. Deliberately does NOT register a visit.
+
+    This exists because health checks were being counted as you opening the
+    dashboard. `healthcheck.py` and `schedule.sh status` both fetched "/",
+    which advanced the visit basis and cleared your NEW badges — so running
+    the health check destroyed the very thing it was reporting on. Probes
+    get their own endpoint that reads nothing and writes nothing.
+    """
+    return jsonify({"ok": True})
+
+
 @app.route("/")
 def index():
     """The dashboard: ranked postings, best fit first."""
@@ -345,7 +359,19 @@ def index():
     # to you. NEW means "arrived since you last looked", not "arrived in the
     # last refresh" — the two stopped being the same thing once refreshes
     # became automatic. See storage.register_visit().
-    visit_basis = storage.register_visit(conn)
+    # Only a real page view counts as a visit. A browser rendering this page
+    # always accepts HTML; curl, urllib and monitoring probes send */* and
+    # must not be able to clear badges nobody has looked at. /healthz above
+    # is the endpoint probes should use — this is the backstop for the ones
+    # that don't.
+    # Note this tests the RAW header for "text/html" rather than using
+    # request.accept_mimetypes.accept_html, which returns True for the
+    # "*/*" that curl sends — wildcard matching makes every probe look like
+    # a browser. A real browser always names text/html explicitly.
+    if "text/html" in request.headers.get("Accept", ""):
+        visit_basis = storage.register_visit(conn)
+    else:
+        visit_basis = storage.current_visit_basis(conn)
     new_ids = storage.new_since_last_visit(conn, visit_basis)
 
     last_run = storage.last_run_time(conn)

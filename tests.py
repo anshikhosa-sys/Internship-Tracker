@@ -388,6 +388,65 @@ def test_crowding():
 
 
 # =============================================================================
+def test_probes_dont_consume_badges():
+    """
+    A health check must not clear the NEW badges it is reporting on.
+
+    Both healthcheck.py and schedule.sh used to fetch "/", which registers a
+    visit. Running the health check therefore destroyed the thing it was
+    checking, and nobody would ever have noticed from its output.
+    """
+    print("\nPROBES DO NOT CONSUME BADGES")
+
+    import app as app_module
+
+    client = app_module.app.test_client()
+
+    def basis():
+        conn = storage.connect()
+        try:
+            return storage.current_visit_basis(conn)
+        finally:
+            conn.close()
+
+    before = basis()
+
+    # A probe: no HTML in Accept, which is what curl and urllib send.
+    resp = client.get("/healthz")
+    check(resp.status_code == 200, "/healthz answers 200")
+    check(basis() == before, "/healthz does not move the visit basis")
+
+    resp = client.get("/", headers={"Accept": "*/*"})
+    check(resp.status_code == 200, "a non-browser GET of / still works")
+    check(basis() == before,
+          "curl's 'Accept: */*' does not move the visit basis")
+
+    resp = client.get("/")
+    check(basis() == before,
+          "a request with no Accept header does not move the visit basis")
+
+    # current_visit_basis is read-only by construction: two reads in a row
+    # must agree. It used to fall back to now_iso() when unset, so they
+    # didn't, and a probe reported a different set of new postings each run.
+    settled = basis()
+    check(basis() == settled and basis() == settled,
+          "reading the visit basis twice does not change it")
+
+    # ...but a browser must still get its badges. This is the behaviour the
+    # guard has to preserve, not just the one it has to block.
+    resp = client.get("/", headers={
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9"
+    })
+    check(resp.status_code == 200, "a browser GET of / works")
+    conn = storage.connect()
+    try:
+        check(storage._get_state(conn, "last_activity") is not None,
+              "a browser page view DOES register a visit")
+    finally:
+        conn.close()
+
+
+# =============================================================================
 def test_quotas():
     """
     Some employers cap applications per cycle. Once the cap is spent, the
@@ -1492,6 +1551,7 @@ def test_prompts():
 if __name__ == "__main__":
     test_parser()
     test_preference()
+    test_probes_dont_consume_badges()
     test_quotas()
     test_notify_honesty()
     test_employer()
