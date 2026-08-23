@@ -316,10 +316,20 @@ report_job() {
     echo "  $desc: NOT INSTALLED"
     return
   fi
-  if launchctl list | grep -q "$label"; then
-    local line exit_code
-    line="$(launchctl list | grep "$label")"
-    exit_code="$(echo "$line" | awk '{print $2}')"
+  # Capture once, then match the variable.
+  #
+  # This was `launchctl list | grep -q "$label"`, which is broken under
+  # `set -o pipefail`: grep -q exits at the first match, that closes the
+  # pipe, launchctl dies of SIGPIPE, and pipefail reports the whole
+  # pipeline as failed. It only bit whichever job's label appeared FIRST
+  # in launchctl's output — the others matched late enough that launchctl
+  # had already finished writing. A real "installed but NOT loaded" for a
+  # job that was loaded fine.
+  local listing line exit_code
+  listing="$(launchctl list)"
+  line="$(printf '%s\n' "$listing" | grep -F "$label" || true)"
+  if [ -n "$line" ]; then
+    exit_code="$(printf '%s\n' "$line" | awk '{print $2}')"
     echo "  $desc: loaded (last exit status: $exit_code)"
   else
     echo "  $desc: installed but NOT loaded — try '$0 install'"
