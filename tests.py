@@ -169,8 +169,13 @@ def test_preference():
     check(focused > generic,
           f"a data-platform SWE role ({focused}) beats a generic one "
           f"({generic})")
-    check(generic == config.ROLE_FAMILIES[-1]["preference"],
-          "a bare SWE title sits at the family floor")
+    # The family floor is the value BEFORE the employer multiplier. A test
+    # posting has no recognizable company, so it takes the "unknown" tier.
+    floor = (config.ROLE_FAMILIES[-1]["preference"]
+             * config.EMPLOYER_TIERS["unknown"]["multiplier"])
+    check(abs(generic - round(floor, 3)) < 1e-9,
+          "a bare SWE title sits at the family floor, nudged by an "
+          "unrecognized employer")
 
     # Only the best family counts, so "Solutions Engineer" isn't also paid
     # for matching the generic "engineer" family.
@@ -210,6 +215,176 @@ def test_preference():
           "an unrecognized role type defaults to near-zero, not a guess")
     check(pref("Dealer Business Operations Intern") < 0.2,
           "an unclassifiable business role scores near zero")
+
+
+# =============================================================================
+def test_employer():
+    """
+    Who is hiring is part of whether you want the job.
+
+    The list this replaced was topped by a pharma company, a window-blinds
+    manufacturer and an oil producer, all with correctly-classified titles.
+    """
+    print("\nEMPLOYER — is this a technology company")
+
+    def at(company, role="Software Engineer Intern", salary=""):
+        p = make_posting(1, role=role)
+        p.company = company
+        p.salary = salary
+        return p
+
+    def pref(company, role="Software Engineer Intern", salary=""):
+        return scorer.preference(at(company, role, salary))[0]
+
+    # -- classification ----------------------------------------------------
+    cases = [
+        ("Anthropic", "frontier"), ("Palantir", "frontier"),
+        ("NVIDIA", "frontier"), ("Databricks", "frontier"),
+        ("Google", "big_tech"), ("Microsoft", "big_tech"),
+        ("TikTok", "big_tech"), ("Meta", "big_tech"),
+        ("Notion", "tech"), ("Figma", "tech"), ("Datadog", "tech"),
+        ("AbbVie", "non_tech"), ("Springs Window Fashions", "non_tech"),
+        ("Devon Energy", "non_tech"), ("Hilton Worldwide", "non_tech"),
+        ("Deloitte", "non_tech"), ("Bank of America", "non_tech"),
+    ]
+    for company, expected in cases:
+        check(scorer.employer_class(at(company)) == expected,
+              f"{company} is classified {expected}")
+
+    # A name nobody has heard of is NOT assumed bad — most unrecognized
+    # names in this data are small startups worth a fair hearing.
+    check(scorer.employer_class(at("Verdantia Klosk")) == "unknown",
+          "an unrecognized company is 'unknown', not 'non_tech'")
+
+    # -- whole-word matching, the trap that makes substrings unusable ------
+    # Every one of these matched the wrong tier under a naive `in` test.
+    check(scorer.employer_class(at("Texas Instruments")) != "frontier",
+          "'Texas Instruments' does not match 'exa'")
+    check(scorer.employer_class(at("Plasma Dynamics")) != "non_tech",
+          "'Plasma' does not match 'asm'")
+    check(scorer.employer_class(at("Design Group")) == "unknown",
+          "'Design' does not match the quant firm 'SIG'")
+
+    # -- effect on preference ----------------------------------------------
+    check(pref("Anthropic") > pref("Google") > pref("Notion")
+          > pref("Unknown Startup Co") > pref("AbbVie"),
+          "identical titles rank by employer: frontier > big > tech > "
+          "unknown > non-tech")
+
+    check(pref("AbbVie") < pref("Unknown Startup Co") / 2,
+          "a non-tech employer roughly halves an identical role")
+
+    # The regression this whole section exists to prevent.
+    check(pref("Zipline") > pref("Springs Window Fashions"),
+          "a drone company outranks a window-blinds manufacturer for the "
+          "same SWE title")
+    check(pref("Databricks") >
+          scorer.preference(at("AbbVie",
+              "Business Technology Solutions Intern - Data"))[0],
+          "a Databricks SWE role outranks the AbbVie title that used to "
+          "top the list")
+
+    # -- the exemption ------------------------------------------------------
+    # Real infrastructure work is real wherever it happens.
+    plain = pref("Bank of America", "Software Engineer Intern")
+    infra = pref("Bank of America", "ML Infrastructure Engineer Intern")
+    check(infra > plain,
+          "a genuine ML-infrastructure role at a bank beats a generic SWE "
+          "one there")
+    check(infra < pref("Databricks", "ML Infrastructure Engineer Intern"),
+          "...but still ranks below the same role at a tech company")
+
+    # -- no double penalty --------------------------------------------------
+    reasons = scorer.preference(at("Jane Street"))[1]
+    labels = " ".join(r["label"] for r in reasons)
+    check("Quant/trading firm" in labels,
+          "a trading firm is still caught as out of scope")
+    check("Not a technology company" not in labels,
+          "a trading firm takes one penalty, not two stacked")
+
+    # -- preference stays a fraction ---------------------------------------
+    for company in ("Anthropic", "Google", "Notion", "AbbVie"):
+        for role in ("AI Infrastructure Platform Engineer Intern",
+                     "Forward Deployed Solutions Engineer Intern"):
+            value = pref(company, role, salary="$150/hr")
+            check(0.0 <= value <= 1.0,
+                  f"preference stays within 0-1 ({company}, {value})")
+
+
+# =============================================================================
+def test_pay():
+    """Pay is a bonus where it's published, never a penalty where it isn't."""
+    print("\nPAY")
+
+    def posting(salary):
+        p = make_posting(1, role="Software Engineer Intern")
+        p.company = "Unknown Startup Co"
+        p.salary = salary
+        return p
+
+    check(scorer.hourly_pay(posting("$60/hr")) == 60,
+          "a plain rate parses")
+    check(scorer.hourly_pay(posting("$60 - $75/hr")) == 60,
+          "a range takes the low end, not the headline number")
+    check(scorer.hourly_pay(posting("$1,200/hr")) is None,
+          "an implausible rate is ignored rather than allowed to dominate")
+    check(scorer.hourly_pay(posting("")) is None, "no salary is None")
+    check(scorer.hourly_pay(posting("competitive")) is None,
+          "unparseable salary text is None, not zero")
+
+    # The rule that matters: missing data must not look like bad data.
+    no_salary = scorer.preference(posting(""))[0]
+    low = scorer.preference(posting("$20/hr"))[0]
+    high = scorer.preference(posting("$120/hr"))[0]
+    check(no_salary == low,
+          "an unpublished rate scores the same as a low one — missing pay "
+          "is missing data, not bad pay")
+    check(high > no_salary, "a high published rate lifts preference")
+    check(high - no_salary <= max(l for _, l in config.PAY_LIFT) + 1e-9,
+          "the pay lift is capped at its largest configured step")
+
+
+# =============================================================================
+def test_crowding():
+    """One company must not be able to take over the list."""
+    print("\nCROWDING")
+
+    check(config.MAX_PER_COMPANY and config.MAX_PER_COMPANY > 0,
+          "a per-company cap is configured")
+
+    # Simulate the cap the way app.py applies it: after sorting, keeping
+    # each company's best, and never touching anything you've applied to.
+    postings = []
+    for i in range(10):
+        postings.append({"company": "TikTok", "status": "",
+                         "fit_score": 90 - i})
+    for i in range(2):
+        postings.append({"company": "Zipline", "status": "",
+                         "fit_score": 50 - i})
+    postings.append({"company": "TikTok", "status": "applied",
+                     "fit_score": 1})
+
+    per, kept, held = {}, [], 0
+    for p in sorted(postings, key=lambda p: -p["fit_score"]):
+        if p["status"]:
+            kept.append(p)
+            continue
+        per[p["company"]] = per.get(p["company"], 0) + 1
+        if per[p["company"]] <= config.MAX_PER_COMPANY:
+            kept.append(p)
+        else:
+            held += 1
+
+    tiktok = [p for p in kept if p["company"] == "TikTok" and not p["status"]]
+    check(len(tiktok) == config.MAX_PER_COMPANY,
+          f"a flooding company is capped at {config.MAX_PER_COMPANY}")
+    check([p["fit_score"] for p in tiktok] == [90, 89, 88],
+          "the roles kept are that company's highest-scoring ones")
+    check(len([p for p in kept if p["company"] == "Zipline"]) == 2,
+          "a company under the cap is untouched")
+    check(held == 7, "the held-back count is reported, not silently dropped")
+    check(any(p["status"] == "applied" for p in kept),
+          "an application you've made is never hidden by the cap")
 
 
 # =============================================================================
@@ -731,8 +906,8 @@ def test_defaults():
     """The dashboard opens with the settings that were asked for."""
     print("\nDASHBOARD DEFAULTS")
 
-    check(config.DEFAULT_SORT == "candidacy",
-          "opens sorted by strongest candidate")
+    check(config.DEFAULT_SORT == "score",
+          "opens sorted by the score, not by one of its three factors")
     # 3 days, not today-only: the quality gate does the filtering now, so a
     # wider window means ~40 pre-vetted roles instead of ~6, while
     # tier-aware freshness still ranks the time-critical ones first.
@@ -1250,6 +1425,9 @@ def test_prompts():
 if __name__ == "__main__":
     test_parser()
     test_preference()
+    test_employer()
+    test_pay()
+    test_crowding()
     test_candidacy()
     test_freshness()
     test_scoring_model()

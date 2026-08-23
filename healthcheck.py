@@ -135,6 +135,26 @@ def check_database():
     report(status, "score spread",
            f"{len(scores)} distinct scores across {len(postings)} postings")
 
+    # WHO is at the top, not just how spread out the numbers are. The list
+    # this replaced was topped by pharma, blinds and oil companies with
+    # perfectly good job titles, and no numeric check would have caught it.
+    ranked = sorted(postings, key=lambda p: -(p["fit_score"] or 0))[:20]
+    tech = sum(1 for p in ranked
+               if scorer.employer_class(p) in ("frontier", "big_tech", "tech"))
+    status = PASS if tech >= len(ranked) / 2 else WARN
+    report(status, "top of the list",
+           f"{tech}/{len(ranked)} of your top 20 are technology companies")
+
+    crowd = {}
+    for p in ranked:
+        crowd[p["company"]] = crowd.get(p["company"], 0) + 1
+    worst, count = max(crowd.items(), key=lambda kv: kv[1])
+    limit = config.MAX_PER_COMPANY or len(ranked)
+    status = PASS if count <= max(limit, 4) else WARN
+    report(status, "crowding",
+           f"most from one company in the top 20: {worst} ({count}) — "
+           f"the page shows at most {config.MAX_PER_COMPANY} each")
+
 
 def check_sources():
     print("\nSOURCES (network)")

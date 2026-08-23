@@ -165,6 +165,78 @@ def is_internship(posting) -> bool:
 # 1. Preference — do you want it?
 # =============================================================================
 
+def employer_class(posting) -> str:
+    """
+    Which EMPLOYER_TIERS bucket this company falls in.
+
+    Pure function of the company name, so it can be called at display time
+    without a database column. Checked strongest-first: a name on the
+    frontier list wins even if it also matches a non-tech hint.
+    """
+    company = (_field(posting, "company") or "").strip().lower()
+    if not company:
+        return "unknown"
+
+    # Whole-word matching, not substring. "Texas Instruments" contains the
+    # letters of "exa", "Plasma" contains "asm", and "Design" contains
+    # "sig" — a naive `in` test files all three under the wrong employer.
+    for tier in ("frontier", "big_tech", "tech", "non_tech"):
+        for name in config.EMPLOYER_NAMES.get(tier, ()):
+            if _matches(name, company):
+                return tier
+
+    # Not a name we know — does the name itself name an industry?
+    for hint in config.NON_TECH_NAME_HINTS:
+        if _matches(hint, company):
+            return "non_tech"
+
+    return "unknown"
+
+
+def employer_label(posting) -> str:
+    """The badge text for this employer's tier, or '' for unknown."""
+    tier = employer_class(posting)
+    return config.EMPLOYER_TIERS[tier]["label"]
+
+
+def hourly_pay(posting):
+    """
+    The posting's hourly rate as a float, or None.
+
+    Sources publish this as free text ("$60/hr", "$60 - $75/hr"). Takes the
+    LOW end of a range: the top of a band is what the strongest candidate
+    with the most competing offers gets, not the expected value.
+    """
+    raw = (_field(posting, "salary") or "").strip()
+    if not raw:
+        return None
+
+    amounts = re.findall(r"\$\s*([0-9][0-9,]*(?:\.[0-9]+)?)", raw)
+    if not amounts:
+        return None
+
+    try:
+        values = [float(a.replace(",", "")) for a in amounts]
+    except ValueError:
+        return None
+
+    low = min(values)
+    if low <= 0 or low > config.MAX_PLAUSIBLE_HOURLY:
+        return None
+    return low
+
+
+def pay_lift(posting):
+    """Preference bonus for a well-paid role. Returns (lift, rate|None)."""
+    rate = hourly_pay(posting)
+    if rate is None:
+        return 0.0, None
+    for threshold, lift in config.PAY_LIFT:
+        if rate >= threshold:
+            return lift, rate
+    return 0.0, rate
+
+
 def preference(posting):
     """
     How much you want this role, 0 to 1. Returns (value, reasons, family).
@@ -256,14 +328,63 @@ def preference(posting):
     # "Applied AI Engineer Intern" looks ideal until you see it's a hedge
     # fund and the work is signal research.
     company = (_field(posting, "company") or "").lower()
+    out_of_scope_employer = False
     for name, multiplier in config.OUT_OF_SCOPE_COMPANIES.items():
-        if name in company:
+        if _matches(name, company):
             value *= multiplier
+            out_of_scope_employer = True
             reasons.append({
                 "label": f"Quant/trading firm: {_field(posting, 'company')}",
                 "detail": f"x{multiplier:.2f}",
             })
             break
+
+    # -- who is actually hiring ---------------------------------------------
+    # The same title means different work at a software company and at a
+    # manufacturer. Skipped when OUT_OF_SCOPE_COMPANIES already fired, so a
+    # trading firm takes one penalty rather than two stacked.
+    if not out_of_scope_employer:
+        tier = employer_class(posting)
+        multiplier = config.EMPLOYER_TIERS[tier]["multiplier"]
+
+        # A real infrastructure role is real infrastructure work wherever
+        # it is. Forgive part of the penalty rather than all of it.
+        if tier == "non_tech" and any(
+            _matches(kw, title)
+            for kw in config.EMPLOYER_PENALTY_EXEMPT_KEYWORDS
+        ):
+            multiplier += (1.0 - multiplier) * config.EMPLOYER_PENALTY_EXEMPTION
+            reasons.append({
+                "label": "Non-tech employer, but genuine infrastructure work",
+                "detail": f"x{multiplier:.2f}",
+            })
+        elif multiplier != 1.0:
+            labels = {
+                "frontier": "AI / frontier tech company",
+                "big_tech": "Big tech company",
+                "tech": "Software company",
+                "unknown": "Employer not recognized",
+                "non_tech": "Not a technology company",
+            }
+            reasons.append({
+                "label": labels[tier],
+                "detail": f"x{multiplier:.2f}",
+            })
+
+        value *= multiplier
+
+    # -- what it pays, where the source says so ------------------------------
+    bonus, rate = pay_lift(posting)
+    if bonus:
+        value += bonus
+        reasons.append({
+            "label": f"Pays ${rate:g}/hr",
+            "detail": f"+{bonus:.2f}",
+        })
+
+    # Preference is a fraction of an ideal role; the employer multiplier and
+    # the pay lift can both push past 1.0, so the cap is applied last.
+    value = min(1.0, max(0.0, value))
 
     return round(value, 3), reasons, family_name
 

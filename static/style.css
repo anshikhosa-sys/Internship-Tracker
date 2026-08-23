@@ -481,3 +481,16 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
   .posting { flex-wrap: wrap; }
   .actions { flex-direction: row; width: 100%; justify-content: flex-start; }
 }
+
+/* ------------------------------------------------------- employer badges */
+
+/* Pastel fills matching .tag-warn's weight, so these read as markers rather
+   than errors. Warm-to-cool on purpose: a frontier or big-tech employer is
+   a positive signal at a glance, and "Non-tech employer" is a caution. The
+   score already encodes the same judgment — the badge just makes it legible
+   without opening the breakdown. */
+
+.tag.emp-frontier { background: #dcfce7; color: #15803d; }
+.tag.emp-big_tech { background: #dbeafe; color: #1d4ed8; }
+.tag.emp-tech     { background: #e0e7ff; color: #4338ca; }
+.tag.emp-non_tech { background: #ffe4e6; color: #9f1239; }

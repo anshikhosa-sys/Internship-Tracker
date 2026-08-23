@@ -26,8 +26,9 @@
         {% if applied_total %}
           · {{ applied_total }} applied
         {% endif %}
-        {% if last_run %}
-          · updated {{ last_run[:10] }}
+        {% if last_run_relative %}
+          · <span title="Listings are re-fetched on a schedule, at login, and whenever you open this page with data older than a few hours">updated
+            {{ last_run_relative }}</span>
         {% endif %}
       </p>
     </div>
@@ -124,6 +125,10 @@
               {% if sort == 'recency' %}selected{% endif %}>
         Newest first
       </option>
+      <option value="pay"
+              {% if sort == 'pay' %}selected{% endif %}>
+        Highest paid first
+      </option>
     </select>
 
     <select name="tier" title="Big-tech pipelines close in a day; small ones stay open longer">
@@ -166,6 +171,12 @@
       Hide co-ops
     </label>
 
+    <label class="checkbox" title="Only companies whose product is software — hides internal IT at banks, pharma, insurers and manufacturers">
+      <input type="checkbox" name="techonly" value="1"
+             {% if tech_only %}checked{% endif %}>
+      Tech employers only
+    </label>
+
     <label class="checkbox">
       <input type="checkbox" name="show_low" value="1"
              {% if filters.get('show_low') == '1' %}checked{% endif %}>
@@ -203,6 +214,23 @@
                                           stale='', show_low='')) }}">hide
           them</a>
       {% endif %}
+
+      {# One company shouldn't be the whole list. Says which, and how many,
+         so the cap is never silent. #}
+      {% if crowded_total and not showing_all_per %}
+        · <span class="muted">showing your best {{ max_per_company }} at
+          each company —
+          {{ crowded_total }} more at
+          {% for name, count in crowded[:3] %}{{ name }} ({{ count }}){% if not loop.last %}, {% endif %}{% endfor %}
+          {%- if crowded|length > 3 %} and {{ crowded|length - 3 }} others{% endif %}</span>
+        <a class="clear" href="{{ url_for('index', **dict(filters,
+                                          allper='1')) }}">show all</a>
+      {% elif showing_all_per %}
+        · <span class="muted">showing every role at every company</span>
+        <a class="clear" href="{{ url_for('index', **dict(filters,
+                                          allper='')) }}">limit to
+          {{ max_per_company }} each</a>
+      {% endif %}
     </p>
 
     <ol class="postings">
@@ -220,6 +248,10 @@
           <div class="details">
             <div class="role-line">
               <span class="company">{{ posting.company }}</span>
+              {% if posting.employer_label %}
+                <span class="tag emp-{{ posting.employer_tier }}"
+                      title="{% if posting.employer_tier == 'non_tech' %}Not a technology company — an engineering internship here is usually internal IT{% else %}A technology company: the product is the software{% endif %}">{{ posting.employer_label }}</span>
+              {% endif %}
               {% if posting.status %}
                 <span class="tag tag-mine" title="You've applied — always shown, whatever the filters">{{ posting.status|upper }}</span>
               {% endif %}
@@ -245,7 +277,7 @@
               {{ posting.location }}
               · {{ posting.category }}
               {% if posting.age_days is not none %}
-                · posted {{ posting.freshness_label|lower }}
+                · {{ posting.freshness_label|lower }}
               {% endif %}
             </div>
 

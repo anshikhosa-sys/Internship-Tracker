@@ -25,7 +25,7 @@ score = preference × candidacy × freshness × 100
 
 | Factor | Question | Source |
 |---|---|---|
-| preference | Do you want it? | role family + topic keywords |
+| preference | Do you want it? | role family + topic keywords + **employer** + pay |
 | candidacy | Would they take you? | what the résumé proves; blockers |
 | freshness | Is it still open? | age of the posting |
 
@@ -41,6 +41,33 @@ interns — accurate to the wish list, useless as actions.
 Multiplying encodes the real requirement: an application is worth making only
 if **all three** hold. A near-zero in any factor sinks the result, which
 addition cannot express.
+
+### The employer is part of "do you want it"
+
+Everything in preference used to score the **title** and nothing scored the
+**employer**, which produced a list topped by AbbVie (pharma), Springs Window
+Fashions (blinds), Devon Energy (oil) and Blackstone (private equity), with
+TikTok, Microsoft, Replit and Notion below the fold.
+
+Every one of those titles was classified correctly. The flaw was that the
+same title means two different jobs depending on who posts it: at a software
+company "Application Engineering Intern" builds the product; at a
+window-blinds manufacturer it is internal IT. Different work, different
+mentorship, different exit options, roughly 2x the pay.
+
+So `EMPLOYER_TIERS` multiplies preference by employer class — frontier/AI
+(1.20), big tech (1.12), tech (1.05), unrecognized (0.90), non-tech (0.40).
+It lives in preference, not candidacy: AbbVie would probably *take* him, which
+is exactly why wanting it is the question that was missing.
+
+Two details that matter:
+
+- **Matching is whole-word, not substring.** "Texas Instruments" contains
+  "exa", "Plasma" contains "asm", "Design" contains the quant firm "sig".
+  All three filed under the wrong employer before this.
+- **A real infrastructure role escapes most of the penalty**
+  (`EMPLOYER_PENALTY_EXEMPT_KEYWORDS`). ML-platform work at a bank is still
+  real ML-platform work; it is discounted, not buried.
 
 ### Calibration notes
 
@@ -65,8 +92,9 @@ addition cannot express.
 - Flag postings new **since the user last opened the dashboard** — not since
   the last refresh, which would silently stop flagging things after a day away.
 - Local Flask dashboard with score breakdown, apply link, and applied tracking.
-- Refresh automatically once a day (macOS LaunchAgent, 08:00), with a
-  notification when good new matches appear.
+- Refresh automatically: three LaunchAgent slots a day, at login, and on
+  opening the dashboard with data older than `STALE_DATA_HOURS`. See
+  "What actually keeps the data current" below.
 - Free copy-paste prompts for cover letters and work-experience fields,
   adapted per role family, accepting a pasted job description.
 
@@ -91,6 +119,16 @@ addition cannot express.
 
 ## Decisions made during the build
 
+- **The default sort is the score.** It was `candidacy`, which ranked by
+  "would they take you" alone and discarded two of the three factors — the
+  landing page opened with a 26 at the top and the 65 below the fold. The
+  landing view is the product; it opens on the number the product computes.
+- **One company is capped at `MAX_PER_COMPANY` rows.** TikTok posts 191
+  roles and took 7 of the top 20 on score alone. A "just apply" list that is
+  mostly one employer is not a list of actions. Display rule only, liftable
+  with `allper=1`, and never applied to something already applied to.
+- **Pay lifts, never penalizes.** Only ~25% of postings publish a rate, so a
+  missing rate means missing data, not bad pay. A range takes its low end.
 - **Location does not affect the score.** Parsed and displayed, but unweighted.
   Worth revisiting now that same-day applying is the priority.
 - **Quantitative Finance and Hardware Engineering are not ingested.** See
@@ -107,6 +145,24 @@ addition cannot express.
 - **Prompts adapt per role family.** An FDE reviewer wants evidence of
   customer-facing work; a SWE reviewer wants depth on the hardest system. Same
   résumé, different pitch. See `ROLE_FAMILY_GUIDANCE`.
+
+## What actually keeps the data current
+
+The schedule is a floor, not a guarantee, and the logs show why: against a
+07:30 / 11:30 / 16:30 schedule, real runs fired at 06:40, 10:36 and 15:38.
+launchd replays a slot missed while the Mac was **asleep**, but only one
+however many were missed, and never replays one missed while it was **off**.
+
+Three mechanisms, in increasing order of how much they actually matter:
+
+1. `StartCalendarInterval` — the three slots. Always lagging.
+2. `RunAtLoad` — a refresh at every login. Covers the powered-off case.
+3. `_catch_up_if_stale()` in `app.py` — refreshes when you **open the
+   dashboard** and the data has aged past `STALE_DATA_HOURS` (3).
+
+The third is the real guarantee: the data is current whenever you are looking
+at it, which is the only moment it needs to be. A full refresh of all five
+sources takes under a second, so this is not felt as a page delay.
 
 ## Gotchas in the data source
 

@@ -419,7 +419,278 @@ OUT_OF_SCOPE_COMPANIES = {
     "drw": 0.30,
     "five rings": 0.30,
     "old mission": 0.30,
+
+    # Found by auditing the live list: these were posting "Software Engineer
+    # Intern" titles and scoring as ordinary tech roles because no rule knew
+    # what they were.
+    "aquatic": 0.30,
+    "arrowstreet": 0.30,
+    "chicago trading": 0.30,
+    "cubist": 0.30,
+    "g-research": 0.30,
+    "hyannis port research": 0.30,
+    "hpr": 0.30,
+    "pdt partners": 0.30,
+    "quantbot": 0.25,
+    "stevens capital": 0.30,
+    "verition": 0.30,
+    "voloridge": 0.30,
+    "walleye": 0.30,
+    "marshall wace": 0.30,
+    "castleton commodities": 0.30,
+    "affinius": 0.35,
 }
+
+# =============================================================================
+# 2b. EMPLOYER — is this a technology company?
+# =============================================================================
+#
+# WHY THIS EXISTS
+# ---------------
+# Everything above scores the TITLE. Nothing scored the EMPLOYER, and that
+# produced a list whose top was:
+#
+#     AbbVie          Business Technology Solutions Intern     65   (pharma)
+#     Springs Window  Application Engineering Intern           61   (blinds)
+#     Devon Energy    Technology Intern - Data Engineering     58   (oil/gas)
+#     Blackstone      Data Engineer Summer Analyst             58   (PE)
+#
+# ...while TikTok, Microsoft, Replit, Notion and Figma sat below the fold.
+#
+# Every one of those titles is correctly classified. "Application Engineering
+# Intern" really is an application engineering role. The problem is that the
+# same title means two completely different jobs depending on who posts it:
+# at a software company it is building the product; at a window-blinds
+# manufacturer it is internal IT supporting a business that sells blinds.
+# Different work, different mentorship, different exit options, and roughly
+# a 2x difference in pay.
+#
+# So the employer is a real factor in "do I want this", and it belongs in
+# PREFERENCE — it is a statement about desire, not about eligibility. (An
+# eligibility statement would go in candidacy; AbbVie would probably take
+# him. That is exactly the point: wanting it is the missing question.)
+#
+# HOW IT APPLIES
+# --------------
+# A multiplier on preference, capped at 1.0 afterwards, so a tech employer
+# lifts a role and a non-tech one sinks it. Multiplied, not added, for the
+# same reason the top-level score is: a great title at a company you would
+# not want to work at is not a great opportunity.
+EMPLOYER_TIERS = {
+    # AI labs, frontier hardware, and the infrastructure companies the
+    # résumé is pointed at. Highest pay, steepest learning, best next step.
+    "frontier": {"label": "AI / frontier", "multiplier": 1.20},
+
+    # Household-name technology companies running structured programs.
+    "big_tech": {"label": "Big tech", "multiplier": 1.12},
+
+    # Real software companies: the product is the software.
+    "tech": {"label": "Tech", "multiplier": 1.05},
+
+    # Not on any list. Most unrecognized names in this data are small
+    # startups, which are worth a fair hearing — so this is near-neutral,
+    # a nudge rather than a penalty.
+    "unknown": {"label": "", "multiplier": 0.90},
+
+    # Banks, insurers, pharma, energy, retail, industrials, hospitals,
+    # airlines, and the big accounting/consulting firms. Their engineering
+    # internships are overwhelmingly internal IT.
+    "non_tech": {"label": "Non-tech employer", "multiplier": 0.40},
+}
+
+# Matched against the company name, lowercased, as a substring. Order does
+# not matter — the strongest tier a name matches wins, so listing "Palantir"
+# as frontier is not undone by anything else.
+#
+# These are names that ACTUALLY APPEAR in the sources, plus the obvious
+# targets that will appear as the 2027 cycle fills in. Adding a company here
+# is the one-line way to promote it.
+EMPLOYER_NAMES = {
+    "frontier": [
+        # AI labs and applied-AI companies
+        "openai", "anthropic", "google deepmind", "deepmind",
+        "scale ai", "databricks", "mistral", "cohere", "perplexity",
+        "cursor", "anysphere", "sierra", "harvey", "glean", "abridge",
+        "deepgram", "exa", "modal", "together ai", "fireworks ai",
+        "etched", "cerebras", "groq", "sambanova", "lambda labs",
+        "runway", "elevenlabs", "suno", "midjourney", "character",
+        "ellipsis labs", "dedalus labs", "terranox", "ctgt",
+        "cybernetic labs", "quadrillion",
+        # Frontier hardware, space, defense-tech, robotics
+        "palantir", "anduril", "spacex", "neuralink", "skydio",
+        "zipline", "figure", "boston dynamics", "waymo", "nuro",
+        "applied intuition", "shield ai", "saronic", "hadrian",
+        "blue origin", "stoke space", "specter aerospace",
+        "general astronautics", "freeform", "hyperlight",
+        # The chip and infrastructure layer underneath all of it
+        "nvidia", "tsmc",
+    ],
+    "big_tech": [
+        "google", "alphabet", "meta", "facebook", "apple", "amazon",
+        "microsoft", "netflix", "nvidia", "tesla", "uber", "lyft",
+        "airbnb", "stripe", "salesforce", "adobe", "oracle", "ibm",
+        "intel", "amd", "qualcomm", "broadcom", "cisco", "vmware",
+        "linkedin", "snap", "pinterest", "spotify", "shopify", "block",
+        "square", "paypal", "coinbase", "robinhood", "doordash",
+        "instacart", "reddit", "discord", "dropbox", "twilio", "zoom",
+        "atlassian", "servicenow", "workday", "snowflake", "mongodb",
+        "elastic", "hashicorp", "cloudflare", "akamai", "roblox",
+        "unity", "epic games", "riot games", "activision", "ea sports",
+        "electronic arts", "bytedance", "tiktok", "western digital",
+        "seagate", "micron", "texas instruments", "arm",
+    ],
+    "tech": [
+        "datadog", "figma", "notion", "replit", "rippling", "samsara",
+        "the trade desk", "liveramp", "appian", "axon", "poshmark",
+        "circleback", "pylon", "nash", "homebase", "starsling",
+        "netic", "trata", "heliux",  "naive", "naïve",
+        "abundant", "atoms", "hypercubic", "kastle", "general matter",
+        "cloudfit", "apex technology", "altamira", "kudu dynamics",
+        "epic", "veeva", "asana", "airtable", "linear", "vercel",
+        "netlify", "supabase", "planetscale", "render", "railway",
+        "gitlab", "github", "jetbrains", "docker", "grafana",
+        "confluent", "temporal", "dbt labs", "sigma computing",
+        "retool", "ramp", "brex", "mercury", "plaid", "checkr",
+        "gusto", "deel", "vanta", "wiz", "snyk", "1password",
+        "okta", "auth0", "crowdstrike", "palo alto networks",
+        "sentinelone", "zscaler", "fastly", "digitalocean",
+    ],
+    "non_tech": [
+        # Pharma, medical devices, healthcare providers, insurers
+        "abbvie", "pfizer", "merck", "johnson & johnson", "lilly",
+        "bristol", "amgen", "genentech", "novartis", "astrazeneca",
+        "medtronic", "medline", "medpace", "midmark", "philips",
+        "humana", "guidewell", "cigna", "aetna", "unitedhealth",
+        "elevance", "cvs health", "hca", "kaiser", 
+        "auto-owners", "genworth", "cno financial", "arthur j. gallagher",
+        "allstate", "progressive", "geico", "state farm", "nationwide",
+        "liberty mutual", "travelers", "aflac", "metlife", "prudential",
+        # Banks, card networks, asset managers, exchanges
+        "jpmorgan", "jp morgan", "goldman sachs", "morgan stanley",
+        "bank of america", "wells fargo", "citi", "citigroup",
+        "truist", "regions bank", "keybank", "fifth third",
+        "deutsche bank", "bnp paribas", "blackrock", "blackstone",
+        "vanguard", "pimco", "american express", "capital one",
+        "fannie mae", "freddie mac", "dtcc", "fiserv", "baird",
+        "lpl financial", "stepstone", "psp investments",
+        "intercontinental exchange", "affinius", "dimensional fund",
+        "discover financial", "synchrony", "ally financial",
+        # Energy, chemicals, mining, utilities
+        "devon energy", "diamondback", "continental resources",
+        "exxon", "chevron", "shell", "bp", "conocophillips",
+        "halliburton", "schlumberger", "ameren", "wec energy",
+        "duke energy", "dominion", "nextera", "ecolab", "dow",
+        "dupont", "al warren oil", "castleton commodities",
+        "the nuclear company", "solar turbines", "caterpillar",
+        # Industrials, manufacturing, aerospace primes, defense services
+        "springs window", "pentair", "vertiv", "hitachi", "motorola",
+        "chamberlain group", "dee zee", "tmeic", "teledyne",
+        "skyworks", "asm international", "tetramem", "w.w. grainger", "grainger",
+        "boeing", "lockheed", "northrop", "general dynamics",
+        "raytheon", "rtx", "bae systems", "ge aerospace", "ge vernova",
+        "ge appliances", "unison", "caci", "leidos", "booz allen",
+        "nightwing", "saic", "mitre", "aerojet", "honeywell", "3m",
+        "emerson", "rockwell", "parker hannifin", "illinois tool",
+        # Retail, consumer goods, food, hospitality, travel, logistics
+        "uline", "cargill", "winland foods", "hilton", "marriott",
+        "delta air", "united airlines", "american airlines",
+        "southwest airlines", "copart", "walmart", "target",
+        "costco", "kroger", "pepsico", "coca-cola", "nestle",
+        "general mills", "kellogg", "conagra", "tyson", "hormel",
+        "procter & gamble", "unilever", "colgate", "kimberly-clark",
+        "fedex", "ups", "c.h. robinson", "ryder",
+        # Accounting, actuarial, management and engineering consultancies.
+        # Their "technology" internships are client-service IT work.
+        "pricewaterhousecoopers", "pwc", "deloitte", "kpmg", "ernst",
+        "accenture", "cognizant", "infosys", "capgemini", "wipro",
+        "tata consultancy", "alixpartners", "analysis group",
+        "fti consulting", "kearney", "berrydunn", "wipfli", "h&co",
+        "marsh", "mercer", "aon", "willis towers", "hntb", "wsp",
+        "imeg", "ryan companies", "montenson", "rrs group",
+        "fast enterprises", "lufco", "ler",
+        # Government, national labs, universities, nonprofits
+        "allegheny county", "lawrence livermore", "los alamos",
+        "sandia national", "oak ridge", "argonne", "mitre corp",
+        "la-tech.org",
+    ],
+}
+
+# Fallback when the name is not on any list above: does the company name
+# itself say what industry it is in? Substring match, lowercased.
+#
+# Deliberately conservative. "Systems", "technologies" and "labs" are NOT
+# here — they appear in the names of real software companies as often as
+# not, and a wrong non-tech verdict is much more costly than a missed one.
+NON_TECH_NAME_HINTS = [
+    "insurance", "assurance", "insurers",
+    "bancorp", "bankshares", "savings bank", "credit union",
+    "mutual", "financial group", "financial holdings",
+    "wealth management", "asset management", "advisors",
+    "pharmaceutical", "pharma", "biosciences", "biopharma",
+    "health system", "healthcare system", "hospital", "clinic",
+    "medical center", "physicians",
+    "petroleum", "oil company", "oil & gas", "natural gas",
+    "energy group", "utilities", "power company", "electric company",
+    "manufacturing", "industries", "industrial", "fabrication",
+    "foods", "food group", "beverage", "brewing", "farms",
+    "hotels", "resorts", "hospitality", "airlines", "cruise",
+    "retail group", "stores", "supermarkets", "grocery",
+    "construction", "contractors", "builders", "realty",
+    "real estate", "properties", "development group",
+    "logistics", "freight", "trucking", "shipping",
+    "staffing", "recruiting agency", "accountants", "actuarial",
+    "law firm", "legal group",
+    "university", "college", "school district", "academy",
+    "county", "city of", "state of", "department of",
+    "ministry", "municipal", "national laboratory",
+]
+
+# Roles whose title makes the employer's industry irrelevant, because the
+# work is the same wherever it happens.
+#
+# There is exactly one case that matters here and it is worth the exception:
+# a genuine AI/ML infrastructure or research-platform role at a bank or a
+# pharma company is real engineering on real scale, and sinking it to 0.40
+# would be wrong. This softens rather than removes the penalty.
+EMPLOYER_PENALTY_EXEMPT_KEYWORDS = [
+    "machine learning infrastructure", "ml infrastructure",
+    "ml platform", "machine learning platform",
+    "ai infrastructure", "ai platform",
+    "data platform", "data infrastructure",
+    "distributed systems", "compiler", "kernel",
+    "site reliability", "developer platform", "developer tools",
+]
+
+# How much of the non-tech penalty is forgiven when the title is exempt.
+# 0.0 = full penalty, 1.0 = no penalty. Halfway: still discounted, but no
+# longer buried beneath a generic startup role.
+EMPLOYER_PENALTY_EXEMPTION = 0.55
+
+
+# =============================================================================
+# 2c. PAY — the roles worth most, where the data says so
+# =============================================================================
+#
+# Only about a quarter of postings publish a rate, so this can only ever be
+# a BONUS for roles that do. Missing pay is never penalized: it means the
+# source didn't carry the field, not that the role pays badly.
+#
+# Rates are hourly. $60/hr is a normal strong big-tech internship; the
+# $110+/hr rows in this data are quant desks, which OUT_OF_SCOPE_COMPANIES
+# already discounts for other reasons. The lift is small on purpose — pay
+# is a tiebreaker between roles you'd want anyway, not a reason to want one.
+PAY_LIFT = [
+    # (at least this many $/hr, lift added to preference)
+    (100, 0.10),
+    (75, 0.08),
+    (60, 0.05),
+    (45, 0.02),
+]
+
+# Anything above this is almost certainly a salary or a typo, not an
+# hourly rate — ignore rather than let it dominate.
+MAX_PLAUSIBLE_HOURLY = 400
+
 
 
 # =============================================================================
@@ -701,16 +972,27 @@ COMPANY_TIERS = {
     "big": {
         "label": "Big tech",
         "min_postings": 40,
+        # SOFTENED, deliberately. The old curve read 0.62 at day one and
+        # 0.22 at day three, against 0.85 for a small company at day three.
+        # A Microsoft role two days old was therefore ranked below a
+        # window-blinds manufacturer's, which is not a decision anyone
+        # would make on purpose — a late application to a job you want
+        # beats a prompt one to a job you don't.
+        #
+        # Still the steepest of the three curves, because the underlying
+        # fact is real: big programs review on a rolling basis and close
+        # once a shortlist forms. It now expresses urgency rather than
+        # exclusion, and the ~96-hour prime window stays intact.
         "curve": [
             (0, 1.00),
-            (1, 0.62),    # already meaningfully behind by day one
-            (2, 0.38),
-            (3, 0.22),
-            (5, 0.10),
-            (7, 0.05),
-            (14, 0.03),
-            (30, 0.02),
-            (999, 0.01),   # distinct tail steps keep the curve strictly
+            (1, 0.88),
+            (2, 0.74),
+            (3, 0.58),
+            (5, 0.34),
+            (7, 0.20),
+            (14, 0.08),
+            (30, 0.04),
+            (999, 0.02),   # distinct tail steps keep the curve strictly
         ],               # decreasing, so "older" always means "lower"
     },
     # Mid-size: recognizable, structured hiring, but not a brand-name rush.
@@ -847,15 +1129,16 @@ MIN_CANDIDACY = 0.45
 # form they stop applying and your choices are used instead — including
 # unticking a box that defaults to on, which needs the hidden `f=1` marker
 # to distinguish "unticked" from "never submitted". See _filtered() in app.py.
-DEFAULT_SORT = "candidacy"
+# Score, not candidacy. Opening on "candidacy" ranked by "would they take
+# you" alone — discarding preference and freshness, two of the three factors
+# the model exists to combine. It put a 26 at the top of the page and left
+# the 65 and the 62 below the fold. The landing view is the whole product;
+# it opens on the number the product computes.
+DEFAULT_SORT = "score"
 
 # Only show postings at most this many days old on a bare page load.
 # 0 = today only. None = fall back to MAX_AGE_DAYS.
 #
-# Note this is tight: on a typical day it leaves about 5-7 roles. That's the
-# point if you only apply same-day — but if the daily list feels too thin,
-# 1 (today or yesterday) roughly triples it and is still well inside the
-# window the evidence supports.
 # 3, not 0. With the "just apply" gate above doing the quality filtering,
 # a 3-day window is the right session size: about 40 roles, all already
 # worth applying to, versus about 6 for today-only.
@@ -866,7 +1149,7 @@ DEFAULT_SORT = "candidacy"
 # the list; the ranking decides what you do first.
 DEFAULT_WITHIN_DAYS = 3
 
-# ================================================1=============================
+# =============================================================================
 # APPLICATION PIPELINE
 # =============================================================================
 #
@@ -890,6 +1173,23 @@ APPLICATION_STAGES = [
 # whether your pipeline is actually moving or just accumulating.
 STALE_APPLICATION_DAYS = 21
 
+
+# =============================================================================
+# CROWDING — one company should not be the whole list
+# =============================================================================
+#
+# TikTok posts 191 roles; ByteDance another 35. Ranked purely by score they
+# took 7 of the top 20 places, and a "don't think, just apply" list that is
+# mostly one employer is not a list of actions — you apply to two or three
+# and the rest is noise you scroll past.
+#
+# So the ranked view shows at most this many roles per company, keeping the
+# highest-scoring ones, and says how many it held back with a link to see
+# them. Nothing is dropped from the database or from the count; this is a
+# display rule, exactly like the age cutoff, and it is liftable the same way.
+#
+# None = no cap.
+MAX_PER_COMPANY = 3
 
 # Hide co-ops by default — full-time during a school term, so you'd take a
 # semester off rather than working over the summer.
@@ -1024,7 +1324,12 @@ PUSH_TOPIC = ""
 # page is the moment you actually need it to be current.
 #
 # Costs under a second, and only triggers when the data is genuinely stale.
-STALE_DATA_HOURS = 6
+# Three scheduled runs a day is one every ~5 waking hours, and launchd
+# reliably lags behind them. 3 hours means opening the dashboard nearly
+# always shows data fetched since you last looked, at a cost of under a
+# second. Big-tech postings lose a third of their freshness in a day, so
+# erring tight is the right side to err on.
+STALE_DATA_HOURS = 3
 
 REFRESH_TIMES = [
     (7, 30),    # before class: yesterday afternoon's postings

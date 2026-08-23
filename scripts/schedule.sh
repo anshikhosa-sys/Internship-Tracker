@@ -21,10 +21,26 @@
 #
 # WHY launchd AND NOT cron
 # ------------------------
-# If your Mac is asleep at the scheduled time, cron skips that day and you
-# silently get no update. launchd notices the missed run and fires it when the
-# machine wakes. For a morning schedule on a laptop closed overnight, that's
-# the difference between working and quietly not.
+# If your Mac is asleep at the scheduled time, cron skips that slot and you
+# silently get no update. launchd replays it when the machine wakes.
+#
+# But launchd is not a complete answer, and it is worth being precise about
+# where it stops:
+#
+#   - Slots missed while ASLEEP are replayed on wake — but only ONE, however
+#     many were missed. Sleep through 07:30 and 11:30 and you get one run.
+#   - Slots missed while POWERED OFF are not replayed at all.
+#
+# In practice the logs show runs at 06:40, 10:36 and 15:38 against a
+# 07:30/11:30/16:30 schedule: always lagging, never on time. So the schedule
+# is a floor, not a guarantee, and two other things do the real work:
+#
+#   - RunAtLoad below, which refreshes at every login.
+#   - _catch_up_if_stale() in app.py, which refreshes when you OPEN the
+#     dashboard and the data has aged past config.STALE_DATA_HOURS.
+#
+# That last one is the actual guarantee: the data is current whenever you
+# are looking at it, which is the only moment it needs to be.
 #
 # cron also can't do the second job at all — keeping a process alive and
 # restarting it after a reboot or crash is exactly what launchd's KeepAlive is
@@ -126,9 +142,16 @@ write_refresh_plist() {
 $SCHEDULE_ENTRIES
     </array>
 
-    <!-- Don't fire on install/login — only on the schedule. -->
+    <!-- Fire on login as well as on the schedule.
+
+         This is the case the calendar schedule cannot cover. launchd
+         replays a slot missed while ASLEEP, but a Mac that was powered
+         OFF through a slot never runs it, and a laptop that sleeps
+         through several slots replays only one on wake. Refreshing at
+         login costs under a second and makes "was my machine on at
+         07:30?" stop being a question that affects the data. -->
     <key>RunAtLoad</key>
-    <false/>
+    <true/>
 
     <key>StandardOutPath</key>
     <string>$LOG_DIR/refresh.log</string>

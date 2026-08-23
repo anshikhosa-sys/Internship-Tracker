@@ -79,6 +79,11 @@ def _filtered(postings, new_ids, args):
     fresh_only = args.get("fresh") == "1"
     show_stale = args.get("stale") == "1"
     tier = args.get("tier") or ""
+    # "Tech employers only" — the single filter that answers "stop showing
+    # me internal IT at a manufacturer". Off by default so nothing is
+    # hidden without being asked for; the ranking already handles the
+    # ordinary case.
+    tech_only = args.get("techonly") == "1"
 
     if submitted:
         hide_coop = args.get("nocoop") == "1"
@@ -157,6 +162,9 @@ def _filtered(postings, new_ids, args):
         if tier and posting["company_tier"] != tier:
             continue
 
+        if tech_only and not posting["is_tech_employer"] and not in_pipeline:
+            continue
+
         if fresh_only and not posting["is_fresh"]:
             continue
 
@@ -211,6 +219,39 @@ def _effective_hide_offseason(args) -> bool:
 # =============================================================================
 # Routes
 # =============================================================================
+
+def _relative_time(iso_string):
+    """
+    "12 minutes ago" for a stored timestamp, or None.
+
+    The header used to print just the DATE, which answers "did it run today"
+    but not "is what I'm looking at current" — and with launchd lagging the
+    schedule, that second question is the one that matters.
+    """
+    if not iso_string:
+        return None
+    try:
+        then = datetime.fromisoformat(iso_string)
+    except (TypeError, ValueError):
+        return None
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+
+    seconds = (datetime.now(timezone.utc) - then).total_seconds()
+    if seconds < 0:
+        return "just now"
+    minutes = seconds / 60
+    if minutes < 2:
+        return "just now"
+    if minutes < 60:
+        return f"{int(minutes)} minutes ago"
+    hours = minutes / 60
+    if hours < 24:
+        count = int(hours)
+        return f"{count} hour{'s' if count != 1 else ''} ago"
+    days = int(hours / 24)
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
 
 def _catch_up_if_stale() -> bool:
     """
@@ -298,6 +339,17 @@ def index():
         )
         posting["is_new"] = posting["id"] in new_ids
         posting["fit"] = scorer.fit_label(posting["fit_score"])
+        # Employer tier and pay are pure functions of fields already on the
+        # row, so they're computed here rather than stored — no migration,
+        # and editing the lists in config.py takes effect on next reload.
+        posting["employer_tier"] = scorer.employer_class(posting)
+        posting["employer_label"] = config.EMPLOYER_TIERS[
+            posting["employer_tier"]
+        ]["label"]
+        posting["is_tech_employer"] = posting["employer_tier"] in (
+            "frontier", "big_tech", "tech"
+        )
+        posting["hourly_pay"] = scorer.hourly_pay(posting)
 
     hidden_by_age = sum(
         1 for p in postings
@@ -314,8 +366,36 @@ def index():
         "candidacy": lambda p: -p["candidacy_score"],
         # None sorts last: an unknown age shouldn't lead a recency sort.
         "recency": lambda p: (p["age_days"] is None, p["age_days"] or 0),
+        # Same rule for pay: only a quarter of postings publish a rate, and
+        # an unpublished rate is missing data, not a low number.
+        "pay": lambda p: (p["hourly_pay"] is None, -(p["hourly_pay"] or 0)),
     }
     visible.sort(key=keys.get(sort, keys["score"]))
+
+    # ONE COMPANY SHOULD NOT BE THE WHOLE LIST.
+    #
+    # Applied after sorting, so the roles kept are each company's best. The
+    # held-back ones stay in the database and in every count — this only
+    # decides what the page shows, and `allper=1` lifts it.
+    crowded = {}
+    if config.MAX_PER_COMPANY and request.args.get("allper") != "1":
+        per_company = {}
+        capped = []
+        for posting in visible:
+            name = (posting["company"] or "").strip().lower()
+            # An application you've made is a record, not a candidate, and
+            # never counts against the cap or gets hidden by it.
+            if posting.get("status"):
+                capped.append(posting)
+                continue
+            per_company[name] = per_company.get(name, 0) + 1
+            if per_company[name] <= config.MAX_PER_COMPANY:
+                capped.append(posting)
+            else:
+                crowded[posting["company"]] = crowded.get(
+                    posting["company"], 0
+                ) + 1
+        visible = capped
 
     # Categories for the filter dropdown, taken from the data itself so it
     # stays correct if you change INGEST_CATEGORIES in config.py.
@@ -329,6 +409,7 @@ def index():
         new_count=len(new_ids),
         applied_total=applied_total,
         last_run=last_run,
+        last_run_relative=_relative_time(last_run),
         sort=sort,
         caught_up=caught_up,
         stages=config.APPLICATION_STAGES,
@@ -336,8 +417,13 @@ def index():
         hidden_by_age=hidden_by_age,
         max_age_days=config.MAX_AGE_DAYS,
         showing_stale=request.args.get("stale") == "1",
+        crowded=sorted(crowded.items(), key=lambda kv: -kv[1]),
+        crowded_total=sum(crowded.values()),
+        max_per_company=config.MAX_PER_COMPANY,
+        showing_all_per=request.args.get("allper") == "1",
         within=_effective_within(request.args),
         hide_coop=_effective_hide_coop(request.args),
+        tech_only=request.args.get("techonly") == "1",
         hide_offseason=_effective_hide_offseason(request.args),
         tiers=config.COMPANY_TIERS,
         tier=request.args.get("tier", ""),

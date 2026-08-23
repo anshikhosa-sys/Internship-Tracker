@@ -20,8 +20,18 @@ pip install -r requirements.txt
 ./scripts/schedule.sh install
 ```
 
-That's it. Refreshes run at 07:30, 11:30 and 16:30, and the dashboard stays
-live at **http://127.0.0.1:5000** — bookmark it.
+That's it. Refreshes run at 07:30, 11:30 and 16:30, at login, and whenever
+you open the dashboard with data more than a few hours old. The dashboard
+stays live at **http://127.0.0.1:5000** — bookmark it.
+
+**Is it really updating?** Yes, but not on the schedule above. launchd
+replays a slot missed while the Mac was asleep — only one, however many were
+missed — and never replays one missed while it was off. Real runs land at
+06:40, 10:36, 15:38 against a 07:30/11:30/16:30 schedule. What actually
+guarantees currency is the refresh when you **open the page**: it re-fetches
+all five sources in under a second if the data has aged past three hours.
+The header says `updated just now` / `updated 2 hours ago` so you never have
+to wonder.
 
 ## Everyday use
 
@@ -54,6 +64,35 @@ to data *engineering*), ML *research* (as opposed to ML *infrastructure*),
 co-ops, off-season terms, and non-technical product roles.
 
 Tick **Show low-fit** to see everything anyway. Nothing is ever deleted.
+
+### Who's hiring counts, not just the job title
+
+The same title is a different job at a different employer. "Application
+Engineering Intern" builds the product at a software company; at a
+window-blinds manufacturer it's internal IT. So the employer multiplies
+preference:
+
+| Badge | Examples | Effect |
+|---|---|---|
+| **AI / frontier** | Anthropic, Palantir, NVIDIA, Databricks, SpaceX | ×1.20 |
+| **Big tech** | Google, Microsoft, Meta, TikTok, Amazon | ×1.12 |
+| **Tech** | Notion, Figma, Datadog, Replit, Rippling | ×1.05 |
+| *(unrecognized)* | most small startups | ×0.90 |
+| **Non-tech employer** | AbbVie, Devon Energy, Deloitte, Bank of America | ×0.40 |
+
+A genuine ML-infrastructure or data-platform role escapes most of the
+non-tech penalty — that work is real wherever it happens.
+
+Tick **Tech employers only** to hide non-tech employers entirely. Promoting
+a company is a one-line edit to `EMPLOYER_NAMES` in `config.py`.
+
+### One company can't take over the list
+
+TikTok posts 191 roles. Ranked on score alone it took 7 of the top 20, which
+turns a list of actions into a wall of one employer. The page shows your best
+`MAX_PER_COMPANY` (3) at each company and says how many it held back, with a
+**show all** link. Nothing is dropped from the database, and anything you've
+applied to is never hidden by it.
 
 ## Your data is in a separate file
 
