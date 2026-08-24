@@ -251,6 +251,32 @@ that, job titles arrived as
 became part of the title and reached the scorer, the dashboard and the
 letter prompts.
 
+## The same job, worded differently in two lists
+
+`key_for()` matches on (company, role), which misses the case that actually
+cost something: Microsoft's "AI Software Engineering Intern - Edge" and "AI
+Software Engineer Intern - Edge" had the SAME apply URL, appeared as two
+cards, and an application was sent to both — the exact waste
+`APPLICATION_LIMITS` exists to prevent.
+
+A second pass merges postings that share an apply URL **and** have
+equivalent titles. Both halves are required: a shared URL alone is not
+identity, because several employers point every listing at one careers page
+— Zipline's "Software Engineer Intern" and "Computational Physics Intern"
+share theirs.
+
+**The bias is deliberately toward UNDER-merging.** A wrong merge hides a
+real job and does it invisibly; a missed merge shows a duplicate, which is
+visible and fixable. That is why there is no "one title contains the other"
+rule: it collapsed "Software Engineer Intern, C++" into "…, Python".
+`ROLE_MATCH_RATIO` is 0.85, measured against the live data.
+
+`storage.reattach_orphaned_marks()` uses the SAME `dedupe.same_role()`.
+It has to — the surviving row keeps one of the two titles, so an
+application filed under the other would show as not-applied, and the
+obvious next step would be to apply a second time. "Is this the same job"
+must be one rule, in one place.
+
 ## A filter must never disagree with itself
 
 Two rules the age dropdown now follows, both learned from it being wrong:

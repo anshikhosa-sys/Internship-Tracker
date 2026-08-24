@@ -884,9 +884,18 @@ def reattach_orphaned_marks(conn) -> int:
     title was edited, an id scheme changed — the mark is matched back by
     company and role and re-filed under the new id.
 
+    Matching is exact first, then falls back to dedupe.same_role(). It has
+    to: dedupe now merges postings that share an apply URL and describe the
+    same job in different words, and the surviving row keeps ONE of the two
+    titles. An application filed under the other title would otherwise be
+    orphaned, its card would show as not-applied, and the obvious next step
+    would be to apply to the same job a second time. The rule for "is this
+    the same job" must be the same rule in both places.
+
     Returns how many were recovered. Should normally be 0; anything else is
     worth noticing, because it means ids moved.
     """
+    import dedupe
     orphans = conn.execute(
         """
         SELECT a.posting_id, a.applied, a.notes, a.company, a.role
@@ -902,6 +911,20 @@ def reattach_orphaned_marks(conn) -> int:
             "SELECT id FROM postings WHERE company = ? AND role = ?",
             (orphan["company"], orphan["role"]),
         ).fetchone()
+
+        if not match:
+            # Same company, equivalent title. Scoped to the company so a
+            # generic title like "Software Engineer Intern" can never
+            # re-file an application against a different employer.
+            candidates = conn.execute(
+                "SELECT id, role FROM postings WHERE company = ?",
+                (orphan["company"],),
+            ).fetchall()
+            for candidate in candidates:
+                if dedupe.same_role(orphan["role"], candidate["role"]):
+                    match = candidate
+                    break
+
         if not match:
             continue
         conn.execute(

@@ -388,6 +388,84 @@ def test_crowding():
 
 
 # =============================================================================
+def test_url_dedupe():
+    """
+    The same job, worded differently in two lists, must not become two cards.
+
+    This shipped: Microsoft's "AI Software Engineering Intern - Edge" and
+    "AI Software Engineer Intern - Edge" had the SAME apply URL and appeared
+    as two postings. An application was sent to both.
+    """
+    print("\nDUPLICATE JOBS ACROSS LISTS")
+
+    import dedupe
+
+    # -- the URL is reduced to its identity ---------------------------------
+    check(dedupe.normalize_url("https://WWW.Example.com/job/1?utm_source=gh")
+          == dedupe.normalize_url("http://example.com/job/1"),
+          "tracking parameters, scheme, www and trailing slash are ignored")
+    check(dedupe.normalize_url("") == "", "an empty URL has no identity")
+
+    # -- titles that mean the same thing ------------------------------------
+    same = [
+        ("AI Software Engineering Intern - Edge",
+         "AI Software Engineer Intern - Edge"),
+        ("Software Engineer Intern", "Software Engineering Intern"),
+        ("Software Developer Intern", "Software Development Intern"),
+        ("Software Engineer Intern - Summer 2027",
+         "Software Engineer Intern"),
+    ]
+    for first, second in same:
+        check(dedupe.same_role(first, second),
+              f"same job: {first[:34]!r} == {second[:34]!r}")
+
+    # -- titles that do NOT, which matter more -----------------------------
+    # A wrong merge HIDES a real job and does it invisibly. A missed merge
+    # shows a duplicate, which is visible. So the bias is to under-merge,
+    # and these are the cases that keep it there.
+    different = [
+        ("Software Engineer Intern, C++",
+         "Software Engineer Intern, Python"),
+        ("Software Engineer Intern - Summer 2027",
+         "Computational Physics Intern - Summer 2027"),
+        ("Product Management Intern", "Product Management Intern, MBA"),
+        ("Software Engineer Intern",
+         "Software Engineer Intern - TikTok AI Search"),
+        ("Data Engineer Intern", "Data Science Intern"),
+    ]
+    for first, second in different:
+        check(not dedupe.same_role(first, second),
+              f"different jobs: {first[:30]!r} != {second[:30]!r}")
+
+    check(not dedupe.same_role("", "Software Engineer Intern"),
+          "an empty title never matches anything")
+
+    # -- the end-to-end behaviour -------------------------------------------
+    url = "https://apply.example.com/careers/job/12345"
+    a = make_posting(1, role="AI Software Engineering Intern - Edge")
+    b = make_posting(2, role="AI Software Engineer Intern - Edge")
+    c = make_posting(3, role="Computational Physics Intern")
+    for posting in (a, b, c):
+        posting.company = "Microsoft"
+        posting.apply_url = url
+    a.source, b.source, c.source = "list-one", "list-two", "list-two"
+
+    merged, stats = dedupe.deduplicate([a, b, c])
+    roles = [p.role for p in merged]
+    check(len(merged) == 2,
+          f"two wordings of one job collapse to one card, and a genuinely "
+          f"different role at the same URL survives ({roles})")
+    check(any("Computational Physics" in r for r in roles),
+          "a shared careers URL does not swallow a different job")
+
+    # A shared URL alone is not identity — several employers point every
+    # listing at one careers page.
+    survivor = next(p for p in merged if "Edge" in p.role)
+    check(len(survivor.sources or []) == 2,
+          "the surviving card records both lists it appeared in")
+
+
+# =============================================================================
 def test_age_windows():
     """
     Every age window offered must be able to return something.
@@ -1662,6 +1740,7 @@ def test_prompts():
 if __name__ == "__main__":
     test_parser()
     test_preference()
+    test_url_dedupe()
     test_age_windows()
     test_prompt_text_endpoint()
     test_probes_dont_consume_badges()
