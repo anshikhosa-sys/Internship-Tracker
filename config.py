@@ -1149,6 +1149,25 @@ DEFAULT_SORT = "score"
 # the list; the ranking decides what you do first.
 DEFAULT_WITHIN_DAYS = 3
 
+# The age windows offered in the dashboard's dropdown.
+#
+# NOTE THE ABSENCE OF A "TODAY ONLY" OPTION. There used to be one, and it
+# could never match anything: measured across all five sources, the minimum
+# age they publish is 1 day and not one of them has ever produced a 0. These
+# lists are bot-generated on a lag, so a role posted today appears labelled
+# "1d" at the earliest. An option guaranteed to return an empty list is a
+# bug, not a filter — the dashboard looked broken every time it was picked.
+#
+# See "Gotchas in the data source" in CLAUDE.md.
+#
+# (days, label). None = no age limit beyond MAX_AGE_DAYS.
+AGE_WINDOWS = [
+    (None, "Any age (within cutoff)"),
+    (1, "Newest — last day"),
+    (3, "Last 3 days"),
+    (7, "Last 7 days"),
+]
+
 # =============================================================================
 # APPLICATION PIPELINE
 # =============================================================================

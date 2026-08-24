@@ -140,22 +140,17 @@
       {% endfor %}
     </select>
 
-    <select name="within">
-      <option value="" {% if not within %}selected{% endif %}>
-        Any age (within cutoff)
-      </option>
-      <option value="0" {% if within == '0' %}selected{% endif %}>
-        Posted today only
-      </option>
-      <option value="1" {% if within == '1' %}selected{% endif %}>
-        Today or yesterday
-      </option>
-      <option value="3" {% if within == '3' %}selected{% endif %}>
-        Last 3 days
-      </option>
-      <option value="7" {% if within == '7' %}selected{% endif %}>
-        Last 7 days
-      </option>
+    {# Options come from config.AGE_WINDOWS, each with the number of
+       postings it would actually show. There is deliberately no "today
+       only" — no source ever publishes an age of 0, so it could only ever
+       return an empty list. #}
+    <select name="within" title="How recent — the count is what you'd see">
+      {% for window in age_windows %}
+        <option value="{{ window.value }}"
+                {% if within == window.value %}selected{% endif %}>
+          {{ window.label }} ({{ window.count }})
+        </option>
+      {% endfor %}
     </select>
 
     <label class="checkbox"
@@ -204,10 +199,31 @@
 
   <!-- ==================== RESULTS ==================== -->
   {% if not postings %}
+    {# An empty list must say WHY, and offer the nearest thing that isn't
+       empty. "No postings match these filters" on its own reads as a
+       broken page — which is exactly how the old "today only" option
+       looked every single time it was picked. #}
     <p class="empty">
       No postings match these filters.
       {% if total_count == 0 %}
         Run <code>python3 refresh.py</code> to fetch listings.
+      {% else %}
+        {% set roomier = age_windows | selectattr('count', '>', 0) | list %}
+        {% if roomier %}
+          <br>
+          The nearest window with anything in it:
+          {% for window in roomier %}
+            <a class="clear" href="{{ url_for('index', **dict(filters,
+                                              f='1', within=window.value)) }}">{{ window.label }}
+              ({{ window.count }})</a>{% if not loop.last %} · {% endif %}
+          {% endfor %}
+        {% else %}
+          <br>
+          Nothing is inside the {{ max_age_days }}-day cutoff right now.
+          <a class="clear" href="{{ url_for('index', **dict(filters,
+                                            stale='1', show_low='1')) }}">Show
+            everything anyway</a>
+        {% endif %}
       {% endif %}
     </p>
   {% else %}

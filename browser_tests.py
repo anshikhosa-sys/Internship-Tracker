@@ -124,6 +124,7 @@ def main():
             _test_pages_render(browser, base, posting_id)
             _test_stage_saves(browser, base)
             _test_notes_save(browser, base)
+            _test_age_window_counts(browser, base)
         finally:
             browser.close()
 
@@ -245,6 +246,72 @@ def _test_stage_saves(browser, base):
     page.wait_for_timeout(500)
 
     check(not errors, "no JavaScript errors while saving",
+          "; ".join(errors[:2]) or "none")
+    context.close()
+
+
+def _test_age_window_counts(browser, base):
+    """
+    The number beside each age window must equal the number of cards you
+    get when you pick it.
+
+    A filter whose own label disagrees with its result is the same class of
+    problem as the filter that could never match anything: you cannot tell
+    a broken page from an empty one. This is also the check that would have
+    settled it faster than counting <li> tags by hand.
+    """
+    print("\nAGE WINDOW COUNTS")
+    context = browser.new_context()
+    page = context.new_page()
+    errors = _errors_on(page)
+    page.goto(base + "/")
+    page.wait_for_timeout(300)
+
+    options = page.evaluate("""() => {
+      const sel = document.querySelector('form.filters select[name="within"]');
+      if (!sel) return null;
+      return Array.from(sel.options).map(o => ({
+        value: o.value, label: o.textContent.trim()
+      }));
+    }""")
+
+    if not options:
+        check(False, "the age dropdown exists")
+        context.close()
+        return
+
+    check(all("(" in o["label"] for o in options),
+          "every window shows a count", f"{len(options)} windows")
+    check(not any(o["value"] == "0" for o in options),
+          "no 'today only' window is offered — it could never match")
+
+    for option in options:
+        promised = int(option["label"].rsplit("(", 1)[1].rstrip(")"))
+
+        # form.filters, not just button[type=submit]: the header carries
+        # "Mark all as seen" and "Refresh listings", both POST forms, and a
+        # bare selector clicks the first of those instead. Every window then
+        # rendered the same number and looked like an app bug.
+        page.select_option('form.filters select[name="within"]',
+                           option["value"])
+        page.click('form.filters button[type="submit"]')
+        page.wait_for_load_state("load")
+        page.wait_for_timeout(200)
+
+        shown = page.locator("li.posting").count()
+        check(shown == promised,
+              f"{option['label']!r} shows exactly what it promises",
+              f"promised {promised}, rendered {shown}")
+
+        if promised == 0:
+            body = page.locator("body").inner_text()
+            check("No postings match" in body,
+                  "an empty window explains itself rather than going blank")
+
+        page.goto(base + "/")
+        page.wait_for_timeout(150)
+
+    check(not errors, "no JavaScript errors while filtering",
           "; ".join(errors[:2]) or "none")
     context.close()
 

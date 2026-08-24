@@ -388,6 +388,44 @@ def test_crowding():
 
 
 # =============================================================================
+def test_age_windows():
+    """
+    Every age window offered must be able to return something.
+
+    The dropdown used to offer "Posted today only" (within=0). Measured
+    across all five sources, the minimum age any of them publishes is 1 day
+    and none has ever produced a 0 — these lists are bot-generated on a lag,
+    so a role posted today appears labelled "1d" at the earliest. The option
+    could only ever return an empty list, and the page just went blank with
+    no explanation.
+    """
+    print("\nAGE WINDOWS")
+
+    values = [days for days, _ in config.AGE_WINDOWS]
+
+    check(0 not in values,
+          "no 'today only' window — no source ever publishes an age of 0")
+    check(None in values, "an unrestricted window is offered")
+
+    numeric = [v for v in values if v is not None]
+    check(numeric == sorted(numeric),
+          "windows are offered narrowest-first")
+    check(len(set(values)) == len(values), "no duplicate windows")
+    check(all(v is None or v >= 1 for v in values),
+          "every window can match the freshest thing the sources publish")
+
+    # Every window must sit inside the hard cutoff, or it silently lies:
+    # "Last 30 days" would still be capped at MAX_AGE_DAYS.
+    check(all(v is None or v <= config.MAX_AGE_DAYS for v in numeric),
+          f"no window promises more than the {config.MAX_AGE_DAYS}-day "
+          f"cutoff can deliver")
+
+    labels = [label for _, label in config.AGE_WINDOWS]
+    check(all(label.strip() for label in labels), "every window is labelled")
+    check(len(set(labels)) == len(labels), "no two windows share a label")
+
+
+# =============================================================================
 def test_prompt_text_endpoint():
     """
     The copy button reads the prompt from the SERVER, not from the DOM.
@@ -1622,6 +1660,7 @@ def test_prompts():
 if __name__ == "__main__":
     test_parser()
     test_preference()
+    test_age_windows()
     test_prompt_text_endpoint()
     test_probes_dont_consume_badges()
     test_quotas()

@@ -108,6 +108,18 @@ turns a list of actions into a wall of one employer. The page shows your best
 **show all** link. Nothing is dropped from the database, and anything you've
 applied to is never hidden by it.
 
+## Why there's no "posted today" filter
+
+There used to be, and it could never match anything. Across all five
+sources the freshest age any of them publishes is **1 day** — they're
+bot-generated on a lag, so a role posted today first shows up labelled
+`1d`. The option returned an empty list every single time.
+
+The age dropdown now starts at "Newest — last day" and **shows the count
+each window would return**, so you can see there are 12 in the last day
+before you pick it. If a filter does come back empty, the page says so and
+links to the nearest window that isn't.
+
 ## It checks itself
 
 A LaunchAgent runs the full health check every Sunday at 09:00. It is

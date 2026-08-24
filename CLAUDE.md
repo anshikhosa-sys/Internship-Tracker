@@ -228,6 +228,23 @@ an empty clipboard. Both bugs were silent; this one announces itself.
 Use `content_type=`, not `mimetype=`, on the Response: `mimetype` appends
 its own charset and you get `text/plain; charset=utf-8; charset=utf-8`.
 
+## A filter must never disagree with itself
+
+Two rules the age dropdown now follows, both learned from it being wrong:
+
+- **Every option carries the count it would return** — "Last 3 days (33)".
+  An empty result is then visible before you pick it, rather than looking
+  like a broken page afterwards.
+- **The count must equal what renders.** `_apply_caps()` is shared between
+  the list and the counts for exactly this reason; when the count was
+  computed before the per-company cap it read higher than the list it
+  described. `_age_window_counts()` also has to pass the EFFECTIVE filter
+  state into its probe — setting `f=1` alone tells `_filtered()` the form
+  was submitted, which turns off the co-op and off-season defaults.
+
+An empty list explains itself and links to the nearest window that isn't
+empty. A browser test asserts each option renders exactly what it promises.
+
 ## The weekly self-check
 
 `selfcheck.py` runs `healthcheck.py` on a LaunchAgent (Sundays 09:00) and
@@ -272,6 +289,13 @@ falling back made two consecutive reads disagree.
    instead, which is exact.
 4. **Closed roles are already excluded upstream** (moved to
    `README-Inactive.md`).
+4b. **No source ever publishes an age of 0.** Measured across all five: the
+   minimum any of them reports is 1 day. These lists are bot-generated on a
+   lag, so a role posted today first appears labelled `1d`. A "posted today
+   only" filter is therefore guaranteed to return nothing — it shipped, and
+   the page went blank every time it was picked with no explanation. The
+   age windows now live in `config.AGE_WINDOWS`, start at 1 day, and a test
+   asserts none of them can be unmatchable.
 5. **The legend documents 🛂 and 🇺🇸 markers, but no row uses them.** Those
    fields parse to False from this source; kept for future sources.
 

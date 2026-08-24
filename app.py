@@ -34,6 +34,7 @@ there's no password: there's no one else to keep out.
 import sys
 from datetime import datetime, timezone
 
+from werkzeug.datastructures import MultiDict
 from flask import (
     Flask, Response, jsonify, redirect, render_template, request, url_for
 )
@@ -265,6 +266,95 @@ def _quota_state(postings):
     return state
 
 
+def _apply_caps(visible, quotas, show_all):
+    """
+    Trim the ranked list so no company dominates it, and so a spent
+    application quota stops offering roles you cannot apply to.
+
+    Returns (visible, crowded, exhausted, quota_limited).
+
+    Shared with _age_window_counts so the number beside each age window in
+    the dropdown is the number you actually get. It said 41 and showed 33
+    before this was pulled out — a filter whose own label disagrees with
+    the result is the same class of problem as the one this page had.
+    """
+    crowded, exhausted, quota_limited = {}, [], {}
+    if not config.MAX_PER_COMPANY or show_all:
+        return visible, crowded, exhausted, quota_limited
+
+    per_company = {}
+    capped = []
+    for posting in visible:
+        name = (posting["company"] or "").strip().lower()
+        # An application you've made is a record, not a candidate, and
+        # never counts against the cap or gets hidden by it.
+        if posting.get("status"):
+            capped.append(posting)
+            continue
+
+        # A capped company's real limit is what's LEFT of its quota, not
+        # MAX_PER_COMPANY. Showing three TikTok roles when one application
+        # remains isn't a shortlist, it's three ways to waste the last slot.
+        group = _quota_group(posting["company"])
+        if group:
+            key = group["name"]
+            allowance = min(config.MAX_PER_COMPANY, quotas[key]["left"])
+        else:
+            key = name
+            allowance = config.MAX_PER_COMPANY
+
+        per_company[key] = per_company.get(key, 0) + 1
+        if per_company[key] <= allowance:
+            capped.append(posting)
+        elif group:
+            # Held back by the quota, not by ordinary crowding. Reported
+            # separately because the two have different remedies: one you
+            # can lift, the other is a fact about the employer.
+            if quotas[key]["left"] == 0:
+                if key not in exhausted:
+                    exhausted.append(key)
+            else:
+                quota_limited[key] = quota_limited.get(key, 0) + 1
+        else:
+            crowded[posting["company"]] = crowded.get(
+                posting["company"], 0) + 1
+
+    return capped, crowded, exhausted, quota_limited
+
+
+def _age_window_counts(postings, new_ids, args):
+    """
+    For each age window, how many postings it would show.
+
+    Rendered into the dropdown as "Last 3 days (34)". The filter that
+    prompted this could never match anything, and there was no way to tell
+    from the interface — the list just went blank.
+    """
+    windows = []
+    for days, label in config.AGE_WINDOWS:
+        # The probe must carry the EFFECTIVE filter state, not just f=1.
+        # Setting f=1 alone tells _filtered "the user submitted the form",
+        # which turns OFF the co-op and off-season defaults — so the count
+        # was computed against a slightly different filter than the page
+        # used, and read one higher than the list it described.
+        probe = MultiDict(args)
+        probe["f"] = "1"
+        probe["nocoop"] = "1" if _effective_hide_coop(args) else ""
+        probe["nowinter"] = "1" if _effective_hide_offseason(args) else ""
+        probe["within"] = "" if days is None else str(days)
+        matched = _filtered(postings, new_ids, probe)
+        matched, _, _, _ = _apply_caps(
+            matched, _quota_state(postings), args.get("allper") == "1"
+        )
+        count = len(matched)
+        windows.append({
+            "value": "" if days is None else str(days),
+            "label": label,
+            "count": count,
+        })
+    return windows
+
+
 def _selfcheck_banner():
     """The last weekly self-check, but only if it found something wrong."""
     conn = storage.connect()
@@ -469,49 +559,9 @@ def index():
     # when its posting has aged off the list.
     quotas = _quota_state(postings)
 
-    crowded = {}
-    exhausted = []
-    quota_limited = {}
-    if config.MAX_PER_COMPANY and request.args.get("allper") != "1":
-        per_company = {}
-        capped = []
-        for posting in visible:
-            name = (posting["company"] or "").strip().lower()
-            # An application you've made is a record, not a candidate, and
-            # never counts against the cap or gets hidden by it.
-            if posting.get("status"):
-                capped.append(posting)
-                continue
-
-            # A capped company's real limit is what's LEFT of its quota, not
-            # MAX_PER_COMPANY. Showing three TikTok roles when one
-            # application remains isn't a shortlist, it's three ways to
-            # waste the last slot.
-            group = _quota_group(posting["company"])
-            if group:
-                key = group["name"]
-                allowance = min(config.MAX_PER_COMPANY, quotas[key]["left"])
-            else:
-                key = name
-                allowance = config.MAX_PER_COMPANY
-
-            per_company[key] = per_company.get(key, 0) + 1
-            if per_company[key] <= allowance:
-                capped.append(posting)
-            elif group:
-                # Held back by the quota, not by ordinary crowding. Reported
-                # separately because the two have different remedies: one
-                # you can lift, the other is a fact about the employer.
-                if quotas[key]["left"] == 0:
-                    if key not in exhausted:
-                        exhausted.append(key)
-                else:
-                    quota_limited[key] = quota_limited.get(key, 0) + 1
-            else:
-                crowded[posting["company"]] = crowded.get(
-                    posting["company"], 0
-                ) + 1
-        visible = capped
+    visible, crowded, exhausted, quota_limited = _apply_caps(
+        visible, quotas, request.args.get("allper") == "1"
+    )
 
     # Tell each surviving card how much of its company's quota is left, so
     # the constraint is visible at the moment you're deciding to apply.
@@ -550,6 +600,10 @@ def index():
         max_per_company=config.MAX_PER_COMPANY,
         showing_all_per=request.args.get("allper") == "1",
         within=_effective_within(request.args),
+        # Each window carries how many postings it would actually show, so
+        # an empty result is visible BEFORE you pick it rather than looking
+        # like a broken page afterwards.
+        age_windows=_age_window_counts(postings, new_ids, request.args),
         hide_coop=_effective_hide_coop(request.args),
         tech_only=request.args.get("techonly") == "1",
         hide_offseason=_effective_hide_offseason(request.args),
