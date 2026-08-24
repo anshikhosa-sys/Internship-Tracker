@@ -1151,19 +1151,26 @@ DEFAULT_WITHIN_DAYS = 3
 
 # The age windows offered in the dashboard's dropdown.
 #
-# NOTE THE ABSENCE OF A "TODAY ONLY" OPTION. There used to be one, and it
-# could never match anything: measured across all five sources, the minimum
-# age they publish is 1 day and not one of them has ever produced a 0. These
-# lists are bot-generated on a lag, so a role posted today appears labelled
-# "1d" at the earliest. An option guaranteed to return an empty list is a
-# bug, not a filter — the dashboard looked broken every time it was picked.
+# A "today only" option was REMOVED and then RESTORED, and the reason is
+# worth keeping. With the original five sources it could never match: the
+# freshest age any of them published was 1 day, because those lists are
+# bot-generated on a lag. The option returned an empty page every time.
 #
-# See "Gotchas in the data source" in CLAUDE.md.
+# Adding Chieler and DereC4 changed the fact on the ground — both carry
+# same-day rows, and there are now real postings at age 0. So the window is
+# back.
+#
+# The durable lesson is not "never offer a today filter". It is that a
+# filter must not be able to look broken: every option now shows the number
+# it would return ("Today (17)"), so an empty one is visibly empty before
+# you pick it, and an empty result explains itself and links to the nearest
+# window that isn't. That property holds whatever the sources do next.
 #
 # (days, label). None = no age limit beyond MAX_AGE_DAYS.
 AGE_WINDOWS = [
     (None, "Any age (within cutoff)"),
-    (1, "Newest — last day"),
+    (0, "Today"),
+    (1, "Today or yesterday"),
     (3, "Last 3 days"),
     (7, "Last 7 days"),
 ]

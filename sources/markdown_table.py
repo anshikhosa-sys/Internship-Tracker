@@ -43,9 +43,23 @@ def _extract_links(cell: str) -> list:
 
 
 def _strip_html(text: str) -> str:
-    """Remove tags and collapse whitespace, keeping the visible text."""
+    """
+    Remove markup and collapse whitespace, keeping the visible text.
+
+    Markdown links are UNWRAPPED to their label, not deleted: a source that
+    puts the apply link inside the role cell would otherwise give roles
+    reading "[Algorithm Development Engineer Intern](https://analogdevices…"
+    — the URL becomes part of the job title, which then reaches the scorer,
+    the dashboard and the letter prompts. _extract_links() has already
+    taken the href by the time this runs, so nothing is lost.
+
+    Bare markdown images (an "Apply" button graphic) drop entirely; their
+    alt text is not the visible text of the cell in any useful sense.
+    """
     text = re.sub(r"<br\s*/?>", " | ", text, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)      # images first
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)   # then links
     text = re.sub(r"&nbsp;?", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()

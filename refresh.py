@@ -36,6 +36,8 @@ import push
 import scorer
 import storage
 from sources import (
+    ChielerReadmeSource,
+    DereC4ReadmeSource,
     SimplifyReadmeSource,
     SndshReadmeSource,
     SpeedyApplyAISource,
@@ -56,6 +58,12 @@ SOURCES = [
     SpeedyApplyReadmeSource(),
     SpeedyApplyAISource(),
     SndshReadmeSource(),
+    # Added for coverage: between them these carry ~1,600 company+role
+    # combinations none of the lists above had. Chieler also publishes an
+    # exact ISO date per row, which dedupe.py prefers over a date derived
+    # from a relative age — so it improves postings we already held.
+    ChielerReadmeSource(),
+    DereC4ReadmeSource(),
 ]
 
 

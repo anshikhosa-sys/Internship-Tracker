@@ -9,6 +9,8 @@ came from.
 """
 
 from .base import Posting, Source
+from .chieler_readme import ChielerReadmeSource
+from .derec4_readme import DereC4ReadmeSource
 from .simplify_readme import SimplifyReadmeSource
 from .sndsh_readme import SndshReadmeSource
 from .speedyapply_readme import SpeedyApplyAISource, SpeedyApplyReadmeSource
@@ -22,4 +24,6 @@ __all__ = [
     "SpeedyApplyReadmeSource",
     "SpeedyApplyAISource",
     "SndshReadmeSource",
+    "ChielerReadmeSource",
+    "DereC4ReadmeSource",
 ]

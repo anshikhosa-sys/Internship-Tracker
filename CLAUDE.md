@@ -228,6 +228,29 @@ an empty clipboard. Both bugs were silent; this one announces itself.
 Use `content_type=`, not `mimetype=`, on the Response: `mimetype` appends
 its own charset and you get `text/plain; charset=utf-8; charset=utf-8`.
 
+## Sources
+
+Seven lists, merged and deduplicated. Adding one is a file in `sources/`,
+an export in `sources/__init__.py`, and a line in `refresh.py`.
+
+Chieler and DereC4 were added when "no new postings are appearing" turned
+out to be a supply problem rather than a bug: tracing the pipeline showed
+every fresh row the five older sources published was already stored, and
+nothing was being lost. Between them the two added ~1,600 company+role
+combinations none of the others carried, taking the pool from 736 to 1,729
+active postings and the 7-day window from 151 to 496.
+
+Chieler is worth its place twice over: it publishes an exact ISO date per
+row, and `dedupe.py` prefers an absolute date over one derived from a
+relative age, so it improves postings that came from elsewhere.
+
+`_strip_html()` in `sources/markdown_table.py` unwraps markdown links to
+their label. DereC4 puts the apply link inside the ROLE cell, so without
+that, job titles arrived as
+`[Algorithm Development Engineer Intern](https://analogdevices…` — the URL
+became part of the title and reached the scorer, the dashboard and the
+letter prompts.
+
 ## A filter must never disagree with itself
 
 Two rules the age dropdown now follows, both learned from it being wrong:
@@ -289,13 +312,13 @@ falling back made two consecutive reads disagree.
    instead, which is exact.
 4. **Closed roles are already excluded upstream** (moved to
    `README-Inactive.md`).
-4b. **No source ever publishes an age of 0.** Measured across all five: the
-   minimum any of them reports is 1 day. These lists are bot-generated on a
-   lag, so a role posted today first appears labelled `1d`. A "posted today
-   only" filter is therefore guaranteed to return nothing — it shipped, and
-   the page went blank every time it was picked with no explanation. The
-   age windows now live in `config.AGE_WINDOWS`, start at 1 day, and a test
-   asserts none of them can be unmatchable.
+4b. **Sources differ on whether they publish same-day rows.** The original
+   five never did — the freshest age any reported was `1d`, because they
+   are bot-generated on a lag. Chieler and DereC4 do, so postings at age 0
+   now exist. A "posted today" filter was removed for being unmatchable and
+   then restored when it stopped being so; the durable fix was not the
+   removal but `config.AGE_WINDOWS` carrying a live count per option, so a
+   window that is empty looks empty rather than broken.
 5. **The legend documents 🛂 and 🇺🇸 markers, but no row uses them.** Those
    fields parse to False from this source; kept for future sources.
 

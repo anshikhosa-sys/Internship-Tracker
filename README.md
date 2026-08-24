@@ -108,17 +108,18 @@ turns a list of actions into a wall of one employer. The page shows your best
 **show all** link. Nothing is dropped from the database, and anything you've
 applied to is never hidden by it.
 
-## Why there's no "posted today" filter
+## The age filter tells you what it will return
 
-There used to be, and it could never match anything. Across all five
-sources the freshest age any of them publishes is **1 day** — they're
-bot-generated on a lag, so a role posted today first shows up labelled
-`1d`. The option returned an empty list every single time.
+Every window in the dropdown shows its own count — "Today (14)", "Last 3
+days (77)" — so you can see what you'll get before you pick it, and an
+empty window is visibly empty rather than looking like a broken page. If
+one does come back empty, the page says so and links to the nearest window
+that isn't.
 
-The age dropdown now starts at "Newest — last day" and **shows the count
-each window would return**, so you can see there are 12 in the last day
-before you pick it. If a filter does come back empty, the page says so and
-links to the nearest window that isn't.
+This exists because "posted today only" used to return nothing, every
+time: the five original sources are bot-generated on a lag and never
+published a same-day row. Two of the newer sources do, so the option
+works now.
 
 ## It checks itself
 
@@ -146,14 +147,16 @@ a second, and deleting it must never cost you an application record.
 
 ## Where the postings come from
 
-Five lists, merged and deduplicated — about 970 rows collapsing to ~750
-unique postings:
+Seven lists, merged and deduplicated — about 3,600 rows collapsing to
+~1,700 unique postings:
 
 - SimplifyJobs/Summer2027-Internships
 - vanshb03/Summer2027-Internships
 - speedyapply/2027-SWE-College-Jobs
 - speedyapply/2027-AI-College-Jobs
 - sndsh404/summer-2027-internships
+- Chieler/Summer-2027-SWE-Internships — publishes exact dates
+- DereC4/internships-and-newgrad — the broadest coverage
 
 ## Tuning the rankings
 

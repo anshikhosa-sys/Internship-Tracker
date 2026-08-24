@@ -282,8 +282,13 @@ def _test_age_window_counts(browser, base):
 
     check(all("(" in o["label"] for o in options),
           "every window shows a count", f"{len(options)} windows")
-    check(not any(o["value"] == "0" for o in options),
-          "no 'today only' window is offered — it could never match")
+    # NOT "there is no today window". That assertion was written when no
+    # source published an age of 0, and it went stale the moment two
+    # sources that do were added. The durable property is that a window
+    # never disagrees with itself — checked per option below — and that an
+    # empty one says so instead of looking like a broken page.
+    check(len({o["value"] for o in options}) == len(options),
+          "no two windows share a value")
 
     for option in options:
         promised = int(option["label"].rsplit("(", 1)[1].rstrip(")"))

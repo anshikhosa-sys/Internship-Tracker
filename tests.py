@@ -392,27 +392,29 @@ def test_age_windows():
     """
     Every age window offered must be able to return something.
 
-    The dropdown used to offer "Posted today only" (within=0). Measured
-    across all five sources, the minimum age any of them publishes is 1 day
-    and none has ever produced a 0 — these lists are bot-generated on a lag,
-    so a role posted today appears labelled "1d" at the earliest. The option
-    could only ever return an empty list, and the page just went blank with
-    no explanation.
+    "Posted today only" was removed and later restored. With the original
+    five sources it could never match — the freshest age any of them
+    published was 1 day, because those lists are bot-generated on a lag —
+    and the page went blank every time it was picked. Adding Chieler and
+    DereC4 brought in same-day rows, so it works now.
+
+    The durable guarantee is therefore NOT "no today window". It is that
+    every option shows the count it would return, and an empty result
+    explains itself. Those are asserted in browser_tests.py, which is the
+    only place they can be checked honestly.
     """
     print("\nAGE WINDOWS")
 
     values = [days for days, _ in config.AGE_WINDOWS]
 
-    check(0 not in values,
-          "no 'today only' window — no source ever publishes an age of 0")
     check(None in values, "an unrestricted window is offered")
 
     numeric = [v for v in values if v is not None]
     check(numeric == sorted(numeric),
           "windows are offered narrowest-first")
     check(len(set(values)) == len(values), "no duplicate windows")
-    check(all(v is None or v >= 1 for v in values),
-          "every window can match the freshest thing the sources publish")
+    check(all(v is None or v >= 0 for v in values),
+          "no window asks for a negative age")
 
     # Every window must sit inside the hard cutoff, or it silently lies:
     # "Last 30 days" would still be capped at MAX_AGE_DAYS.
