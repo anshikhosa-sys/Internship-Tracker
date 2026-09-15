@@ -251,6 +251,32 @@ ROLE_FAMILIES = {
     },
 }
 
+# Families whose day-to-day work substantially overlaps. Someone targeting
+# software engineering is plausibly interested in backend or data engineering
+# roles they did not think to list; nobody targeting SWE is implied to want
+# product management. Used by profile derivation, never as a user weight.
+RELATED_FAMILIES = {
+    "software_engineering": ["backend", "frontend", "fullstack", "mobile", "infrastructure", "data_engineering",
+                             "ai_engineering"],
+    "backend": ["software_engineering", "fullstack", "infrastructure", "data_engineering"],
+    "frontend": ["software_engineering", "fullstack", "mobile"],
+    "fullstack": ["software_engineering", "backend", "frontend"],
+    "mobile": ["software_engineering", "frontend"],
+    "ai_engineering": ["ml_engineering", "software_engineering", "backend", "forward_deployed"],
+    "ml_engineering": ["ai_engineering", "data_science", "infrastructure", "research"],
+    "data_science": ["ml_engineering", "data_engineering"],
+    "data_engineering": ["backend", "infrastructure", "data_science"],
+    "infrastructure": ["backend", "software_engineering", "security", "data_engineering"],
+    "security": ["infrastructure"],
+    "embedded_hardware": [],
+    "forward_deployed": ["software_engineering", "ai_engineering"],
+    "product_management": [],
+    "research": ["ml_engineering"],
+    "quant": [],
+    "qa_test": ["software_engineering"],
+    "it_support": [],
+}
+
 # When several families match a title, the most specific wins. A generic family
 # ("engineer") should not outrank "machine learning engineer".
 GENERIC_FAMILIES = ["software_engineering"]

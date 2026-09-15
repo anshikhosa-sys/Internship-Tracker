@@ -182,7 +182,12 @@ def _affinity(resume: ParsedResume, preferences: Preferences, skills: dict[str, 
     affinity: dict[str, float] = {}
     for family in taxonomy.ROLE_FAMILIES:
         if targets:
-            stated = 1.0 if family in targets else cfg.UNSTATED_FAMILY_STATED_VALUE
+            if family in targets:
+                stated = 1.0
+            elif any(family in taxonomy.RELATED_FAMILIES.get(t, []) for t in targets):
+                stated = cfg.RELATED_FAMILY_STATED_VALUE
+            else:
+                stated = cfg.UNSTATED_FAMILY_STATED_VALUE
             value = cfg.STATED_TARGET_SHARE * stated + (1 - cfg.STATED_TARGET_SHARE) * evidence_score[family]
         else:
             value = evidence_score[family]

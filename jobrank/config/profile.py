@@ -53,6 +53,10 @@ AFFINITY_SATURATION = 1.0
 STATED_TARGET_SHARE = 0.6
 # A family the user did not name, when they did name others.
 UNSTATED_FAMILY_STATED_VALUE = 0.15
+# An unnamed family closely related to a named one (taxonomy.RELATED_FAMILIES).
+# Measured on a real golden set: treating related families as unstated put
+# data-engineering and infrastructure applications at rank ~2,000 of 4,165.
+RELATED_FAMILY_STATED_VALUE = 0.55
 # Nobody's affinity for a family drops below this; the scorer multiplies, and a
 # hard zero would hide roles the user never thought to name.
 AFFINITY_FLOOR = 0.05
