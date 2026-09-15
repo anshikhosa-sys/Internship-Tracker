@@ -5,6 +5,7 @@ Command-line interface: `python3 run.py ...`.
     run.py profile show --id alex
     run.py profile list
     run.py prefs --id alex [--file prefs.json]
+    run.py label seed|add|remove|list|queue --profile alex
 
 Later phases register more commands here (refresh, explain, apply, label,
 stats). Each command is a function taking parsed args and returning an exit
@@ -121,6 +122,103 @@ def _print_profile(profile, warnings: list[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# label (golden set)
+# ---------------------------------------------------------------------------
+
+def _posting_lookup() -> dict[str, dict]:
+    from jobrank import storage
+
+    conn = storage.connect()
+    try:
+        return {row["id"]: row for row in storage.load_postings(conn, include_inactive=True)}
+    finally:
+        conn.close()
+
+
+def cmd_label_seed(args: argparse.Namespace) -> int:
+    from jobrank import storage
+    from jobrank.eval import golden
+
+    conn = storage.connect()
+    try:
+        applications = [{"id": a["posting_id"], "company": a["company"] or "", "role": a["role"] or "",
+                         "status": a["status"]} for a in storage.pipeline(conn)]
+    finally:
+        conn.close()
+    labels = golden.load(args.profile)
+    changed = golden.seed_from_applications(labels, applications)
+    path = golden.save(args.profile, labels)
+    print(f"Seeded {changed} labels from {len(applications)} applications -> {path} ({len(labels)} total).")
+    return 0
+
+
+def cmd_label_add(args: argparse.Namespace) -> int:
+    from jobrank.eval import golden
+
+    posting = _posting_lookup().get(args.posting)
+    if posting is None:
+        print(f"No posting {args.posting}.", file=sys.stderr)
+        return 2
+    labels = golden.load(args.profile)
+    golden.upsert(labels, posting, args.relevance, note=args.note or "")
+    golden.save(args.profile, labels)
+    print(f"{args.relevance}  {posting['company']} — {posting['role']}")
+    return 0
+
+
+def cmd_label_remove(args: argparse.Namespace) -> int:
+    from jobrank.eval import golden
+
+    labels = golden.load(args.profile)
+    if labels.pop(args.posting, None) is None:
+        print(f"No label for {args.posting}.", file=sys.stderr)
+        return 2
+    golden.save(args.profile, labels)
+    return 0
+
+
+def cmd_label_list(args: argparse.Namespace) -> int:
+    from jobrank.eval import golden
+
+    labels = golden.load(args.profile)
+    for label in sorted(labels.values(), key=lambda l: (-l.relevance, l.company.lower())):
+        print(f"{label.relevance}  {label.posting_id}  {label.company[:24]:24s} {label.role[:50]:50s} {label.source}")
+    print(f"\n{len(labels)} labels")
+    return 0
+
+
+def cmd_label_queue(args: argparse.Namespace, ask=input) -> int:
+    """
+    Label the CURRENT ranking's top unlabeled postings. These are exactly the
+    items precision@k is computed over, and labeling them is what turns
+    precision from a lower bound into a measurement.
+    """
+    from jobrank import ranking
+    from jobrank.eval import golden
+
+    ranked = ranking.rank(args.profile)
+    if ranked is None:
+        print(f"No profile {args.profile}.", file=sys.stderr)
+        return 2
+    labels = golden.load(args.profile)
+    rows = {r["id"]: r for r in ranked.rows}
+    queue = [pid for pid in ranked.ordered_ids if pid not in labels][: args.n]
+    print("Relevance: 0 not relevant, 1 marginal, 2 relevant, 3 highly relevant. s = skip, q = quit.")
+    done = 0
+    for pid in queue:
+        row = rows[pid]
+        reply = ask(f"[{row['fit_score']:>3}] {row['company']} — {row['role']} ({row['location']}): ").strip().lower()
+        if reply == "q":
+            break
+        if reply in {"0", "1", "2", "3"}:
+            golden.upsert(labels, row, int(reply))
+            done += 1
+    golden.save(args.profile, labels)
+    print(f"Labeled {done}; {len(labels)} total.")
+    return 0
+
+
+# ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="run.py", description="jobrank: rank job postings for a profile.")
@@ -143,6 +241,29 @@ def build_parser() -> argparse.ArgumentParser:
     prefs.add_argument("--id", required=True)
     prefs.add_argument("--file", help="JSON preferences file (otherwise asked interactively)")
     prefs.set_defaults(func=cmd_prefs)
+
+    label = sub.add_parser("label", help="manage golden relevance labels for evaluation")
+    lsub = label.add_subparsers(dest="action", required=True)
+    seed = lsub.add_parser("seed", help="label every application as relevant (stage-graded)")
+    seed.add_argument("--profile", required=True)
+    seed.set_defaults(func=cmd_label_seed)
+    add = lsub.add_parser("add", help="label one posting 0-3")
+    add.add_argument("--profile", required=True)
+    add.add_argument("--posting", required=True)
+    add.add_argument("--relevance", type=int, choices=range(4), required=True)
+    add.add_argument("--note")
+    add.set_defaults(func=cmd_label_add)
+    remove = lsub.add_parser("remove", help="delete one label")
+    remove.add_argument("--profile", required=True)
+    remove.add_argument("--posting", required=True)
+    remove.set_defaults(func=cmd_label_remove)
+    lst = lsub.add_parser("list", help="print labels")
+    lst.add_argument("--profile", required=True)
+    lst.set_defaults(func=cmd_label_list)
+    queue = lsub.add_parser("queue", help="interactively label the top unlabeled postings")
+    queue.add_argument("--profile", required=True)
+    queue.add_argument("-n", type=int, default=25)
+    queue.set_defaults(func=cmd_label_queue)
 
     for builder in _registry:
         builder(sub)
