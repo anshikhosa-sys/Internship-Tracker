@@ -32,6 +32,7 @@ there's no password: there's no one else to keep out.
 """
 
 import sys
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 
 from werkzeug.datastructures import MultiDict
@@ -47,6 +48,25 @@ from jobrank import storage
 from jobrank.refresh import refresh as run_refresh
 
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 6 * 1024 * 1024
+
+from jobrank.web.profile_views import bp as profiles_bp  # noqa: E402
+app.register_blueprint(profiles_bp)
+
+@app.before_request
+def _reject_cross_site_posts():
+    """
+    Refuse state-changing requests that a browser marks as coming from another
+    site. The server only listens on loopback, but any web page the user visits
+    can still make their browser POST to 127.0.0.1 — overwriting a profile or
+    an application's status. Requests with no Origin/Referer (curl, tests) pass.
+    """
+    if request.method not in ("POST", "PUT", "PATCH", "DELETE"):
+        return None
+    origin = request.headers.get("Origin") or request.headers.get("Referer") or ""
+    if origin and urlparse(origin).netloc != request.host:
+        return Response("Cross-site request refused.", status=403, content_type="text/plain")
+    return None
 
 
 # =============================================================================

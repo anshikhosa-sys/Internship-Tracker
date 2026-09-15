@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Profile</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <h1>{{ 'Profile: ' ~ user_id if profile else 'Create a profile' }}</h1>
+      <p class="sub">Your résumé is parsed in memory; only skills, dates and titles are saved — never contact details.</p>
+    </div>
+    <div class="topbar-actions">
+      <a class="btn-refresh" href="{{ url_for('index') }}">Back to roles</a>
+    </div>
+  </div>
+</header>
+
+<main class="profile-page">
+
+  {% if request.args.get('saved') %}
+    <div class="ok-banner">Saved. Rankings now use this profile.</div>
+  {% endif %}
+
+  {% if errors %}
+    <div class="warn-banner" role="alert">
+      <strong>Nothing was saved.</strong>
+      <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+
+  {% if profiles %}
+    <p class="sub">Existing profiles:
+      {% for pid in profiles %}<a href="{{ url_for('profiles.profile_form', id=pid) }}">{{ pid }}</a>{{ ', ' if not loop.last }}{% endfor %}
+    </p>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('profiles.profile_submit') }}" enctype="multipart/form-data" class="profile-form">
+    <fieldset>
+      <legend>Who</legend>
+      <label>Profile id
+        <input name="user_id" value="{{ user_id }}" required pattern="[a-z0-9][a-z0-9_-]{0,39}" {{ 'readonly' if profile }}>
+      </label>
+      <label>Résumé (PDF, DOCX, TXT or Markdown){{ ' — leave empty to keep the current one' if profile }}
+        <input type="file" name="resume" accept=".pdf,.docx,.txt,.md" {{ '' if profile else 'required' }}>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>What you want</legend>
+      <label>Target roles <small>comma-separated job titles</small>
+        <input name="target_roles" value="{{ prefs.target_roles|join(', ') }}" placeholder="Software Engineer, Data Engineer">
+      </label>
+      <div class="choices">Seniority
+        {% for level in seniority_levels %}
+          <label><input type="checkbox" name="seniority" value="{{ level }}" {{ 'checked' if level in prefs.seniority }}> {{ level }}</label>
+        {% endfor %}
+      </div>
+      <label>Locations <small>comma-separated; blank for anywhere</small>
+        <input name="locations" value="{{ prefs.locations|join(', ') }}" placeholder="New York, Remote">
+      </label>
+      <label>Remote
+        <select name="remote">
+          {% for choice in remote_choices %}<option value="{{ choice }}" {{ 'selected' if prefs.remote == choice }}>{{ choice.replace('_', ' ') }}</option>{% endfor %}
+        </select>
+      </label>
+      <div class="choices">Company size <small>none checked = any</small>
+        {% for size in size_choices %}
+          <label><input type="checkbox" name="company_sizes" value="{{ size }}" {{ 'checked' if size in prefs.company_sizes }}> {{ size }}</label>
+        {% endfor %}
+      </div>
+      <div class="choices">Exclude industries
+        {% for industry in industries %}
+          <label><input type="checkbox" name="exclude_industries" value="{{ industry }}" {{ 'checked' if industry in prefs.exclude_industries }}> {{ industry.replace('_', ' ') }}</label>
+        {% endfor %}
+      </div>
+      <label>Earliest start <small>YYYY-MM</small>
+        <input name="earliest_start" value="{{ prefs.earliest_start or '' }}" placeholder="2027-05">
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>How much each factor matters <small>1 barely · 5 decisive</small></legend>
+      {% for factor in factors %}
+        <label class="priority">{{ factor }}
+          <select name="priority_{{ factor }}">
+            {% for n in range(1, 6) %}<option value="{{ n }}" {{ 'selected' if prefs.priorities.get(factor, default_priority) == n }}>{{ n }}</option>{% endfor %}
+          </select>
+        </label>
+      {% endfor %}
+    </fieldset>
+
+    <button type="submit" class="btn-refresh">Save profile</button>
+  </form>
+
+  {% if profile %}
+    <section class="derived">
+      <h2>What the scorer sees</h2>
+      <p><strong>Seniority:</strong> {{ profile.seniority.level }} ·
+        {{ profile.seniority.years_experience }} credited years ·
+        eligible for {{ profile.seniority.eligible_levels|join(', ') }}
+        {% if resume %}· extracted by {{ resume.extractor }}{% endif %}</p>
+      <p><strong>Skills:</strong>
+        {% for skill, weight in profile.skills|dictsort(by='value', reverse=true) %}{{ skill }} ({{ '%.2f'|format(weight) }}){{ ', ' if not loop.last }}{% endfor %}</p>
+      <p><strong>Role affinity:</strong>
+        {% for family, value in (profile.role_affinity|dictsort(by='value', reverse=true))[:6] %}{{ family.replace('_', ' ') }} ({{ '%.2f'|format(value) }}){{ ', ' if not loop.last }}{% endfor %}</p>
+      {% if resume and resume.warnings %}
+        <ul class="sub">{% for w in resume.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+      {% endif %}
+    </section>
+  {% endif %}
+</main>
+</body>
+</html>

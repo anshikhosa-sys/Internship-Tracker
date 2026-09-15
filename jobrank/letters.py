@@ -16,7 +16,7 @@ A cover letter for a forward-deployed role and one for a backend SWE role are
 not the same document, even from the same person with the same résumé. An FDE
 reviewer is scanning for evidence you can sit with a customer and handle
 ambiguity. A SWE reviewer wants depth on the hardest thing you've shipped. The
-same Backstage project is the lead story for one and a footnote for the other.
+same internal-tools project is the lead story for one and a footnote for the other.
 
 So the prompt adapts. Every posting already knows its role family — the scorer
 records which ROLE_FAMILIES entry matched — and that name selects a block of

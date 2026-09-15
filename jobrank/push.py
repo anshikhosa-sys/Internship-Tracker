@@ -10,7 +10,7 @@ SETUP, ONCE
 -----------
   1. Install "ntfy" from the App Store or Play Store (free).
   2. In the app, Subscribe to a topic. Pick something unguessable, e.g.
-     internships-ansh-7f3k9q2  — treat it like a password.
+     jobs-7f3k9q2-x8m4  — treat it like a password.
   3. Put that same string in PUSH_TOPIC in config.py.
 
 That's it. No account anywhere.

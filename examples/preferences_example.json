@@ -1,0 +1,17 @@
+{
+  "target_roles": ["Infrastructure Engineer", "Site Reliability Engineer", "Backend Engineer"],
+  "seniority": ["intern"],
+  "locations": ["Chicago", "New York", "Remote"],
+  "remote": "any",
+  "company_sizes": [],
+  "exclude_industries": ["defense", "quant_trading"],
+  "earliest_start": "2027-05",
+  "priorities": {
+    "skills": 4,
+    "seniority": 5,
+    "role": 4,
+    "preferences": 2,
+    "freshness": 3,
+    "semantic": 3
+  }
+}

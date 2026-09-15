@@ -517,3 +517,17 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
   padding: 1px 5px;
   border-radius: 4px;
 }
+
+/* Profile intake */
+.profile-page { max-width: 820px; }
+.profile-form fieldset { border: 1px solid var(--border, #e5e7eb); border-radius: 8px; margin: 0 0 16px; padding: 12px 16px; }
+.profile-form legend { font-weight: 600; padding: 0 4px; }
+.profile-form label { display: block; margin: 8px 0; }
+.profile-form input:not([type=checkbox]), .profile-form select { display: block; width: 100%; max-width: 100%; box-sizing: border-box; padding: 6px 8px; margin-top: 4px; }
+.profile-form .choices { margin: 10px 0; }
+.profile-form .choices label { display: inline-block; margin: 4px 12px 4px 0; }
+.profile-form label.priority { display: inline-block; margin-right: 16px; }
+.profile-form label.priority select { display: inline-block; width: auto; }
+.ok-banner { background: #ecfdf5; color: #065f46; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; }
+.derived { margin-top: 24px; }
+@media (prefers-color-scheme: dark) { .ok-banner { background: #052e1c; color: #6ee7b7; } }

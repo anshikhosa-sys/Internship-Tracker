@@ -1,14 +1,12 @@
-# Two dependencies — everything else is Python's standard library.
-requests==2.32.3    # fetching the README over HTTP
-Flask==3.1.0        # the local dashboard
+# Runtime. Every dependency is free and runs locally; nothing here can call a
+# paid API (tests/test_llm.py asserts it).
+httpx>=0.27          # source fetching and the local Ollama backend
+requests>=2.32       # legacy source fetchers (replaced by httpx in the async pipeline)
+Flask>=3.0           # the dashboard
+pypdf>=5.0           # PDF résumés (pure Python)
+numpy>=1.26          # vector math for semantic matching
+fastembed>=0.4       # local ONNX embedding model; optional — hashed vectors are the fallback
 
-# Testing the interface in a real browser. Optional — nothing at runtime
-# needs it, and browser_tests.py says so plainly if it is missing rather
-# than skipping quietly.
-#
-# Two copy-button bugs shipped while every Python test passed, because
-# neither bug was in Python. This is the dependency that catches that class.
-#
-#   pip install playwright
-#   python3 -m playwright install chromium
-playwright>=1.40
+# Development
+pytest>=8.0
+playwright>=1.40     # browser_tests.py: python3 -m playwright install chromium
