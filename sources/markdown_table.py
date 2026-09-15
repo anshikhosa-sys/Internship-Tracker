@@ -21,6 +21,7 @@ below strips HTML properly and pulls hrefs out first, so the split happens on
 text we've already made safe.
 """
 
+import html
 import re
 from datetime import date, datetime
 
@@ -55,12 +56,24 @@ def _strip_html(text: str) -> str:
 
     Bare markdown images (an "Apply" button graphic) drop entirely; their
     alt text is not the visible text of the cell in any useful sense.
+
+    THE LABEL PATTERN ALLOWS ESCAPED BRACKETS, and has to.
+
+    A naive "anything but a closing bracket" label stops at the FIRST
+    closing bracket, which in a title like "[ESCAPED-OPEN Summer 2027
+    ESCAPED-CLOSE Software Engineer Intern](https://…)" is the escaped one
+    inside the label. The unwrap then fails and the whole raw link —
+    URL included — survives as the job title, which is the exact bug this
+    function exists to prevent, reached by a different route. Four live
+    rows hit it (Roblox, SAP, two at Figure).
     """
     text = re.sub(r"<br\s*/?>", " | ", text, flags=re.I)
     text = re.sub(r"<[^>]+>", "", text)
-    text = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", text)      # images first
-    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", text)   # then links
-    text = re.sub(r"&nbsp;?", " ", text)
+    # Images first, then links. Both labels may contain backslash escapes.
+    text = re.sub(r"!\[(?:[^\[\]\\]|\\.)*\]\([^)]*\)", "", text)
+    text = re.sub(r"\[((?:[^\[\]\\]|\\.)*)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"\\([\[\]()])", r"\1", text)   # unescape what's left
+    text = html.unescape(text)                    # &amp; -> &
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 

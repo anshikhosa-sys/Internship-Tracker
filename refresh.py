@@ -38,6 +38,7 @@ import storage
 from sources import (
     ChielerReadmeSource,
     DereC4ReadmeSource,
+    DreamWorkReadmeSource,
     SimplifyReadmeSource,
     SndshReadmeSource,
     SpeedyApplyAISource,
@@ -64,6 +65,18 @@ SOURCES = [
     # from a relative age — so it improves postings we already held.
     ChielerReadmeSource(),
     DereC4ReadmeSource(),
+    # Added for pay and category coverage rather than volume. It publishes a
+    # PAY column on most rows — only about a quarter of the pool prices
+    # itself at all, and pay_lift() can only reward what it can see — and
+    # section headings that name a category, which candidacy uses and only
+    # Simplify otherwise provides.
+    #
+    # Its pay is quoted ANNUALLY while every other source is hourly, and
+    # scorer.hourly_pay() would have read "$104K" as $104/hr. The
+    # conversion happens inside the source, on the way in. See the module
+    # docstring; it is the clearest example in the repo of why the Source
+    # contract is worth having.
+    DreamWorkReadmeSource(),
 ]
 
 

@@ -84,7 +84,15 @@ SOURCE_NAME = "Summer2027-Internships"
 # career tracks. Add them here to pull them in; nothing else needs changing.
 INGEST_CATEGORIES = [
     "Software Engineering",
-    "Product Management",
+    # "Product Management" WAS HERE and was removed: the user is not applying to
+    # PM or APM roles. Same treatment as Quantitative Finance and Hardware
+    # Engineering — a category that is never worth an application is not
+    # worth carrying through the pipeline.
+    #
+    # This only covers the ONE source that labels categories. PM titles still
+    # arrive unlabelled from the other seven, which is why the role family
+    # was removed and the titles added to OUT_OF_SCOPE as well. The category
+    # gate alone would have hidden about a third of them.
     "Data Science, AI & Machine Learning",
 ]
 
@@ -123,8 +131,19 @@ ROLE_FAMILIES = [
             "machine learning infrastructure", "machine learning platform",
             "ai infrastructure", "ai platform", "ai systems",
             "mlops", "ml ops", "model serving", "inference",
-            "training infrastructure", "ml engineer", "ai engineer",
+            "training infrastructure", "ai engineer",
             "applied ai", "llm infrastructure", "llm platform",
+            # AI ENGINEERING, the product half. Building ON models — agents,
+            # retrieval, LLM features in a real product — which is the work
+            # being targeted. Distinct from MLE below, which trains them.
+            # Live counts when added: agentic 10, ai agent 3, agent
+            # platform 2. The rest match nothing YET and are here because
+            # this vocabulary is a year old and the lists lag it; a keyword
+            # that matches nothing costs nothing, unlike a FILTER that
+            # matches nothing (see AGE_WINDOWS for why those are different).
+            "ai engineering", "agentic", "ai agent", "agent platform",
+            "llm application", "rag", "retrieval augmented",
+            "prompt engineering",
             "data platform", "data infrastructure", "data engineering",
             "data engineer", "feature store", "vector database",
             "ml tooling", "ai tooling", "genai platform",
@@ -142,18 +161,20 @@ ROLE_FAMILIES = [
             "field engineer", "solutions consultant",
         ],
     },
-    {
-        # Still high — a technical PM role at an AI/infra company is squarely
-        # on thesis. Slightly below the engineering families because the
-        # résumé proves less of it (see CANDIDACY_CATEGORY).
-        "name": "Technical PM / APM",
-        "preference": 0.85,
-        "keywords": [
-            "product manager", "product management",
-            "associate product manager", "apm", "technical product",
-            "product intern", "pm intern",
-        ],
-    },
+    # THE "Technical PM / APM" FAMILY WAS HERE, AT 0.85, AND WAS REMOVED.
+    #
+    # Its rationale was real — a technical PM role at an AI or infra company
+    # is squarely on thesis — and it is recorded here rather than deleted
+    # because it was a considered position, not an oversight.
+    #
+    # It was removed because the user decided not to apply to PM or APM
+    # roles at all. A family whose roles will never be applied to cannot earn
+    # a 0.85; the whole point of this list is that its top is a set of
+    # actions. With the family gone these titles match nothing, land on
+    # UNKNOWN_FAMILY_PREFERENCE, and are hidden by REQUIRE_KNOWN_ROLE_FAMILY.
+    #
+    # If that decision reverses, restore this block — do not try to
+    # reconstruct it from the OUT_OF_SCOPE entries, which are a blunter tool.
     {
         "name": "Technical Consulting / Strategy",
         "preference": 0.72,
@@ -188,10 +209,63 @@ ROLE_FAMILIES = [
             "application developer", "systems engineer",
             "qa engineer", "quality engineering", "test engineer",
             "developer", "programmer", "data engineer",
-            "machine learning engineer", "ml engineer",
-            "research engineer", "data scientist",
+            # "machine learning engineer", "ml engineer", "research
+            # engineer" and "data scientist" USED TO BE HERE, at 0.62.
+            #
+            # They are model-centric jobs and they now have their own
+            # family below at 0.45. Leaving them here defeated that
+            # entirely: a family match takes the HIGHEST preference, so a
+            # demoted MLE family would have lost to this 0.62 every time
+            # and changed nothing. If you ever re-add one, remember that.
             "backend", "full stack", "fullstack", "infrastructure engineer",
             "platform engineer",
+        ],
+    },
+    {
+        # MODEL-CENTRIC ML — deliberately BELOW generic software engineering.
+        #
+        # THE DISTINCTION THIS FAMILY EXISTS TO DRAW
+        # ------------------------------------------
+        # "AI Engineer" and "Machine Learning Engineer" sound like the same
+        # job and are not. An AI Engineer builds a PRODUCT on top of models:
+        # retrieval, agents, orchestration, an LLM feature that ships. An MLE
+        # trains and tunes the models themselves — ranking, recommendation,
+        # multimodal, deep learning. The first is the target; the second
+        # wants research experience the résumé doesn't prove and isn't the
+        # work being looked for.
+        #
+        # Measured before this existed: MLE titles had median preference
+        # 0.78 against AI-Engineer titles at 0.82. Four hundredths apart,
+        # for two different careers. They now sit ~0.25 apart.
+        #
+        # WHY 0.12
+        # --------
+        # This was 0.45 — a deliberate down-rank that kept these visible,
+        # on the principle that a big-tech MLE internship is still a good
+        # internship. It was lowered when the user decided not to apply to
+        # model-centric ML or data science at all.
+        #
+        # 0.12 puts them under LOW_FIT_THRESHOLD, so they leave the default
+        # view. NOTHING IS DELETED: they stay in the database, keep their
+        # scores, and come back with "show low-fit" — which is the project's
+        # standing rule and the reason this is a preference value rather
+        # than an ingest filter.
+        #
+        # A genuinely INFRASTRUCTURE-flavoured role still climbs back out on
+        # its own. "AI/ML Engineer Intern - Platform Integration" collects
+        # FOCUS_LIFT for "platform" and "integration" and clears the gate,
+        # which is correct — that is an infra job wearing an ML title, and
+        # infra is a target.
+        #
+        # Live shape when written: 56 "machine learning engineer" titles,
+        # overwhelmingly TikTok/ByteDance ads, search and recommendation
+        # ranking work.
+        "name": "ML Engineering (model-centric)",
+        "preference": 0.12,
+        "keywords": [
+            "machine learning engineer", "ml engineer",
+            "deep learning", "research engineer", "data scientist",
+            "ranking engineer", "recommendation engineer",
         ],
     },
 ]
@@ -268,6 +342,33 @@ FOCUS_LIFT = {
     "applied ai": 0.20,
     "ai engineer": 0.20,
 
+    # AI ENGINEERING vs MODEL RESEARCH — the split this block encodes.
+    #
+    # What is HERE is the product half: building on top of models. What is
+    # deliberately NOT here, and lives in OUT_OF_SCOPE instead, is the
+    # research half: deep learning, multimodal, ranking, recommendation.
+    # Both halves say "AI" in the title and they are different jobs, so the
+    # vocabulary has to take a side.
+    #
+    # The number after each is how many live titles it matched the day it
+    # was added — kept because it tells the next person tuning this which
+    # entries are doing real work and which are speculative. A zero here is
+    # fine (the term is newer than the lists), but a zero on a user-facing
+    # FILTER is not; see AGE_WINDOWS for that distinction.
+    "agentic": 0.22,              # 10
+    "ai agent": 0.22,             # 3
+    "agent platform": 0.22,       # 2
+    "generative ai": 0.20,        # 8
+    "llm application": 0.22,      # 2
+    "ai product": 0.16,           # 4
+    "inference": 0.18,            # 5  — serving, i.e. the infra side
+    "orchestration": 0.15,        # 2
+    "rag": 0.22,                  # 0  — forward-looking
+    "retrieval augmented": 0.22,  # 0
+    "prompt engineering": 0.18,   # 0
+    "vector database": 0.18,      # 0
+    "embeddings": 0.15,           # 0
+
     # Customer-facing — core to forward-deployed work
     "customer": 0.18,
     "client": 0.15,
@@ -329,12 +430,14 @@ OUT_OF_SCOPE = {
     # Your resume proves pipelines, warehouses, and platforms. It does not
     # prove statistics, modelling, or dashboarding, which is what these ask
     # for. "Data Engineer" stays a top-tier match; these do not.
-    "data analyst": 0.20,
-    "data analytics": 0.25,
-    "business analyst": 0.15,
-    "business intelligence": 0.25,
-    "data scientist": 0.20,
-    "data science": 0.20,
+    "data analyst": 0.12,
+    "data analytics": 0.15,
+    "business analyst": 0.10,
+    "business intelligence": 0.15,
+    # Tightened from 0.20 with the PM removal: these are now a category the
+    # user will not apply to, not merely one ranked below engineering.
+    "data scientist": 0.06,
+    "data science": 0.06,
     "statistician": 0.10,
     "statistics": 0.15,
     "biostatistics": 0.05,
@@ -350,6 +453,58 @@ OUT_OF_SCOPE = {
     "robotics": 0.15,
     "speech recognition": 0.20,
     "reinforcement learning": 0.20,
+
+    # --- MODEL WORK, as distinct from AI ENGINEERING -------------------
+    # The other half of the split described in FOCUS_LIFT. These are the
+    # words that mean "you will be training and tuning the model", which is
+    # a different job from building a product on top of one.
+    #
+    # MILDER THAN THE RESEARCH TERMS ABOVE, ON PURPOSE. A PhD-flavoured
+    # "Research Scientist" role is genuinely closed; a big-tech ranking MLE
+    # internship is open, well paid, and simply not what is being looked
+    # for. So these DOWN-RANK rather than sink, and the roles stay reachable
+    # under "show low-fit" like everything else.
+    #
+    # Counts are live matches the day they were added.
+    # These describe the WORK. "You will train and tune models."
+    "deep learning": 0.30,        # 6
+    "multimodal": 0.35,           # 6
+    "multi-modal": 0.35,          # 1
+    "model training": 0.30,       # 0  — forward-looking
+    "pretraining": 0.20,          # 0
+    "foundation model": 0.25,     # 2
+    #
+    # "recommendation" (23 live), "ranking" (3) and "search quality" (4)
+    # WERE HERE AND WERE REMOVED. Keep them out.
+    #
+    # They describe a DOMAIN, not a job. Penalizing them cost the one role
+    # in the live data this whole section is supposed to surface: TikTok's
+    # "AI Infrastructure Engineer Intern - Recommendation & LLM" fell from
+    # 68 to 57 — a genuine infrastructure role, docked for the subject its
+    # infrastructure serves. That is the same failure as matching "exa"
+    # inside "Texas Instruments", one level up: the string was really
+    # there, and it still meant the wrong thing.
+    #
+    # It was also double-counting. Every MLE title these caught is already
+    # demoted by the model-centric family, and the project's own rule is
+    # that stacked penalties for one fact are a bug — see the employer tier
+    # being SKIPPED when OUT_OF_SCOPE_COMPANIES has already fired.
+    #
+    # The job-shape terms above do this job without the collateral damage.
+
+    # --- Product management ---------------------------------------------
+    # Not a judgment about PM work; the user is simply not applying to it. Set
+    # low enough that a PM title cannot be rescued by topic lift — "Product
+    # Management Intern - AI Products" scored 63 on the strength of "AI"
+    # alone, which is exactly the sort of near-miss this has to stop.
+    "product manager": 0.04,
+    "product management": 0.04,
+    "associate product manager": 0.04,
+    "apm": 0.04,
+    "product owner": 0.04,
+    "technical product": 0.06,
+    "product intern": 0.05,
+    "pm intern": 0.04,
 
     # Non-technical roles that read like tech roles until you look. A
     # "Product Marketing Intern" matches "product" and sails up the list
@@ -389,6 +544,12 @@ OUT_OF_SCOPE_COMPANIES = {
     "dv group": 0.25,
     "dv trading": 0.25,
     "garda capital": 0.30,
+    # The same firm as above, spelled the way one source names companies
+    # after their DOMAIN: gardacp.com. Splitting can rescue "Akunacapital"
+    # into "Akuna capital", but an abbreviation recovers nothing, so the
+    # domain form has to be listed outright. It scored 48 as "Gardacp"
+    # against 19 as "Garda Capital Partners" — for the same job.
+    "gardacp": 0.30,
     "belvedere trading": 0.30,
     "wolverine trading": 0.30,
     "peak6": 0.30,
@@ -608,6 +769,18 @@ EMPLOYER_NAMES = {
         "marsh", "mercer", "aon", "willis towers", "hntb", "wsp",
         "imeg", "ryan companies", "montenson", "rrs group",
         "fast enterprises", "lufco", "ler",
+        # Found escaping the tier during an audit of the highest-scoring
+        # UNRECOGNIZED employers. Every one of these was sitting at x0.90
+        # ("employer not recognized") while being plainly not a technology
+        # company, and every one had a genuine-looking engineering title
+        # carrying it up the list — which is the exact failure EMPLOYER_TIERS
+        # was built for. "Springs Window Fashions" is the blinds
+        # manufacturer named in CLAUDE.md as the original example; it was
+        # listed as "springs window" and one source spells it
+        # "Springswindowfashions", which that entry could not match.
+        "air products", "artisan partners", "mackenzie investments",
+        "manulife", "bny", "bny mellon", "globalhr",
+        "springs window fashions", "springs windowfashions",
         # Government, national labs, universities, nonprofits
         "allegheny county", "lawrence livermore", "los alamos",
         "sandia national", "oak ridge", "argonne", "mitre corp",
@@ -638,6 +811,8 @@ NON_TECH_NAME_HINTS = [
     "construction", "contractors", "builders", "realty",
     "real estate", "properties", "development group",
     "logistics", "freight", "trucking", "shipping",
+    "investments", "investment management", "window fashions",
+    "windowfashions", "industrial gases",
     "staffing", "recruiting agency", "accountants", "actuarial",
     "law firm", "legal group",
     "university", "college", "school district", "academy",
@@ -761,6 +936,39 @@ CANDIDACY_EVIDENCE = {
     "applied ai": 0.16,
     "ai engineer": 0.14,
     "prompt": 0.12,
+    # The AI-ENGINEERING vocabulary, added alongside the FOCUS_LIFT terms
+    # that mark the same roles as wanted. Preference and candidacy are
+    # separate questions and both were being asked about these roles; only
+    # preference had an answer. profile.md names LangChain, LLM APIs, a
+    # user-facing chatbot and orchestrated AI subagents, so the evidence
+    # was real and simply had no keyword to attach to.
+    #
+    # REQUIRE_EVIDENCE_IN_PROFILE still gates every one of these: they pay
+    # out only while the résumé actually says so.
+    "langchain": 0.16,
+    "agentic": 0.16,
+    "ai agent": 0.16,
+    "chatbot": 0.12,
+    "llm integration": 0.18,
+    "prompt engineering": 0.14,
+    "openai": 0.12,
+    #
+    # "rag" IS DELIBERATELY NOT HERE, and this is worth reading before you
+    # add it. It was added, and it paid out — against the word "leverage",
+    # in this file's own closing paragraph.
+    #
+    # scorer.profile_supports() tests `term in text`, a SUBSTRING check,
+    # while everything else in the scorer matches whole words precisely to
+    # avoid this ("exa" inside "Texas Instruments"). So the résumé gate is
+    # the one place in the project where the old bug still lives.
+    #
+    # It cannot simply be swapped for the whole-word matcher either: the
+    # résumé says "data pipelines" and the keyword is "data pipeline", and
+    # \b would reject that genuine match. Fixing it properly means stemming
+    # or explicit plurals, which is a scorer.py change and a real decision.
+    # Until then, keep short keywords out of this dict — they are the ones
+    # that collide. "rag" still earns PREFERENCE via FOCUS_LIFT, which is
+    # not profile-gated and so is unaffected.
 
     # Web stack
     "typescript": 0.12,
@@ -1116,6 +1324,53 @@ REQUIRE_KNOWN_ROLE_FAMILY = True
 # you — an advanced degree, a seniority level, a technology your resume
 # doesn't support. Those aren't worth the twenty minutes.
 MIN_CANDIDACY = 0.45
+
+# =============================================================================
+# ROLES THAT ARE NEVER WORTH AN APPLICATION
+# =============================================================================
+#
+# WHY A LIST AND NOT JUST A LOW PREFERENCE
+# ----------------------------------------
+# Because a low preference CANNOT hide anything, and it is worth understanding
+# why before reaching for one.
+#
+# SCORE_WEIGHTS raises preference to the power 0.35, deliberately, so that
+# wanting a role nudges the ranking without deciding it. That exponent cuts
+# both ways: it compresses the BOTTOM of the range just as hard as the top.
+# A preference crushed all the way to 0.04 still contributes 0.04^0.35 = 0.35,
+# so a fresh posting with decent candidacy lands around 30 — comfortably above
+# LOW_FIT_THRESHOLD and squarely in the default view.
+#
+# That was measured, not assumed: after PM and data science were crushed to
+# 0.04 and 0.06, five titles were still visible, all of them hybrids where a
+# SWE keyword ("Developer") pulled the family up before the multiplier came
+# down. "Data Analyst Developer Intern" scored 31.
+#
+# So a role that must never appear needs a GATE, not a weight.
+#
+# THIS IS STILL A DISPLAY RULE, NOT A DELETION
+# --------------------------------------------
+# Matched postings stay in the database, keep their scores, and come back in
+# full with "show low-fit" — the same override that lifts the age cutoff and
+# the crowding cap. Nothing here removes data. The promise it enforces is
+# narrower and is the one that was actually asked for: everything in the
+# DEFAULT view is something worth applying to.
+#
+# Matched whole-word against the title, like every other keyword list.
+EXCLUDED_ROLE_KEYWORDS = [
+    # Product management
+    "product manager", "product management", "associate product manager",
+    "apm", "product owner", "pm intern",
+    # Data science and analysis, as distinct from data ENGINEERING —
+    # "Data Engineer" stays a top-tier match and must not be caught here.
+    "data scientist", "data science", "data analyst", "data analytics",
+    "business analyst", "business intelligence",
+    # Model-centric ML, as distinct from ML INFRASTRUCTURE — "AI
+    # Infrastructure Engineer" and "ML Platform Engineer" must survive this
+    # list; they are the top family.
+    "machine learning engineer", "ml engineer", "deep learning",
+    "research scientist", "applied scientist",
+]
 
 # Default dashboard sort:
 #   "score"       preference × candidacy × freshness  (what to do today)

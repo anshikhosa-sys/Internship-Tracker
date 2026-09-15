@@ -136,6 +136,17 @@ def _filtered(postings, new_ids, args):
                 continue
             if (posting.get("candidacy_score") or 0) < config.MIN_CANDIDACY:
                 continue
+            # Role types that are never worth an application — PM, data
+            # science, model-centric ML. A GATE rather than a low score,
+            # because preference^0.35 compresses the bottom of the range as
+            # hard as the top and cannot push anything out of view on its
+            # own; see config.EXCLUDED_ROLE_KEYWORDS for the measurement.
+            #
+            # Lifted by "show low-fit" like every other cutoff here, and
+            # never applied to something already applied to.
+            if any(scorer._matches(kw, (posting.get("role") or "").lower())
+                   for kw in config.EXCLUDED_ROLE_KEYWORDS):
+                continue
 
         # Hide low-fit postings unless asked for. They're still in the
         # database and still scored — just collapsed by default.

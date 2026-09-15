@@ -150,18 +150,25 @@ def test_preference():
     check(pref("Training Program Intern") < pref("AI Engineer Intern"),
           "'Training' does not collect the AI lift")
 
-    # Family ordering. Note the PM title must carry a technical signal —
-    # a bare "Product Manager Intern" is deliberately ranked BELOW software
-    # engineering, because a product role with nothing technical in the
-    # title is a different job that happens to share a name.
+    # Family ordering.
+    #
+    # THIS USED TO ASSERT  FDE > technical PM > SWE,  and it was right at the
+    # time: the PM family sat at 0.85 on the argument that a technical PM
+    # role at an AI or infra company was on thesis. That family has since
+    # been removed — the user is not applying to PM or APM at all — so the
+    # intended order is now FDE > SWE > PM, and PM sits below everything.
     check(pref("Forward Deployed Engineer Intern") >
-          pref("Technical Product Manager Intern") >
-          pref("Software Engineer Intern"),
+          pref("Software Engineer Intern") >
+          pref("Technical Product Manager Intern"),
           "role families rank in the intended order")
 
-    check(pref("Technical Product Manager Intern") >
-          pref("Product Manager Intern") * 2,
-          "a technical PM role far outranks a generic product one")
+    # Both PM shapes are now out of scope, the technical-sounding one very
+    # much included — "Product Management Intern - AI Products" scoring 63
+    # off the back of one "AI" is the case this guards against.
+    check(pref("Technical Product Manager Intern") < pref("Software Engineer Intern"),
+          "a technical PM title no longer outranks engineering")
+    check(pref("Product Manager Intern") < config.LOW_FIT_THRESHOLD / 100,
+          "a bare PM title lands below the low-fit threshold")
 
     # Focus lift is what separates good SWE roles from generic ones.
     generic = pref("Software Engineer Intern")
@@ -171,7 +178,14 @@ def test_preference():
           f"({generic})")
     # The family floor is the value BEFORE the employer multiplier. A test
     # posting has no recognizable company, so it takes the "unknown" tier.
-    floor = (config.ROLE_FAMILIES[-1]["preference"]
+    #
+    # Looked up BY NAME, not by index. This was ROLE_FAMILIES[-1], which
+    # silently meant "Software Engineering" only for as long as that family
+    # happened to be listed last — adding the model-centric ML family below
+    # it broke this test while the behaviour it checks was unchanged.
+    swe_family = next(f for f in config.ROLE_FAMILIES
+                      if f["name"] == "Software Engineering")
+    floor = (swe_family["preference"]
              * config.EMPLOYER_TIERS["unknown"]["multiplier"])
     check(abs(generic - round(floor, 3)) < 1e-9,
           "a bare SWE title sits at the family floor, nudged by an "
@@ -808,9 +822,14 @@ def test_scoring_model():
           score("Software Engineer Intern", age_days=0,
                 advanced_degree=True),
           "candidacy changes the score when the other two are fixed")
-    # A TECHNICAL product role — a bare "Product Manager Intern" is now
-    # deliberately ranked below software engineering.
-    check(score("Technical Product Manager Intern", age_days=0) >
+    # This pair USED TO BE a technical PM title against a SWE one, back when
+    # the PM family sat at 0.85. PM is now deliberately below engineering,
+    # so the comparison was inverted and no longer tested what it claimed.
+    #
+    # FDE against SWE is the durable version: both titles contain no
+    # CANDIDACY_EVIDENCE keyword and share a category, so candidacy really
+    # is held fixed and preference is the only thing moving.
+    check(score("Forward Deployed Engineer Intern", age_days=0) >
           score("Software Engineer Intern", age_days=0),
           "preference changes the score when the other two are fixed")
 
@@ -1484,6 +1503,42 @@ def test_just_apply_gate():
         set(), {"f": "1", "show_low": "1", "within": "7"})
     check(len(shown) == 1,
           "'show low-fit' still reveals everything")
+
+    # ROLE TYPES THAT ARE NEVER APPLIED TO.
+    #
+    # A GATE, not a low score. preference^0.35 compresses the bottom of the
+    # range as hard as the top, so even a preference of 0.04 lands around 30
+    # — above LOW_FIT_THRESHOLD and in the default view. Five titles were
+    # still showing after PM and data science were crushed to near zero.
+    for title in ("Product Manager Intern",
+                  "Data Scientist Intern",
+                  "Data Analyst Developer Intern",
+                  "Machine Learning Engineer Intern - Ranking"):
+        check(len(dashboard._filtered([row(role=title)], set(), {})) == 0,
+              f"an excluded role type is not shown: {title}")
+
+    # ...but the INFRASTRUCTURE roles that share their vocabulary must
+    # survive. This is the line the exclusion list must not cross: these are
+    # the top family, and catching them would delete the best roles on the
+    # board rather than the worst.
+    for title in ("AI Infrastructure Engineer Intern",
+                  "ML Platform Engineer Intern",
+                  "Data Engineer Intern"):
+        check(len(dashboard._filtered([row(role=title)], set(), {})) == 1,
+              f"an infrastructure role is still shown: {title}")
+
+    # And the exclusion is a display rule like every other one here.
+    hidden = row(role="Product Manager Intern")
+    check(len(dashboard._filtered(
+        [hidden], set(), {"f": "1", "show_low": "1", "within": "7"})) == 1,
+        "'show low-fit' reveals excluded role types too")
+
+    # Never applied to something already in the pipeline — an application
+    # is a record, not a candidate.
+    check(len(dashboard._filtered(
+        [row(role="Product Manager Intern", status="applied")],
+        set(), {})) == 1,
+        "an excluded role you already applied to stays visible")
 
     # A title naming a relevant SUBJECT but no job title — "Cloud, Data and
     # AI Intern" — must not be dropped as unclassifiable while earning a
