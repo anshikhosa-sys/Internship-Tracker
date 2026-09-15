@@ -57,7 +57,7 @@ from html.parser import HTMLParser
 
 import requests
 
-import config
+from jobrank import config
 from .base import Posting, Source
 
 

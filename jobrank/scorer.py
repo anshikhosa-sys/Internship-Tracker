@@ -66,7 +66,7 @@ import os
 import re
 from datetime import date
 
-import config
+from jobrank import config
 
 
 # =============================================================================

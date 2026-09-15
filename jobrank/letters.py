@@ -33,7 +33,7 @@ in an interview you can't walk it back.
 
 import os
 
-import config
+from jobrank import config
 
 
 class LetterError(Exception):

@@ -17,6 +17,22 @@
 # template; profile.md is yours and stays local.
 profile.md
 
+# Real user profiles (parsed résumé + preferences). Only the synthetic
+# example is committed.
+profiles/*
+!profiles/example.json
+
+# Real relevance labels and eval baselines are derived from a person's
+# applications. Only the synthetic example set is committed.
+eval/golden/*
+!eval/golden/example.jsonl
+eval/baselines/*
+!eval/baselines/example.json
+
+# Private working notes that name the author.
+BRIEFING.md
+HANDOFF-CHANGES.md
+
 # Generated cover letter drafts. They quote your résumé and are written in
 # your name — keep them off the internet.
 letters/
@@ -40,6 +56,9 @@ applications.json
 .venv/
 venv/
 env/
+
+# Downloaded embedding models, LLM response caches, vector indexes.
+.cache/
 
 # Python's compiled bytecode cache. Regenerated automatically.
 __pycache__/

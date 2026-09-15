@@ -106,7 +106,7 @@ build_schedule_entries() {
   "$PYTHON_BIN" - <<'PY'
 import sys
 sys.path.insert(0, ".")
-import config
+from jobrank import config
 for hour, minute in config.REFRESH_TIMES:
     print("        <dict>")
     print(f"            <key>Hour</key><integer>{hour}</integer>")
@@ -273,7 +273,7 @@ do_install() {
     "Installed. Nothing to run by hand from now on." \
     "" \
     "  Weekly check:   Sundays 09:00 (notifies only if something breaks)" \
-    "  Refresh runs:   $(cd "$PROJECT_DIR" && "$PYTHON_BIN" -c "import config; print(', '.join('%02d:%02d' % t for t in config.REFRESH_TIMES))")" \
+    "  Refresh runs:   $(cd "$PROJECT_DIR" && "$PYTHON_BIN" -c "from jobrank import config; print(', '.join('%02d:%02d' % t for t in config.REFRESH_TIMES))")" \
     "  Dashboard:      http://127.0.0.1:$DASH_PORT  (always on)" \
     "  Logs:           $LOG_DIR/" \
     ""

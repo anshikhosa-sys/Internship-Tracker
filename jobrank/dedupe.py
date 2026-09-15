@@ -39,7 +39,7 @@ That way adding a source can only ever improve a record.
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from sources.base import normalize
+from jobrank.sources.base import normalize
 
 
 def key_for(posting) -> tuple:

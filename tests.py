@@ -24,13 +24,13 @@ import os
 import tempfile
 from datetime import date, timedelta
 
-import config
-import dedupe
-import letters
-import scorer
-import storage
-from sources.base import Posting
-from sources.simplify_readme import _TableParser, _age_to_date, _cell_text
+from jobrank import config
+from jobrank import dedupe
+from jobrank import letters
+from jobrank import scorer
+from jobrank import storage
+from jobrank.sources.base import Posting
+from jobrank.sources.simplify_readme import _TableParser, _age_to_date, _cell_text
 
 
 # =============================================================================
@@ -412,7 +412,7 @@ def test_url_dedupe():
     """
     print("\nDUPLICATE JOBS ACROSS LISTS")
 
-    import dedupe
+    from jobrank import dedupe
 
     # -- the URL is reduced to its identity ---------------------------------
     check(dedupe.normalize_url("https://WWW.Example.com/job/1?utm_source=gh")
@@ -531,7 +531,7 @@ def test_prompt_text_endpoint():
     """
     print("\nPROMPT TEXT ENDPOINT")
 
-    import app as app_module
+    from jobrank.web import app as app_module
 
     client = app_module.app.test_client()
 
@@ -601,7 +601,7 @@ def test_probes_dont_consume_badges():
     """
     print("\nPROBES DO NOT CONSUME BADGES")
 
-    import app as app_module
+    from jobrank.web import app as app_module
 
     client = app_module.app.test_client()
 
@@ -657,7 +657,7 @@ def test_quotas():
     """
     print("\nAPPLICATION QUOTAS")
 
-    import app
+    from jobrank.web import app
 
     group = app._quota_group("TikTok")
     check(group is not None, "TikTok is covered by a quota")
@@ -702,7 +702,7 @@ def test_notify_honesty():
     """
     print("\nNOTIFICATIONS")
 
-    import notify
+    from jobrank import notify
 
     check(hasattr(notify, "send"), "notify.send exists")
     check("deliver" in (notify.send.__doc__ or "").lower()
@@ -913,7 +913,7 @@ def test_scoring_model():
           "a trading firm's SWE role scores below an ordinary one")
 
     print("\nPHONE PUSH")
-    import push
+    from jobrank import push
     check(push.is_configured() is False or bool(config.PUSH_TOPIC),
           "push reports configured only when a topic is set")
     # Must never raise from a background job, even with a bad topic.
@@ -1066,7 +1066,7 @@ def test_markdown_sources():
     """The markdown table reader the two newer sources share."""
     print("\nMARKDOWN TABLE PARSING")
 
-    from sources import markdown_table as md
+    from jobrank.sources import markdown_table as md
 
     # Built from parts to keep the source lines short; the reader only
     # cares that each row is a pipe-delimited line.
@@ -1249,7 +1249,7 @@ def test_defaults():
           "opens showing the last 3 days")
     check(config.DEFAULT_HIDE_COOP is True, "opens with co-ops hidden")
 
-    import app as dashboard
+    from jobrank.web import app as dashboard
     # A bare load uses the defaults.
     check(dashboard._effective_hide_coop({}) is True,
           "a bare page load hides co-ops")
@@ -1371,7 +1371,7 @@ def test_applied_always_visible():
     """
     print("\nAPPLIED POSTINGS STAY VISIBLE")
 
-    import app as dashboard
+    from jobrank.web import app as dashboard
 
     def row(status="", age_days=5, score=80, coop=False, off=False):
         return {
@@ -1470,7 +1470,7 @@ def test_just_apply_gate():
     """Everything on the list should already be worth applying to."""
     print("\nTHE 'JUST APPLY' GATE")
 
-    import app as dashboard
+    from jobrank.web import app as dashboard
 
     def row(**kw):
         base = {
@@ -1763,7 +1763,7 @@ def test_prompts():
           "the prompt says when it's working from the title alone")
 
     # These prompts are free by design — nothing should reach for an API.
-    source = open("letters.py", encoding="utf-8").read()
+    source = open("jobrank/letters.py", encoding="utf-8").read()
     check("anthropic" not in source.lower(),
           "letters.py makes no API calls and costs nothing")
 

@@ -56,7 +56,7 @@ def _free_port():
 
 def _serve_a_copy():
     """Start the app against a throwaway copy of the database."""
-    import config
+    from jobrank import config
 
     folder = tempfile.mkdtemp(prefix="internship-browser-tests-")
     for attr, name in (("DATABASE_PATH", "internships.db"),
@@ -71,7 +71,7 @@ def _serve_a_copy():
     # Never let a test run fetch the network or mutate anything upstream.
     config.STALE_DATA_HOURS = 10 ** 6
 
-    import app as app_module
+    from jobrank.web import app as app_module
 
     # Werkzeug logs every request; the test output is the point here.
     import logging

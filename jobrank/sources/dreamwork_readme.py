@@ -72,7 +72,7 @@ from datetime import datetime, timezone
 
 import requests
 
-import config
+from jobrank import config
 
 from . import markdown_table as md
 from .base import Posting, Source

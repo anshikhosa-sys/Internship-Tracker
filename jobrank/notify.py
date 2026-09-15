@@ -27,7 +27,7 @@ import platform
 import shutil
 import subprocess
 
-import config
+from jobrank import config
 
 
 def _escape(text: str) -> str:

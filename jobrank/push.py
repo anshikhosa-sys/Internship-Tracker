@@ -33,7 +33,7 @@ notifications keep working exactly as before.
 import urllib.error
 import urllib.request
 
-import config
+from jobrank import config
 
 
 def is_configured() -> bool:

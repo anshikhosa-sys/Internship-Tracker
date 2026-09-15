@@ -45,7 +45,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-import config
+from jobrank import config
 
 
 # =============================================================================
@@ -895,7 +895,7 @@ def reattach_orphaned_marks(conn) -> int:
     Returns how many were recovered. Should normally be 0; anything else is
     worth noticing, because it means ids moved.
     """
-    import dedupe
+    from jobrank import dedupe
     orphans = conn.execute(
         """
         SELECT a.posting_id, a.applied, a.notes, a.company, a.role

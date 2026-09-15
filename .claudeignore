@@ -1,0 +1,37 @@
+# Generated or machine-local — no architectural signal.
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.cache/
+logs/
+test-results/
+playwright-report/
+
+# Data: databases, vector indexes, LLM caches, scraped dumps.
+*.db
+*.db-journal
+*.sqlite3
+*.backup
+applications.json
+.cache/embeddings/
+.cache/vectors/
+.cache/llm/
+data/raw/
+
+# Personal content.
+profile.md
+profiles/*
+!profiles/example.json
+eval/golden/*
+!eval/golden/example.jsonl
+letters/
+BRIEFING.md
+HANDOFF-CHANGES.md
+
+# Editor clutter.
+.vscode/
+.idea/
+.DS_Store
