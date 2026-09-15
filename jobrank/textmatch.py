@@ -31,12 +31,27 @@ def pattern_for(keyword: str, case_sensitive: bool = False) -> re.Pattern:
 def contains(text: str, keyword: str, case_sensitive: bool = False) -> bool:
     if not text or not keyword:
         return False
+    # A substring test is a necessary condition and ~50x cheaper than the regex;
+    # it rejects nearly every keyword before the regex runs.
+    if case_sensitive:
+        if keyword.strip() not in text:
+            return False
+    elif keyword.strip().lower() not in text.lower():
+        return False
     return bool(pattern_for(keyword, case_sensitive).search(text))
 
 
 def find_all(text: str, keywords, case_sensitive: bool = False) -> list[str]:
     """Keywords (in given order) that occur in text."""
-    return [kw for kw in keywords if contains(text, kw, case_sensitive)]
+    if not text:
+        return []
+    haystack = text if case_sensitive else text.lower()
+    out = []
+    for kw in keywords:
+        needle = kw.strip() if case_sensitive else kw.strip().lower()
+        if needle and needle in haystack and pattern_for(kw, case_sensitive).search(text):
+            out.append(kw)
+    return out
 
 
 def is_valid_keyword(keyword: str) -> bool:

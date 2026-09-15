@@ -71,17 +71,18 @@ CREATE TABLE IF NOT EXISTS postings (
     needs_advanced_degree INTEGER,
     no_sponsorship       INTEGER,
     citizenship_required INTEGER,
-    -- The score is three factors multiplied. preference and candidacy are
-    -- stable and stored; freshness is NOT — it changes daily, so it's
-    -- recomputed at display time. fit_score is a snapshot from the last run,
-    -- used by the CLI report and notifications.
+    description          TEXT,     -- job description text, when a source has one
+    -- Scores are per profile and recomputed at read time. These columns hold
+    -- a snapshot for the ACTIVE profile only, used by the CLI report and
+    -- notifications. preference/candidacy columns are unused since v2 and
+    -- kept so databases created by v1 still open.
     preference           REAL,
-    preference_reasons   TEXT,     -- JSON list of {label, detail}
+    preference_reasons   TEXT,
     candidacy_score      REAL,
-    candidacy_reasons    TEXT,     -- JSON list of {label, detail}
-    role_family          TEXT,     -- matched ROLE_FAMILIES entry
-    company_tier         TEXT,     -- big/mid/niche; sets the freshness curve
-    fit_score            INTEGER,  -- snapshot: preference x candidacy x fresh
+    candidacy_reasons    TEXT,
+    role_family          TEXT,     -- taxonomy family from the title
+    company_tier         TEXT,     -- large/mid/startup
+    fit_score            INTEGER,  -- snapshot for the active profile
     first_seen           TEXT,     -- OUR timestamp: drives the NEW flag
     last_seen            TEXT,
     is_active            INTEGER   -- 0 once it drops off the source
@@ -121,6 +122,17 @@ CREATE TABLE IF NOT EXISTS runs (
 CREATE TABLE IF NOT EXISTS app_state (
     key   TEXT PRIMARY KEY,
     value TEXT
+);
+
+-- Structured facts extracted from a posting's text (jobrank/enrich.py).
+-- Keyed by posting and the hash of the text analyzed, so a posting whose text
+-- is unchanged is never analyzed twice.
+CREATE TABLE IF NOT EXISTS enrichments (
+    posting_id TEXT PRIMARY KEY,
+    text_hash  TEXT NOT NULL,
+    extractor  TEXT NOT NULL,
+    data       TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 
 """
@@ -294,6 +306,7 @@ _MIGRATIONS = {
         "age_text": "TEXT",
         "date_posted": "TEXT",
         "salary": "TEXT",
+        "description": "TEXT",
         "sources": "TEXT",
         "is_faang": "INTEGER",
         "needs_advanced_degree": "INTEGER",
@@ -413,13 +426,12 @@ def save_postings(conn, postings, run_time: str) -> dict:
             INSERT INTO postings (
                 id, source, company, role, category, location,
                 apply_url, simplify_url, age_text, date_posted,
-                salary, sources,
+                salary, description, sources,
                 is_faang, needs_advanced_degree, no_sponsorship,
-                citizenship_required, preference, preference_reasons,
-                candidacy_score, candidacy_reasons, role_family,
+                citizenship_required, role_family,
                 company_tier, fit_score,
                 first_seen, last_seen, is_active
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
             ON CONFLICT(id) DO UPDATE SET
                 source        = excluded.source,
                 company       = excluded.company,
@@ -431,15 +443,14 @@ def save_postings(conn, postings, run_time: str) -> dict:
                 age_text      = excluded.age_text,
                 date_posted   = excluded.date_posted,
                 salary        = excluded.salary,
+                description   = CASE WHEN excluded.description != ''
+                                     THEN excluded.description
+                                     ELSE postings.description END,
                 sources       = excluded.sources,
                 is_faang      = excluded.is_faang,
                 needs_advanced_degree = excluded.needs_advanced_degree,
                 no_sponsorship        = excluded.no_sponsorship,
                 citizenship_required  = excluded.citizenship_required,
-                preference        = excluded.preference,
-                preference_reasons = excluded.preference_reasons,
-                candidacy_score   = excluded.candidacy_score,
-                candidacy_reasons = excluded.candidacy_reasons,
                 role_family       = excluded.role_family,
                 company_tier      = excluded.company_tier,
                 fit_score         = excluded.fit_score,
@@ -451,13 +462,10 @@ def save_postings(conn, postings, run_time: str) -> dict:
                 posting.id, posting.source, posting.company, posting.role,
                 posting.category, posting.location, posting.apply_url,
                 posting.simplify_url, posting.age_text, posting.date_posted,
-                posting.salary, json.dumps(posting.sources or []),
+                posting.salary, posting.description or "",
+                json.dumps(posting.sources or []),
                 int(posting.is_faang), int(posting.needs_advanced_degree),
                 int(posting.no_sponsorship), int(posting.citizenship_required),
-                posting.preference,
-                json.dumps(posting.preference_reasons),
-                posting.candidacy_score,
-                json.dumps(posting.candidacy_reasons),
                 posting.role_family,
                 posting.company_tier,
                 posting.fit_score,
@@ -549,7 +557,7 @@ def load_postings(conn, include_inactive: bool = False) -> list:
     for row in rows:
         item = dict(row)
         # Reason lists are stored as JSON strings; decode for the template.
-        for field in ("preference_reasons", "candidacy_reasons", "sources"):
+        for field in ("sources",):
             try:
                 item[field] = json.loads(item.get(field) or "[]")
             except (json.JSONDecodeError, TypeError):
@@ -954,3 +962,36 @@ def applied_count(conn) -> int:
         "SELECT COUNT(*) AS n FROM appdb.applications WHERE applied = 1"
     ).fetchone()
     return row["n"] if row else 0
+
+
+# =============================================================================
+# Enrichments
+# =============================================================================
+
+def get_enrichments(conn) -> dict:
+    """posting_id -> {"text_hash", "extractor", "data"} for every stored enrichment."""
+    out = {}
+    for row in conn.execute("SELECT posting_id, text_hash, extractor, data FROM enrichments"):
+        try:
+            data = json.loads(row["data"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        out[row["posting_id"]] = {"text_hash": row["text_hash"], "extractor": row["extractor"], "data": data}
+    return out
+
+
+def put_enrichment(conn, posting_id: str, text_hash: str, extractor: str, data: dict) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO enrichments (posting_id, text_hash, extractor, data, updated_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (posting_id, text_hash, extractor, json.dumps(data), now_iso()),
+    )
+
+
+def set_score_snapshot(conn, scores: dict) -> None:
+    """Store {posting_id: (fit_score, company_size)} for the active profile."""
+    conn.executemany(
+        "UPDATE postings SET fit_score = ?, company_tier = ? WHERE id = ?",
+        [(score, size, posting_id) for posting_id, (score, size) in scores.items()],
+    )
+    conn.commit()

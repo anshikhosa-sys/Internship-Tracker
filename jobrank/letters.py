@@ -18,10 +18,9 @@ reviewer is scanning for evidence you can sit with a customer and handle
 ambiguity. A SWE reviewer wants depth on the hardest thing you've shipped. The
 same internal-tools project is the lead story for one and a footnote for the other.
 
-So the prompt adapts. Every posting already knows its role family — the scorer
-records which ROLE_FAMILIES entry matched — and that name selects a block of
-guidance from config.ROLE_FAMILY_GUIDANCE about what this audience is
-actually reading for.
+So the prompt adapts. Every posting's title classifies to a taxonomy role
+family, and that family selects a block of guidance from
+config.ROLE_FAMILY_GUIDANCE about what this audience is actually reading for.
 
 THE RULE THAT MATTERS MOST
 --------------------------
@@ -31,7 +30,6 @@ worse than a plain one: it goes out under your real name, and if it surfaces
 in an interview you can't walk it back.
 """
 
-import os
 
 from jobrank import config
 
@@ -44,37 +42,64 @@ class LetterError(Exception):
 # Loading your profile
 # =============================================================================
 
-def load_profile() -> str:
+def load_profile(user_id: str | None = None) -> str:
     """
-    Read profile.md, with instructions rather than a bare FileNotFoundError —
-    "no such file: profile.md" doesn't tell you what to do about it.
+    The candidate's parsed résumé, formatted for a prompt.
+
+    Built from the stored profile rather than a raw file, so the prompt
+    contains exactly what extraction found — the same corpus tailoring is
+    validated against — and never contact details.
     """
-    path = config.PROFILE_PATH
-    if not os.path.exists(path):
-        raise LetterError(
-            f"No {path} found.\n\n"
-            f"Create it from the template:\n"
-            f"    cp profile_example.md {path}\n\n"
-            f"Then fill in your details. It is gitignored, so it stays local."
-        )
+    from jobrank.profile import active, store
 
-    with open(path, encoding="utf-8") as handle:
-        text = handle.read().strip()
-
+    user_id = active.resolve(user_id)
+    if not user_id:
+        raise LetterError("No profile exists yet. Create one at /profile or with:\n"
+                          "    python3 run.py profile create --id <id> --resume <file>")
+    try:
+        resume, preferences = store.load_inputs(user_id)
+    except store.ProfileNotFound as exc:
+        raise LetterError(str(exc)) from exc
+    text = format_resume(resume, preferences)
     if len(text) < 200:
-        raise LetterError(
-            f"{path} looks empty or barely filled in. These prompts are only "
-            f"as specific as that file — fill in your real experience first."
-        )
-
+        raise LetterError(f"Profile '{user_id}' has almost no experience in it. These prompts are only "
+                          "as specific as the résumé — upload a fuller one first.")
     return text
+
+
+def format_resume(resume, preferences=None) -> str:
+    lines = []
+    if resume.education:
+        lines.append("EDUCATION")
+        for e in resume.education:
+            when = f", graduating {e.graduation}" if e.graduation else ""
+            lines.append(f"- {e.degree or e.level} — {e.institution}{when}")
+    if resume.experience:
+        lines.append("\nEXPERIENCE")
+        for x in resume.experience:
+            span = f"{x.start or '?'} to {'present' if x.current else (x.end or '?')}"
+            lines.append(f"{x.title} — {x.organization} ({span})")
+            lines.extend(f"- {b}" for b in x.bullets)
+    if resume.projects:
+        lines.append("\nPROJECTS")
+        for p in resume.projects:
+            tech = f" [{', '.join(p.technologies)}]" if p.technologies else ""
+            lines.append(f"{p.name}{tech}")
+            if p.description:
+                lines.append(f"- {p.description}")
+    if resume.skills or resume.other_skills:
+        lines.append("\nSKILLS")
+        lines.append(", ".join(resume.skills + resume.other_skills))
+    if preferences and preferences.target_roles:
+        lines.append("\nTARGET ROLES")
+        lines.append(", ".join(preferences.target_roles))
+    return "\n".join(lines).strip()
 
 
 def _guidance(role_family: str) -> dict:
     """What this kind of role's reviewer is actually reading for."""
-    return config.ROLE_FAMILY_GUIDANCE.get(
-        role_family or "", config.DEFAULT_FAMILY_GUIDANCE
-    )
+    key = config.GUIDANCE_FOR_FAMILY.get(role_family or "", role_family or "")
+    return config.ROLE_FAMILY_GUIDANCE.get(key, config.DEFAULT_FAMILY_GUIDANCE)
 
 
 def _posting_block(posting: dict) -> str:

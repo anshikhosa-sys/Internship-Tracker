@@ -40,47 +40,32 @@ def report(status, area, detail):
 
 def check_config():
     print("\nCONFIGURATION")
-    try:
-        weights = config.SCORE_WEIGHTS
-        report(PASS, "score weights",
-               f"preference {weights['preference']}, "
-               f"candidacy {weights['candidacy']}, "
-               f"freshness {weights['freshness']}")
-    except Exception as exc:
-        report(FAIL, "score weights", f"unreadable: {exc}")
-
+    from jobrank.config import scoring
+    report(PASS, "scoring factors", ", ".join(scoring.FACTORS))
     report(PASS, "age cutoff", f"{config.MAX_AGE_DAYS} days")
     report(PASS, "refresh times",
            ", ".join(f"{h:02d}:{m:02d}" for h, m in config.REFRESH_TIMES))
-    report(PASS, "company tiers", ", ".join(config.COMPANY_TIERS))
 
 
 def check_profile():
-    print("\nRESUME")
-    path = config.PROFILE_PATH
-    if not os.path.exists(path):
-        report(FAIL, "profile.md",
-               f"missing — copy profile_example.md to {path}")
+    print("\nPROFILE")
+    from jobrank.profile import active, store
+    user_id = active.resolve()
+    if not user_id:
+        report(FAIL, "profile", "none — create one at /profile or: python3 run.py profile create")
         return
-
-    with open(path, encoding="utf-8") as handle:
-        text = handle.read()
-
-    if len(text) < 200:
-        report(FAIL, "profile.md", "too short to produce useful prompts")
+    try:
+        profile = store.load(user_id)
+        resume, _ = store.load_inputs(user_id)
+    except Exception as exc:  # noqa: BLE001 - report, don't crash the check
+        report(FAIL, "profile", f"'{user_id}' unreadable: {exc}")
         return
-
-    report(PASS, "profile.md", f"{len(text)} characters")
-
-    # Candidacy only credits keywords that appear here, so a low count means
-    # scoring is running on very little evidence.
-    lowered = text.lower()
-    grounded = [k for k in config.CANDIDACY_EVIDENCE if k in lowered]
-    ratio = len(grounded) / max(len(config.CANDIDACY_EVIDENCE), 1)
-    status = PASS if ratio >= 0.4 else WARN
-    report(status, "resume-grounded evidence",
-           f"{len(grounded)}/{len(config.CANDIDACY_EVIDENCE)} scoring "
-           f"keywords appear in your resume")
+    status = WARN if user_id == active.EXAMPLE_ID else PASS
+    report(status, "active profile", f"{user_id} (extracted by {resume.extractor})")
+    report(PASS if len(profile.skills) >= 5 else WARN, "skills evidence",
+           f"{len(profile.skills)} skills derived from the résumé")
+    for note in resume.warnings:
+        report(WARN, "résumé", note)
 
 
 def _daily_coverage(conn, days=7):
@@ -129,7 +114,6 @@ def _daily_coverage(conn, days=7):
 def check_database():
     print("\nDATABASE")
     from jobrank import storage
-    from jobrank import scorer
 
     if not os.path.exists(config.DATABASE_PATH):
         report(FAIL, "database", "missing — run: python3 refresh.py")
@@ -168,38 +152,35 @@ def check_database():
     report(PASS, "your data",
            f"{applied} marked applied, {len(pipeline)} in the pipeline")
 
+    from jobrank import ranking
+    from jobrank.config import companies
+    ranked = ranking.rank()
+    if ranked is None:
+        report(WARN, "scores", "no profile, so nothing is ranked")
+        return
+
     # Scoring should produce a spread. Everything at one value means a
     # signal has stopped varying and the ranking is meaningless.
-    scores = set()
-    for posting in postings:
-        age = scorer.days_old(posting)
-        tier = posting.get("company_tier") or "mid"
-        fresh, _ = scorer.freshness(age, tier)
-        scores.add(scorer.final_score(
-            posting["preference"], posting["candidacy_score"], fresh))
+    scores = {r.score for r in ranked.results.values()}
     status = PASS if len(scores) > 20 else WARN
-    report(status, "score spread",
-           f"{len(scores)} distinct scores across {len(postings)} postings")
+    report(status, "score spread", f"{len(scores)} distinct scores across {len(ranked.results)} postings")
 
-    # WHO is at the top, not just how spread out the numbers are. The list
-    # this replaced was topped by pharma, blinds and oil companies with
-    # perfectly good job titles, and no numeric check would have caught it.
-    ranked = sorted(postings, key=lambda p: -(p["fit_score"] or 0))[:20]
-    tech = sum(1 for p in ranked
-               if scorer.employer_class(p) in ("frontier", "big_tech", "tech"))
-    status = PASS if tech >= len(ranked) / 2 else WARN
-    report(status, "top of the list",
-           f"{tech}/{len(ranked)} of your top 20 are technology companies")
+    # Whether the semantic layer actually ran, and with which model.
+    top = ranked.results[ranked.ordered_ids[0]]
+    semantic = top.factors.get("semantic")
+    report(PASS if semantic else WARN, "semantic layer",
+           f"model {semantic.detail['model']}" if semantic else "unavailable — ranking on keyword factors only")
 
+    rows = {r["id"]: r for r in ranked.rows}
+    top20 = [rows[i] for i in ranked.ordered_ids[:20] if i in rows]
     crowd = {}
-    for p in ranked:
+    for p in top20:
         crowd[p["company"]] = crowd.get(p["company"], 0) + 1
     worst, count = max(crowd.items(), key=lambda kv: kv[1])
-    limit = config.MAX_PER_COMPANY or len(ranked)
-    status = PASS if count <= max(limit, 4) else WARN
+    status = PASS if count <= max(companies.MAX_PER_COMPANY, 4) else WARN
     report(status, "crowding",
            f"most from one company in the top 20: {worst} ({count}) — "
-           f"the page shows at most {config.MAX_PER_COMPANY} each")
+           f"the page shows at most {companies.MAX_PER_COMPANY} each")
 
 
 def check_sources():
@@ -334,7 +315,7 @@ def check_prompts():
         "company": "Example", "role": "Software Engineer Intern",
         "category": "Software Engineering", "location": "NYC",
         "apply_url": "", "age_text": "0d",
-        "role_family": "Software Engineering",
+        "role_family": "software_engineering",
     }
     cover = letters.cover_letter_prompt(posting, profile)
     experience = letters.work_experience_prompt(posting, profile)
@@ -350,7 +331,7 @@ def check_prompts():
 
 def main():
     print("=" * 62)
-    print(" INTERNSHIP FINDER — HEALTH CHECK")
+    print(" JOBRANK — HEALTH CHECK")
     print("=" * 62)
 
     for check in (check_config, check_profile, check_database,

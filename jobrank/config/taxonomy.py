@@ -325,6 +325,7 @@ INDUSTRIES = [
     "biotech", "defense", "aerospace", "automotive", "energy", "manufacturing",
     "retail", "consulting", "government", "education", "media", "gaming",
     "telecom", "insurance", "real_estate", "crypto", "semiconductors", "logistics",
+    "robotics", "consumer_goods", "travel", "construction",
 ]
 
 

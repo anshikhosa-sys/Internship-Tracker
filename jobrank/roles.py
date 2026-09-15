@@ -8,11 +8,18 @@ posting and for a line on a résumé.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from jobrank import textmatch
 from jobrank.config import taxonomy
 
 
 def classify_title(title: str) -> list[str]:
+    return list(_classify_title(title or ""))
+
+
+@lru_cache(maxsize=65536)
+def _classify_title(title: str) -> tuple[str, ...]:
     """
     Role families a title names, most specific first.
 
@@ -22,7 +29,7 @@ def classify_title(title: str) -> list[str]:
     An explicit "software engineer" phrase keeps the generic family alongside.
     """
     if not title:
-        return []
+        return ()
     expanded = textmatch.expand_abbreviations(title, taxonomy.TITLE_ABBREVIATIONS)
     hits: list[tuple[int, str]] = []
     for family, spec in taxonomy.ROLE_FAMILIES.items():
@@ -31,7 +38,7 @@ def classify_title(title: str) -> list[str]:
         if matched:
             hits.append((max(len(kw) for kw in matched), family))
     if not hits:
-        return []
+        return ()
     hits.sort(key=lambda h: -h[0])
     families = [f for _, f in hits]
     specific = [f for f in families if f not in taxonomy.GENERIC_FAMILIES]
@@ -41,10 +48,11 @@ def classify_title(title: str) -> list[str]:
             and any(len(kw.split()) > 1 and (textmatch.contains(title, kw) or textmatch.contains(expanded, kw))
                     for kw in taxonomy.ROLE_FAMILIES[f]["titles"])
         ]
-        return specific + generic_explicit
-    return families
+        return tuple(specific + generic_explicit)
+    return tuple(families)
 
 
+@lru_cache(maxsize=65536)
 def title_seniority(title: str) -> str | None:
     """The level a title names, or None when it names none."""
     if not title:

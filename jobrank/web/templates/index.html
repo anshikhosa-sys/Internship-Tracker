@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Internship Finder</title>
+  <title>jobrank</title>
   <!-- url_for() builds the correct path to files in static/. Writing
        "/static/style.css" by hand would also work, but this keeps working
        if the app ever moves to a sub-path. -->
@@ -14,7 +14,7 @@
 <header class="topbar">
   <div class="topbar-inner">
     <div>
-      <h1>Internship Finder</h1>
+      <h1>jobrank <span class="profile-chip">for {{ profile.user_id }}</span></h1>
       <p class="sub">
         {{ total_count }} active postings
         {% if new_count %}
@@ -36,6 +36,14 @@
     <!-- Forms, not links: these change data, and changes belong in a POST.
          Links should never have side effects. -->
     <div class="topbar-actions">
+      {% if profiles|length > 1 %}
+        <form method="get" class="profile-switch">
+          <select name="profile" onchange="this.form.submit()" aria-label="Rank for profile">
+            {% for pid in profiles %}<option value="{{ pid }}" {{ 'selected' if pid == profile.user_id }}>{{ pid }}</option>{% endfor %}
+          </select>
+        </form>
+      {% endif %}
+      <a class="btn-secondary" href="{{ url_for('profiles.profile_form', id=profile.user_id) }}">Profile</a>
       <a class="btn-secondary" href="{{ url_for('applications_route') }}">
         My applications{% if applied_total %} ({{ applied_total }}){% endif %}
       </a>
@@ -113,13 +121,13 @@
               {% if sort == 'score' %}selected{% endif %}>
         Best to apply to now
       </option>
-      <option value="preference"
-              {% if sort == 'preference' %}selected{% endif %}>
-        Most wanted (ignore odds and age)
+      <option value="role"
+              {% if sort == 'role' %}selected{% endif %}>
+        Closest to the roles you want
       </option>
-      <option value="candidacy"
-              {% if sort == 'candidacy' %}selected{% endif %}>
-        Strongest candidate
+      <option value="skills"
+              {% if sort == 'skills' %}selected{% endif %}>
+        Best skill match
       </option>
       <option value="recency"
               {% if sort == 'recency' %}selected{% endif %}>
@@ -131,7 +139,7 @@
       </option>
     </select>
 
-    <select name="tier" title="Big-tech pipelines close in a day; small ones stay open longer">
+    <select name="tier" title="Large-company pipelines close fastest; small ones stay open longer">
       <option value="" {% if not tier %}selected{% endif %}>All company sizes</option>
       {% for key, spec in tiers.items() %}
         <option value="{{ key }}" {% if tier == key %}selected{% endif %}>
@@ -141,9 +149,8 @@
     </select>
 
     {# Options come from config.AGE_WINDOWS, each with the number of
-       postings it would actually show. There is deliberately no "today
-       only" — no source ever publishes an age of 0, so it could only ever
-       return an empty list. #}
+       postings it would actually show, so an empty window looks empty
+       before it is picked. #}
     <select name="within" title="How recent — the count is what you'd see">
       {% for window in age_windows %}
         <option value="{{ window.value }}"
@@ -154,19 +161,19 @@
     </select>
 
     <label class="checkbox"
-           title="Winter/Fall/Spring roles run during the academic year">
+           title="Hide roles for a term other than summer">
       <input type="checkbox" name="nowinter" value="1"
              {% if hide_offseason %}checked{% endif %}>
       Summer only
     </label>
 
-    <label class="checkbox" title="Co-ops are full-time during a school term">
+    <label class="checkbox" title="Hide full-time roles during a school term">
       <input type="checkbox" name="nocoop" value="1"
              {% if hide_coop %}checked{% endif %}>
       Hide co-ops
     </label>
 
-    <label class="checkbox" title="Only companies whose product is software — hides internal IT at banks, pharma, insurers and manufacturers">
+    <label class="checkbox" title="Only employers whose product is technology">
       <input type="checkbox" name="techonly" value="1"
              {% if tech_only %}checked{% endif %}>
       Tech employers only
@@ -291,7 +298,7 @@
 
           <!-- Score badge. The title attribute shows the full breakdown on
                hover, so a score is never an unexplained number. -->
-          <div class="score" title="{% for reason in posting.score_reasons %}{{ reason.points }} — {{ reason.label }}&#10;{% endfor %}">
+          <div class="score" title="{% for name, f in posting.factors.items() %}{{ factor_labels[name] }}: {{ '%.2f' % f.value }}&#10;{% endfor %}">
             <span class="score-value">{{ posting.fit_score }}</span>
             <span class="score-label">{{ posting.fit }}</span>
           </div>
@@ -299,9 +306,9 @@
           <div class="details">
             <div class="role-line">
               <span class="company">{{ posting.company }}</span>
-              {% if posting.employer_label %}
-                <span class="tag emp-{{ posting.employer_tier }}"
-                      title="{% if posting.employer_tier == 'non_tech' %}Not a technology company — an engineering internship here is usually internal IT{% else %}A technology company: the product is the software{% endif %}">{{ posting.employer_label }}</span>
+              {% if posting.industry %}
+                <span class="tag emp-{{ 'tech' if posting.is_tech_employer else 'non_tech' }}"
+                      title="Employer industry">{{ posting.industry.replace('_', ' ') }}</span>
               {% endif %}
               {% if posting.status %}
                 <span class="tag tag-mine" title="You've applied — always shown, whatever the filters">{{ posting.status|upper }}</span>
@@ -310,13 +317,13 @@
               {% if posting.is_fresh %}<span class="tag tag-fresh">{{ posting.freshness_label }}</span>{% endif %}
               {% if posting.salary %}<span class="tag tag-pay">{{ posting.salary }}</span>{% endif %}
               <span class="tag tier-{{ posting.company_tier }}"
-                    title="{% if posting.company_tier == 'big' %}Fills fast — apply the day it appears{% elif posting.company_tier == 'niche' %}Slower pipeline — a few days is usually still fine{% else %}Moderate pace{% endif %}">{{ posting.tier_label }}</span>
+                    title="{% if posting.company_tier == 'large' %}Fills fast — apply the day it appears{% elif posting.company_tier == 'startup' %}Slower pipeline — a few days is usually still fine{% else %}Moderate pace{% endif %}">{{ posting.tier_label }}</span>
               {% if posting.quota %}
                 <span class="tag tag-quota"
                       title="{{ posting.quota.name }} accepts {{ posting.quota.limit }} applications per cycle. You've used {{ posting.quota.used }}.">{{ posting.quota.left }} of
                   {{ posting.quota.limit }} left</span>
               {% endif %}
-              {% if posting.is_coop %}<span class="tag tag-warn" title="Full-time during a school term — you'd take a semester off">CO-OP</span>{% endif %}
+              {% if posting.is_coop %}<span class="tag tag-warn" title="Full-time during a school term">CO-OP</span>{% endif %}
               {% if posting.is_off_season %}<span class="tag tag-warn" title="Runs during the academic year, not summer">OFF-SEASON</span>{% endif %}
               {% if posting.sources and posting.sources|length > 1 %}
                 <span class="tag" title="Listed by {{ posting.sources|join(', ') }}">{{ posting.sources|length }} lists</span>
@@ -337,43 +344,22 @@
               {% endif %}
             </div>
 
-            <!-- Why it scored what it did — the same data as the tooltip,
-                 but visible on click for anyone not using a mouse. -->
-            <!-- The score is three factors multiplied, so the breakdown
-                 shows all three rather than a single running total. -->
+            <!-- Why it scored what it did. Every factor is raised to the
+                 profile's weight and multiplied, so each shows its own value
+                 and what it multiplied the score by. -->
             <details class="why">
               <summary>Why this score?</summary>
               <p class="formula">
-                want {{ '%.2f' % posting.preference }}
-                × can-get {{ '%.2f' % posting.candidacy_score }}
-                × still-open {{ '%.2f' % posting.freshness }}
-                = <strong>{{ posting.fit_score }}</strong>
+                {% for name, f in posting.factors.items() %}{{ '%.2f' % f.value }}<sup>{{ f.weight }}</sup>{{ ' × ' if not loop.last }}{% endfor %}
+                × 100 = <strong>{{ posting.fit_score }}</strong>
               </p>
-              <div class="factor">
-                <span class="factor-name">Do you want it</span>
-                <ul>
-                  {% for r in posting.preference_reasons %}
-                    <li><span class="pts">{{ r.detail }}</span> {{ r.label }}</li>
-                  {% endfor %}
-                </ul>
-              </div>
-              <div class="factor">
-                <span class="factor-name">Would they take you</span>
-                <ul>
-                  {% for r in posting.candidacy_reasons %}
-                    <li><span class="pts">{{ r.detail }}</span> {{ r.label }}</li>
-                  {% endfor %}
-                </ul>
-              </div>
-              <div class="factor">
-                <span class="factor-name">Is it still open</span>
-                <ul>
-                  <li>
-                    <span class="pts">x{{ '%.2f' % posting.freshness }}</span>
-                    {{ posting.freshness_label }}
-                  </li>
-                </ul>
-              </div>
+              {% for name, f in posting.factors.items() %}
+                <div class="factor">
+                  <span class="factor-name">{{ factor_labels[name] }}
+                    <span class="pts">×{{ '%.2f' % f.contribution }}</span>{% if f.neutral %} <span class="muted">(no data — neutral)</span>{% endif %}</span>
+                  <ul>{% for r in f.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
+                </div>
+              {% endfor %}
             </details>
           </div>
 

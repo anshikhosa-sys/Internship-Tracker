@@ -31,3 +31,7 @@ TASK_VERSIONS = {
     "posting_enrich": 1,
     "resume_tailor": 1,
 }
+
+# A local model takes seconds per posting; bound how many a single refresh
+# sends to it. New postings are analyzed first on later runs.
+MAX_MODEL_ENRICHMENTS_PER_RUN = 50

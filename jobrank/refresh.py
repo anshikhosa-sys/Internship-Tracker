@@ -6,9 +6,10 @@ refresh.py — the command you run to update your listings.
 It does four things, in order:
 
     1. FETCH    ask each source for its postings
-    2. SCORE    rank them using the weights in config.py
-    3. STORE    save to SQLite, preserving first_seen and your applied marks
-    4. REPORT   print what's new since last time
+    2. STORE    save to SQLite, preserving first_seen and your applied marks
+    3. ENRICH   extract structured facts from new or changed posting text
+    4. SCORE    rank for the active profile (snapshot for notifications)
+    5. REPORT   print what's new since last time
 
 Run this whenever you want fresh data (the source repo updates daily). Then
 run `python3 app.py` to browse the results.
@@ -33,7 +34,9 @@ import requests
 from jobrank import dedupe
 from jobrank import notify
 from jobrank import push
-from jobrank import scorer
+from jobrank import enrich, ranking
+from jobrank.config import llm as llm_config
+from jobrank.roles import classify_title
 from jobrank import storage
 from jobrank.sources import (
     ChielerReadmeSource,
@@ -145,18 +148,14 @@ def refresh(verbose: bool = True, notifications: bool = True) -> dict:
         print(f"  {dedupe_stats['in_multiple_sources']} appear in more than "
               f"one list")
 
-    # -- 2. SCORE -----------------------------------------------------------
-    # Scores are always recomputed from scratch, so editing config.py and
-    # re-running is all it takes to change the rankings.
-    if verbose:
-        print("\nScoring...")
-    scored = scorer.score_all(all_postings)
+    # Title classification is profile-independent, so it is stored; scores
+    # are per profile and computed after storing.
+    for posting in all_postings:
+        families = classify_title(posting.role)
+        posting.role_family = families[0] if families else ""
+    scored = all_postings
 
-    dropped = len(all_postings) - len(scored)
-    if verbose and dropped:
-        print(f"  filtered out {dropped} non-internship postings")
-
-    # -- 3. STORE -----------------------------------------------------------
+    # -- 2. STORE -----------------------------------------------------------
     result = storage.save_postings(conn, scored, run_time)
 
     # If any posting ids moved, re-link the applied marks that pointed at
@@ -167,6 +166,33 @@ def refresh(verbose: bool = True, notifications: bool = True) -> dict:
         print(f"  re-linked {recovered} applied marks whose posting id moved")
 
     storage.record_run(conn, run_time, result["total"], len(result["new_ids"]))
+
+    # -- 3. ENRICH ----------------------------------------------------------
+    # Cached by text hash, so only new or changed postings are analyzed. A
+    # local model is slow, so its calls are bounded per run; rules are not.
+    active_rows = storage.load_postings(conn)
+    limit = None if llm_config.BACKEND == "rules" else llm_config.MAX_MODEL_ENRICHMENTS_PER_RUN
+    enrich_stats = enrich.enrich_all(conn, active_rows, limit=limit)
+    if verbose:
+        print(f"  enriched {enrich_stats['enriched']} postings "
+              f"({enrich_stats['unchanged']} unchanged)")
+
+    # -- 4. SCORE -----------------------------------------------------------
+    ranked = ranking.rank(conn=conn)
+    if ranked is None:
+        if verbose:
+            print("\n  No profile yet — create one at /profile or with "
+                  "`python3 run.py profile create`, then scores appear.")
+    else:
+        storage.set_score_snapshot(conn, {
+            pid: (r.score, r.company_size) for pid, r in ranked.results.items()
+        })
+        for posting in scored:
+            r = ranked.results.get(posting.id)
+            if r:
+                posting.fit_score = r.score
+                posting.company_tier = r.company_size
+        scored.sort(key=lambda p: -p.fit_score)
 
     # -- 4. REPORT ----------------------------------------------------------
     if verbose:
@@ -219,7 +245,7 @@ def _print_report(scored, result, conn) -> None:
         print("\n  No new postings since your last run.")
 
     # -- top matches --------------------------------------------------------
-    print("\n  Your top 10 matches right now:")
+    print("\n  Top 10 for the active profile right now:")
     for posting in scored[:10]:
         flag = "NEW " if posting.id in result["new_ids"] else "    "
         print(f"    {flag}{posting.fit_score:4d}  {posting.company[:22]:22s} "

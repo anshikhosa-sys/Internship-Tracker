@@ -13,6 +13,8 @@ and rule output land in an identical, comparable shape.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 from jobrank import llm, textmatch
 from jobrank.config import taxonomy
 from jobrank.llm.cache import content_hash
@@ -99,12 +101,17 @@ def parse_text(text: str, conn=None) -> ParsedResume:
 
 def canonical_skills(text: str) -> list[str]:
     """Taxonomy skills mentioned in free text, in taxonomy order."""
+    return list(_canonical_skills(text or ""))
+
+
+@lru_cache(maxsize=65536)
+def _canonical_skills(text: str) -> tuple[str, ...]:
     found = []
     for name, spec in taxonomy.SKILLS.items():
         if textmatch.find_all(text, spec.get("aliases", [])) or \
                 textmatch.find_all(text, spec.get("case_sensitive", []), case_sensitive=True):
             found.append(name)
-    return found
+    return tuple(found)
 
 
 def _ym(value) -> str | None:

@@ -73,6 +73,7 @@ from datetime import datetime, timezone
 import requests
 
 from jobrank import config
+from jobrank.config import companies
 
 from . import markdown_table as md
 from .base import Posting, Source
@@ -106,16 +107,15 @@ def _known_tokens() -> list:
     Industry and company words worth splitting a squashed name on.
 
     Built from config rather than hardcoded, so it improves on its own every
-    time a company is added to EMPLOYER_NAMES or OUT_OF_SCOPE_COMPANIES.
+    time a company is added to config/companies.py.
     Longest first, so "capitalmanagement" splits on the longer token before
     the shorter one inside it.
     """
     global _TOKEN_CACHE
     if _TOKEN_CACHE is None:
-        words = set(config.NON_TECH_NAME_HINTS)
-        for names in config.EMPLOYER_NAMES.values():
+        words = {h for hints in companies.INDUSTRY_NAME_HINTS.values() for h in hints}
+        for names in companies.COMPANY_INDUSTRIES.values():
             words.update(names)
-        words.update(config.OUT_OF_SCOPE_COMPANIES)
 
         tokens = set()
         for phrase in words:
@@ -133,9 +133,8 @@ def _known_names() -> set:
     """Every full company name the config can already match, lowercased."""
     global _NAME_CACHE
     if _NAME_CACHE is None:
-        names = set(config.OUT_OF_SCOPE_COMPANIES)
-        names.update(config.NON_TECH_NAME_HINTS)
-        for group in config.EMPLOYER_NAMES.values():
+        names = {h for hints in companies.INDUSTRY_NAME_HINTS.values() for h in hints}
+        for group in companies.COMPANY_INDUSTRIES.values():
             names.update(group)
         _NAME_CACHE = {n.lower() for n in names}
     return _NAME_CACHE
@@ -152,11 +151,10 @@ def unsquash(name: str) -> str:
     267 companies — 76% — arrive with no spaces at all.
 
     Everything that classifies an employer matches WHOLE WORDS, deliberately
-    and for good reason (see scorer.employer_class: "Texas Instruments"
-    contains "exa"). A whole-word matcher cannot see "manufacturing" inside
-    "eastpennmanufacturing", so every one of those rows fell through to the
-    "unknown" tier at x0.90 — the mild penalty for a company we've never
-    heard of — instead of the x0.40 its industry earns.
+    and for good reason ("Texas Instruments" contains "exa"). A whole-word
+    matcher cannot see "manufacturing" inside "eastpennmanufacturing", so
+    every one of those rows fell through as an unclassified employer, and a
+    user who excluded manufacturing would still have been shown them.
 
     That is not a cosmetic problem. It silently defeated OUT_OF_SCOPE_
     COMPANIES: Garda Capital scored 19 as "Garda Capital Partners" and 48

@@ -70,6 +70,7 @@ class Posting:
     simplify_url: str = ""   # Simplify's own posting page, when available
     age_text: str = ""       # the raw "18d" / "Aug 21" string, for display
     salary: str = ""         # only some sources publish this
+    description: str = ""    # full job description, when a source provides one
 
     # Every list this job appeared in, filled in by dedupe.py. Appearing in
     # several is mild evidence the posting is real and still current.
@@ -81,21 +82,10 @@ class Posting:
     no_sponsorship: bool = False         # 🛂 does NOT offer sponsorship
     citizenship_required: bool = False   # 🇺🇸 requires U.S. citizenship
 
-    # --- Filled in later by scorer.py, not by the source ---
-    # Three separate numbers rather than one, because they answer different
-    # questions: do you want it, would they take you, and how fast is it
-    # going stale. Blending them into a single stored score would hide the
-    # cases that matter most.
-    # Three separate numbers, not one. They answer different questions —
-    # do you want it, would they take you, and is it still open — and
-    # blending them would hide the cases that matter most.
-    preference: float = 0.0
-    preference_reasons: list = field(default_factory=list)
-    candidacy_score: float = 0.0
-    candidacy_reasons: list = field(default_factory=list)
-    role_family: str = ""     # matched ROLE_FAMILIES entry; drives letters
-    company_tier: str = ""    # big / mid / niche — sets the freshness curve
-    fit_score: int = 0        # the three multiplied, 0-100
+    # --- Filled in during refresh, not by the source ---
+    role_family: str = ""     # taxonomy family from the title; drives letters
+    company_tier: str = ""    # large / mid / startup
+    fit_score: int = 0        # snapshot for the active profile, 0-100
 
     @property
     def id(self) -> str:

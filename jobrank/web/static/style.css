@@ -531,3 +531,7 @@ main { max-width: 1000px; margin: 0 auto; padding: 20px; }
 .ok-banner { background: #ecfdf5; color: #065f46; padding: 10px 14px; border-radius: 8px; margin-bottom: 12px; }
 .derived { margin-top: 24px; }
 @media (prefers-color-scheme: dark) { .ok-banner { background: #052e1c; color: #6ee7b7; } }
+
+.profile-chip { font-size: 0.55em; font-weight: 500; opacity: 0.7; margin-left: 6px; }
+.profile-switch select { padding: 6px 8px; border-radius: 6px; }
+.formula sup { font-size: 0.7em; opacity: 0.7; }

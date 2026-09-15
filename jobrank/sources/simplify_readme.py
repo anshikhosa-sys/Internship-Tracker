@@ -186,7 +186,9 @@ class SimplifyReadmeSource(Source):
         # makes this class reusable for the New-Grad repo later, since that
         # repo uses the same table format at a different URL.
         self.url = url or config.SOURCE_URL
-        self.categories = categories or config.INGEST_CATEGORIES
+        # None means every category. Which categories matter is a per-user
+        # question answered by scoring, not a global ingest filter.
+        self.categories = categories
 
     # -- fetching ------------------------------------------------------------
 
@@ -206,7 +208,7 @@ class SimplifyReadmeSource(Source):
     def _split_sections(self, markdown: str) -> list:
         """
         Split the README into (category_name, html_chunk) pairs, one per
-        '## ' heading. Only sections matching config.INGEST_CATEGORIES are
+        '## ' heading. Only sections matching `categories` (all when None) are
         returned.
         """
         sections = []
@@ -224,7 +226,7 @@ class SimplifyReadmeSource(Source):
             clean = re.sub(r"^[^A-Za-z]+", "", clean).strip()
 
             # Keep only the sections we care about (case-insensitive match).
-            wanted = any(
+            wanted = not self.categories or any(
                 want.lower() in clean.lower() for want in self.categories
             )
             if wanted:

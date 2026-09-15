@@ -25,10 +25,8 @@ THE ROUTES HERE
     POST /api/status     move an application to a stage
     POST /api/notes      save notes against an application
 
-WHY THERE'S NO LOGIN
-Single user, local only. The server binds to 127.0.0.1, which means it accepts
-connections only from this machine — nothing outside can reach it. That's why
-there's no password: there's no one else to keep out.
+Scores come from jobrank.ranking for the active profile (switch with
+?profile=<id>); nothing here computes a score itself.
 """
 
 import sys
@@ -42,8 +40,12 @@ from flask import (
 
 from jobrank import config
 from jobrank import letters
-from jobrank import scorer
+from jobrank import postings as posting_facts
+from jobrank import ranking
+from jobrank.config import companies
+from jobrank.config import scoring as scoring_config
 from jobrank.ops import selfcheck
+from jobrank.profile import active
 from jobrank import storage
 from jobrank.refresh import refresh as run_refresh
 
@@ -72,6 +74,22 @@ def _reject_cross_site_posts():
 # =============================================================================
 # Helpers
 # =============================================================================
+
+SIZE_LABELS = {"large": "Large company", "mid": "Mid-size", "startup": "Startup / small"}
+FACTOR_LABELS = {
+    "skills": "Skills you have",
+    "seniority": "Right level for you",
+    "role": "Kind of role you want",
+    "preferences": "Matches your preferences",
+    "freshness": "Still open",
+    "semantic": "Résumé similarity",
+}
+
+
+def _profile_ids():
+    from jobrank.profile import store
+    return store.list_ids()
+
 
 def _filtered(postings, new_ids, args):
     """
@@ -144,34 +162,10 @@ def _filtered(postings, new_ids, args):
         # season filters are bypassed.
         in_pipeline = bool(posting.get("status"))
 
-        # THE "JUST APPLY" GATE.
-        #
-        # Anything reaching the list should already be worth an application,
-        # so you can work down it without deciding. Two rules: we must be
-        # able to classify the role, and you must be a plausible candidate.
-        # Both are bypassed by "show low-fit" for when you want everything.
-        if not in_pipeline and not show_low:
-            if (config.REQUIRE_KNOWN_ROLE_FAMILY
-                    and not posting.get("role_family")):
-                continue
-            if (posting.get("candidacy_score") or 0) < config.MIN_CANDIDACY:
-                continue
-            # Role types that are never worth an application — PM, data
-            # science, model-centric ML. A GATE rather than a low score,
-            # because preference^0.35 compresses the bottom of the range as
-            # hard as the top and cannot push anything out of view on its
-            # own; see config.EXCLUDED_ROLE_KEYWORDS for the measurement.
-            #
-            # Lifted by "show low-fit" like every other cutoff here, and
-            # never applied to something already applied to.
-            if any(scorer._matches(kw, (posting.get("role") or "").lower())
-                   for kw in config.EXCLUDED_ROLE_KEYWORDS):
-                continue
-
         # Hide low-fit postings unless asked for. They're still in the
         # database and still scored — just collapsed by default.
         if (not in_pipeline and not show_low
-                and posting["fit_score"] < config.LOW_FIT_THRESHOLD):
+                and posting["fit_score"] < scoring_config.LOW_FIT_THRESHOLD):
             continue
 
         # The age cutoff. This HIDES postings rather than ranking them
@@ -255,27 +249,20 @@ def _effective_hide_offseason(args) -> bool:
 
 def _quota_group(company):
     """
-    The APPLICATION_LIMITS entry covering this company, or None.
+    The capped parent company this employer belongs to, or None.
 
-    Whole-word matching, like the employer lists: a substring test would
-    file "Tiktokenizer" under TikTok's quota.
+    Grouped by parent, so an application at AWS spends Amazon's slot.
     """
-    name = (company or "").strip().lower()
-    if not name:
-        return None
-    for group in config.APPLICATION_LIMITS:
-        for candidate in group["companies"]:
-            if scorer._matches(candidate, name):
-                return group
+    parent = posting_facts.parent_company(company or "")
+    if parent and parent in companies.APPLICATION_LIMITS:
+        return {"name": parent, "limit": companies.APPLICATION_LIMITS[parent]}
     return None
 
 
 def _quota_state(postings):
     """
-    How much of each capped company's quota you've already spent.
-
-    Keyed by the group's name. Counts anything with a status — an
-    application at any stage, including a rejection, still consumed a slot.
+    How much of each capped company's quota has been spent. Counts anything
+    with a status — a rejection still consumed a slot.
     """
     used = {}
     for posting in postings:
@@ -284,17 +271,11 @@ def _quota_state(postings):
         group = _quota_group(posting.get("company"))
         if group:
             used[group["name"]] = used.get(group["name"], 0) + 1
-
-    state = {}
-    for group in config.APPLICATION_LIMITS:
-        spent = used.get(group["name"], 0)
-        state[group["name"]] = {
-            "name": group["name"],
-            "limit": group["limit"],
-            "used": spent,
-            "left": max(0, group["limit"] - spent),
-        }
-    return state
+    return {
+        name: {"name": name, "limit": limit, "used": used.get(name, 0),
+               "left": max(0, limit - used.get(name, 0))}
+        for name, limit in companies.APPLICATION_LIMITS.items()
+    }
 
 
 def _apply_caps(visible, quotas, show_all):
@@ -310,7 +291,7 @@ def _apply_caps(visible, quotas, show_all):
     the result is the same class of problem as the one this page had.
     """
     crowded, exhausted, quota_limited = {}, [], {}
-    if not config.MAX_PER_COMPANY or show_all:
+    if not companies.MAX_PER_COMPANY or show_all:
         return visible, crowded, exhausted, quota_limited
 
     per_company = {}
@@ -329,10 +310,10 @@ def _apply_caps(visible, quotas, show_all):
         group = _quota_group(posting["company"])
         if group:
             key = group["name"]
-            allowance = min(config.MAX_PER_COMPANY, quotas[key]["left"])
+            allowance = min(companies.MAX_PER_COMPANY, quotas[key]["left"])
         else:
             key = name
-            allowance = config.MAX_PER_COMPANY
+            allowance = companies.MAX_PER_COMPANY
 
         per_company[key] = per_company.get(key, 0) + 1
         if per_company[key] <= allowance:
@@ -491,21 +472,22 @@ def index():
 
     conn = storage.connect()
 
-    postings = storage.load_postings(conn)
+    requested = request.args.get("profile")
+    if requested:
+        chosen = active.resolve(requested, conn)
+        if chosen == requested:
+            active.set_active(conn, chosen)
 
-    # Record that you've opened the dashboard, and find out what counts as new
-    # to you. NEW means "arrived since you last looked", not "arrived in the
-    # last refresh" — the two stopped being the same thing once refreshes
-    # became automatic. See storage.register_visit().
+    ranked = ranking.rank(conn=conn)
+    if ranked is None:
+        conn.close()
+        return redirect(url_for("profiles.profile_form", first=1))
+    postings = ranked.rows
+
     # Only a real page view counts as a visit. A browser rendering this page
-    # always accepts HTML; curl, urllib and monitoring probes send */* and
-    # must not be able to clear badges nobody has looked at. /healthz above
-    # is the endpoint probes should use — this is the backstop for the ones
-    # that don't.
-    # Note this tests the RAW header for "text/html" rather than using
-    # request.accept_mimetypes.accept_html, which returns True for the
-    # "*/*" that curl sends — wildcard matching makes every probe look like
-    # a browser. A real browser always names text/html explicitly.
+    # always names text/html in Accept; curl and monitoring probes send */*
+    # and must not clear badges nobody has looked at. This tests the RAW
+    # header: request.accept_mimetypes.accept_html is True for "*/*".
     if "text/html" in request.headers.get("Accept", ""):
         visit_basis = storage.register_visit(conn)
     else:
@@ -518,46 +500,10 @@ def index():
 
     conn.close()
 
-    # Freshness and the final score are recomputed here rather than read from
-    # the database. They depend on today's date, so a stored value would be
-    # stale the morning after it was written.
-    volumes = scorer.company_volumes(postings)
-
     for posting in postings:
-        age = scorer.days_old(posting)
-        # The freshness curve depends on the company tier: a big-tech role
-        # is behind by day one, a small company's can still be open a week
-        # later. Recomputed here, like freshness itself, because it depends
-        # on today's date.
-        volume = volumes.get((posting["company"] or "").strip().lower())
-        tier = posting.get("company_tier") or scorer.company_tier(
-            posting, volume
-        )
-        posting["company_tier"] = tier
-        posting["tier_label"] = config.COMPANY_TIERS[tier]["label"]
-        fresh, fresh_label = scorer.freshness(age, tier)
-        posting["age_days"] = age
-        posting["freshness"] = fresh
-        posting["freshness_label"] = fresh_label
-        posting["is_fresh"] = scorer.is_fresh(age)
-        posting["is_coop"] = scorer.is_coop(posting)
-        posting["is_off_season"] = scorer.is_off_season(posting)
-        posting["fit_score"] = scorer.final_score(
-            posting["preference"], posting["candidacy_score"], fresh
-        )
+        posting["is_fresh"] = posting["age_days"] is not None and posting["age_days"] <= config.FRESH_DAYS
         posting["is_new"] = posting["id"] in new_ids
-        posting["fit"] = scorer.fit_label(posting["fit_score"])
-        # Employer tier and pay are pure functions of fields already on the
-        # row, so they're computed here rather than stored — no migration,
-        # and editing the lists in config.py takes effect on next reload.
-        posting["employer_tier"] = scorer.employer_class(posting)
-        posting["employer_label"] = config.EMPLOYER_TIERS[
-            posting["employer_tier"]
-        ]["label"]
-        posting["is_tech_employer"] = posting["employer_tier"] in (
-            "frontier", "big_tech", "tech"
-        )
-        posting["hourly_pay"] = scorer.hourly_pay(posting)
+        posting["tier_label"] = SIZE_LABELS.get(posting["company_tier"], "")
 
     hidden_by_age = sum(
         1 for p in postings
@@ -570,8 +516,8 @@ def index():
     sort = request.args.get("sort") or config.DEFAULT_SORT
     keys = {
         "score": lambda p: -p["fit_score"],
-        "preference": lambda p: -p["preference"],
-        "candidacy": lambda p: -p["candidacy_score"],
+        "role": lambda p: -p["factor_values"].get("role", 0),
+        "skills": lambda p: -p["factor_values"].get("skills", 0),
         # None sorts last: an unknown age shouldn't lead a recency sort.
         "recency": lambda p: (p["age_days"] is None, p["age_days"] or 0),
         # Same rule for pay: only a quarter of postings publish a rate, and
@@ -628,7 +574,7 @@ def index():
         quota_limited=[(quotas[k], n) for k, n in quota_limited.items()],
         crowded=sorted(crowded.items(), key=lambda kv: -kv[1]),
         crowded_total=sum(crowded.values()),
-        max_per_company=config.MAX_PER_COMPANY,
+        max_per_company=companies.MAX_PER_COMPANY,
         showing_all_per=request.args.get("allper") == "1",
         within=_effective_within(request.args),
         # Each window carries how many postings it would actually show, so
@@ -638,7 +584,10 @@ def index():
         hide_coop=_effective_hide_coop(request.args),
         tech_only=request.args.get("techonly") == "1",
         hide_offseason=_effective_hide_offseason(request.args),
-        tiers=config.COMPANY_TIERS,
+        tiers={k: {"label": v} for k, v in SIZE_LABELS.items()},
+        profile=ranked.profile,
+        profiles=_profile_ids(),
+        factor_labels=FACTOR_LABELS,
         tier=request.args.get("tier", ""),
         filters=request.args,
         config=config,

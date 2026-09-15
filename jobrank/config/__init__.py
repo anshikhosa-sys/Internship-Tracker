@@ -1,10 +1,16 @@
 """
 Configuration: data only, no logic.
 
-Submodules group the data by subsystem (taxonomy, profile, scoring, companies,
-llm, ...). `legacy` holds the single-user tuning the v1 scorer still reads; it
-is re-exported here so existing `config.X` reads and test overrides keep
-working until that scorer is replaced.
+    taxonomy   skills, role families, seniority markers (the world, not a user)
+    companies  industries, sizes, parent companies, application limits
+    profile    how résumé evidence becomes a derived profile
+    scoring    the scoring model's shape and neutral values
+    semantic   local embedding model and vector store
+    llm        local model backend and cache
+    settings   paths, dashboard defaults, notifications, schedule
+
+`settings` is re-exported so `config.DATABASE_PATH` style reads (and test
+overrides of them) keep working.
 """
 
-from .legacy import *  # noqa: F401,F403
+from .settings import *  # noqa: F401,F403
