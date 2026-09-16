@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>jobrank — stats</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <div>
+      <h1>Stats</h1>
+      <p class="sub">Extraction, caching and ranking — measured, not assumed.</p>
+    </div>
+    <div class="topbar-actions">
+      <a class="btn-refresh" href="{{ url_for('index') }}">Back to roles</a>
+    </div>
+  </div>
+</header>
+
+<main class="profile-page">
+  <section class="derived">
+    <h2>Structured extraction</h2>
+    {% if stats.llm_usage %}
+      <table class="stats-table">
+        <tr><th>task</th><th>backend</th><th>requests</th><th>cache hits</th><th>failures</th>
+            <th>tokens in</th><th>tokens out</th><th>avg ms</th></tr>
+        {% for row in stats.llm_usage %}
+          <tr>
+            <td>{{ row.task }}</td><td>{{ row.backend }}</td><td>{{ row.requests }}</td>
+            <td>{{ '%.0f%%' % (row.hit_rate * 100) }}</td><td>{{ row.failures }}</td>
+            <td>{{ row.prompt_tokens or 0 }}</td><td>{{ row.completion_tokens or 0 }}</td>
+            <td>{{ '%.1f' % (row.avg_latency_ms or 0) }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+      <p class="sub">A local model or rules — never a paid API. Cached answers cost nothing and are never recomputed.</p>
+    {% else %}
+      <p class="sub">Nothing extracted yet.</p>
+    {% endif %}
+  </section>
+
+  <section class="derived">
+    <h2>Coverage</h2>
+    <p>{{ stats.enrichment.enriched_by.values() | sum }} of {{ stats.enrichment.active_postings }} active postings
+      enriched{% if stats.enrichment.enriched_by %} ({% for k, v in stats.enrichment.enriched_by.items() %}{{ k }}: {{ v }}{{ ', ' if not loop.last }}{% endfor %}){% endif %};
+      {{ stats.enrichment.title_contradictions }} contradict their own title.</p>
+    <p>{% for model, count in stats.embeddings.items() %}{{ count }} vectors embedded with {{ model }}{{ '; ' if not loop.last }}{% else %}No embeddings yet.{% endfor %}</p>
+  </section>
+
+  <section class="derived">
+    <h2>Recent ranking runs</h2>
+    {% if stats.ranking_runs %}
+      <table class="stats-table">
+        <tr><th>when</th><th>trigger</th><th>profile</th><th>postings</th><th>ms</th><th>top score</th><th>semantic</th></tr>
+        {% for run in stats.ranking_runs %}
+          <tr><td>{{ run.ts[:19].replace('T', ' ') }}</td><td>{{ run.trigger }}</td><td>{{ run.profile }}</td>
+              <td>{{ run.postings }}</td><td>{{ run.duration_ms }}</td><td>{{ run.top_score }}</td>
+              <td>{{ run.semantic_model or 'off' }}</td></tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <p class="sub">No ranking runs logged yet.</p>
+    {% endif %}
+  </section>
+
+  {% if stats.warnings %}
+    <section class="derived">
+      <h2>Recent warnings</h2>
+      <ul class="sub">
+        {% for w in stats.warnings %}
+          <li>{{ w.ts[:19].replace('T', ' ') }} — {{ w.event }}{% if w.reason or w.error %}: {{ w.reason or w.error }}{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </section>
+  {% endif %}
+</main>
+</body>
+</html>

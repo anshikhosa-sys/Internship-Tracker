@@ -57,13 +57,23 @@ class ModelEmbedder:
 
         self.name = model_name
         kwargs = {"cache_dir": cfg.MODEL_CACHE_DIR}
-        if not cfg.ALLOW_MODEL_DOWNLOAD:
+        # Once downloaded, load from disk only. Otherwise the hub library
+        # re-checks the network on every process start, which stalls on a slow
+        # or captive connection.
+        if not cfg.ALLOW_MODEL_DOWNLOAD or _model_cached():
             kwargs["local_files_only"] = True
         self._model = TextEmbedding(model_name, **kwargs)
 
     def embed(self, texts: list[str]) -> np.ndarray:
         vectors = np.array(list(self._model.embed(list(texts), batch_size=cfg.BATCH_SIZE)), dtype=np.float32)
         return _normalize(vectors) if len(vectors) else np.zeros((0, 1), dtype=np.float32)
+
+
+def _model_cached() -> bool:
+    if not os.path.isdir(cfg.MODEL_CACHE_DIR):
+        return False
+    return any(os.path.isdir(os.path.join(cfg.MODEL_CACHE_DIR, name, "snapshots"))
+               for name in os.listdir(cfg.MODEL_CACHE_DIR) if name.startswith("models--"))
 
 
 def _normalize(matrix: np.ndarray) -> np.ndarray:

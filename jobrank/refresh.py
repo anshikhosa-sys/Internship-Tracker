@@ -34,7 +34,7 @@ import requests
 from jobrank import dedupe
 from jobrank import notify
 from jobrank import push
-from jobrank import enrich, ranking
+from jobrank import enrich, llm, ranking
 from jobrank.config import llm as llm_config
 from jobrank.roles import classify_title
 from jobrank import storage
@@ -171,14 +171,14 @@ def refresh(verbose: bool = True, notifications: bool = True) -> dict:
     # Cached by text hash, so only new or changed postings are analyzed. A
     # local model is slow, so its calls are bounded per run; rules are not.
     active_rows = storage.load_postings(conn)
-    limit = None if llm_config.BACKEND == "rules" else llm_config.MAX_MODEL_ENRICHMENTS_PER_RUN
+    limit = llm_config.MAX_MODEL_ENRICHMENTS_PER_RUN if llm.model_available() else None
     enrich_stats = enrich.enrich_all(conn, active_rows, limit=limit)
     if verbose:
         print(f"  enriched {enrich_stats['enriched']} postings "
               f"({enrich_stats['unchanged']} unchanged)")
 
     # -- 4. SCORE -----------------------------------------------------------
-    ranked = ranking.rank(conn=conn)
+    ranked = ranking.rank(conn=conn, trigger="refresh")
     if ranked is None:
         if verbose:
             print("\n  No profile yet — create one at /profile or with "

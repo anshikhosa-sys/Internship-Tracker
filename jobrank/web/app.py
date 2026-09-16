@@ -22,6 +22,7 @@ THE ROUTES HERE
     POST /refresh        re-fetch listings, then bounce back to the dashboard
     GET  /prompts/<id>   copy-paste prompts for one posting
     GET  /applications   the pipeline: everything you've applied to
+    GET  /stats          model usage, cache hit rates, coverage, recent runs
     POST /api/status     move an application to a stage
     POST /api/notes      save notes against an application
 
@@ -29,6 +30,7 @@ Scores come from jobrank.ranking for the active profile (switch with
 ?profile=<id>); nothing here computes a score itself.
 """
 
+import logging
 import sys
 from urllib.parse import urlparse
 from datetime import datetime, timezone
@@ -46,6 +48,9 @@ from jobrank.config import companies
 from jobrank.config import scoring as scoring_config
 from jobrank.ops import selfcheck
 from jobrank.profile import active
+from jobrank.log import event, get_logger
+
+log = get_logger(__name__)
 from jobrank import storage
 from jobrank.refresh import refresh as run_refresh
 
@@ -447,7 +452,8 @@ def _catch_up_if_stale() -> bool:
     try:
         run_refresh(verbose=False, notifications=True)
         return True
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 - stale data beats an error page
+        event(log, "catch_up_refresh_failed", level=logging.WARNING, error=f"{type(exc).__name__}: {exc}"[:300])
         return False
 
 
@@ -592,6 +598,14 @@ def index():
         filters=request.args,
         config=config,
     )
+
+
+@app.route("/stats")
+def stats_route():
+    """What the machinery is doing: model usage, caches, coverage, recent runs."""
+    from jobrank.ops import stats
+
+    return render_template("stats.html", stats=stats.collect())
 
 
 @app.route("/applications")

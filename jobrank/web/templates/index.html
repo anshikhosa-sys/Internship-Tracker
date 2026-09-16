@@ -44,6 +44,7 @@
         </form>
       {% endif %}
       <a class="btn-secondary" href="{{ url_for('profiles.profile_form', id=profile.user_id) }}">Profile</a>
+      <a class="btn-secondary" href="{{ url_for('stats_route') }}">Stats</a>
       <a class="btn-secondary" href="{{ url_for('applications_route') }}">
         My applications{% if applied_total %} ({{ applied_total }}){% endif %}
       </a>

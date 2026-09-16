@@ -11,10 +11,13 @@ table. Anything else changing means the process restarted anyway.
 from __future__ import annotations
 
 import os
+import time
+import uuid
 from dataclasses import dataclass
 from datetime import date
 
 from jobrank import postings, storage
+from jobrank.log import event, get_logger
 from jobrank.config import profile as profile_cfg
 from jobrank.models import Profile
 from jobrank.profile import active, store
@@ -31,6 +34,7 @@ class Ranking:
 
 
 _cache: dict[tuple, Ranking] = {}
+log = get_logger(__name__)
 
 
 def _profile_mtime(user_id: str) -> float:
@@ -62,7 +66,8 @@ def annotate(row: dict, result: ScoreResult) -> dict:
     return row
 
 
-def rank(user_id: str | None = None, conn=None, today: date | None = None, semantic: bool = True) -> Ranking | None:
+def rank(user_id: str | None = None, conn=None, today: date | None = None, semantic: bool = True,
+         trigger: str = "dashboard") -> Ranking | None:
     own = conn is None
     conn = conn or storage.connect()
     try:
@@ -80,9 +85,17 @@ def rank(user_id: str | None = None, conn=None, today: date | None = None, seman
             rows = [annotate(fresh_rows[r["id"]], cached.results[r["id"]]) for r in cached.rows if r["id"] in fresh_rows]
             return Ranking(cached.profile, rows, cached.results, cached.ordered_ids)
 
+        started = time.perf_counter()
+        run_id = uuid.uuid4().hex[:12]
         profile = store.load(user_id)
         raw_rows = storage.load_postings(conn)
-        results = engine.score_all(profile, raw_rows, today=today, enrichments=enrichments, semantic=semantic)
+        results = engine.score_all(profile, raw_rows, today=today, enrichments=enrichments, semantic=semantic,
+                                   log_decisions=True, run_id=run_id)
+        top = results[0] if results else None
+        event(log, "ranking_computed", run_id=run_id, trigger=trigger, profile=user_id, postings=len(results),
+              duration_ms=round((time.perf_counter() - started) * 1000, 1),
+              semantic_model=(top.factors["semantic"].detail["model"] if top and "semantic" in top.factors else None),
+              top_score=top.score if top else None)
         by_id = {r.posting_id: r for r in results}
         rows = [annotate(row, by_id[row["id"]]) for row in raw_rows]
         ranking = Ranking(profile, rows, by_id, [r.posting_id for r in results])

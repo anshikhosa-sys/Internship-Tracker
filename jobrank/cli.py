@@ -6,10 +6,11 @@ Command-line interface: `python3 run.py ...`.
     run.py profile list
     run.py prefs --id alex [--file prefs.json]
     run.py label seed|add|remove|list|queue --profile alex
+    run.py --explain <posting_id> [--profile alex]
+    run.py --stats
 
-Later phases register more commands here (refresh, explain, apply, label,
-stats). Each command is a function taking parsed args and returning an exit
-code; `main` only dispatches.
+Each command is a function taking parsed args and returning an exit code;
+`main` only dispatches.
 """
 
 from __future__ import annotations
@@ -219,9 +220,60 @@ def cmd_label_queue(args: argparse.Namespace, ask=input) -> int:
 
 
 # ---------------------------------------------------------------------------
+# observability
+# ---------------------------------------------------------------------------
+
+def find_posting_id(query: str, ids) -> str | None:
+    """An exact id, or a unique prefix of one (with or without the "job:" part)."""
+    ids = list(ids)
+    if query in ids:
+        return query
+    wanted = query if query.startswith("job:") else f"job:{query}"
+    matches = [i for i in ids if i.startswith(wanted)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def cmd_explain(args: argparse.Namespace) -> int:
+    from jobrank import ranking
+    from jobrank.scoring.explain import explain
+
+    ranked = ranking.rank(args.profile, trigger="explain")
+    if ranked is None:
+        print("No profile to explain against.", file=sys.stderr)
+        return 2
+    if args.profile and ranked.profile.user_id != args.profile:
+        print(f"No profile '{args.profile}'.", file=sys.stderr)
+        return 2
+    posting_id = find_posting_id(args.explain, ranked.results)
+    if posting_id is None:
+        print(f"No single active posting matches '{args.explain}'.", file=sys.stderr)
+        return 2
+    row = next(r for r in ranked.rows if r["id"] == posting_id)
+    rank = ranked.ordered_ids.index(posting_id) + 1
+    if args.json:
+        print(json.dumps({"rank": rank, "total": len(ranked.ordered_ids), **ranked.results[posting_id].to_dict()},
+                         indent=2))
+    else:
+        print(explain(ranked.profile, row, ranked.results[posting_id], rank, len(ranked.ordered_ids)))
+    return 0
+
+
+def cmd_stats(args: argparse.Namespace) -> int:
+    from jobrank.ops import stats
+
+    data = stats.collect()
+    print(json.dumps(data, indent=2, default=str) if args.json else stats.format_text(data))
+    return 0
+
+
+# ---------------------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="run.py", description="jobrank: rank job postings for a profile.")
+    parser.add_argument("--explain", metavar="POSTING_ID", help="explain one posting's score, factor by factor")
+    parser.add_argument("--profile", help="profile id for --explain (default: the active profile)")
+    parser.add_argument("--stats", action="store_true", help="LLM usage, cache hit rates, coverage, recent runs")
+    parser.add_argument("--json", action="store_true", help="machine-readable output for --explain/--stats")
     sub = parser.add_subparsers(dest="command")
 
     profile = sub.add_parser("profile", help="create, show, or list profiles")
@@ -273,6 +325,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.explain:
+        return cmd_explain(args)
+    if args.stats:
+        return cmd_stats(args)
     if not getattr(args, "func", None):
         parser.print_help()
         return 1

@@ -30,10 +30,14 @@ If that tradeoff isn't acceptable, leave PUSH_TOPIC empty and macOS
 notifications keep working exactly as before.
 """
 
+import logging
 import urllib.error
 import urllib.request
 
 from jobrank import config
+from jobrank.log import event, get_logger
+
+log = get_logger(__name__)
 
 
 def is_configured() -> bool:
@@ -75,7 +79,10 @@ def send(title: str, message: str, url: str = "") -> bool:
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             return 200 <= response.status < 300
-    except (urllib.error.URLError, OSError, ValueError):
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        # The topic is a credential; log the failure, never the endpoint.
+        event(log, "notification_failed", level=logging.WARNING, channel="ntfy",
+              error=type(exc).__name__)
         return False
 
 

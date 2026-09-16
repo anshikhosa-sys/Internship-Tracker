@@ -6,9 +6,14 @@ network (the LLM backend is forced to rules unless a test fakes a model).
 
 import io
 import os
+import tempfile
 import zipfile
 
 import pytest
+
+# Set before any jobrank module is imported: jobrank.log reads it at import
+# time, and test modules import jobrank during collection, before fixtures run.
+os.environ["JOBRANK_LOG_DIR"] = tempfile.mkdtemp(prefix="jobrank-test-logs-")
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EXAMPLES = os.path.join(ROOT, "examples")

@@ -23,11 +23,15 @@ watching. So every failure path here returns False rather than raising, and
 refresh.py treats notifying as optional.
 """
 
+import logging
 import platform
 import shutil
 import subprocess
 
 from jobrank import config
+from jobrank.log import event, get_logger
+
+log = get_logger(__name__)
 
 
 def _escape(text: str) -> str:
@@ -82,7 +86,9 @@ def send(title: str, message: str, subtitle: str = "") -> bool:
             timeout=10,
         )
         return True
-    except (subprocess.SubprocessError, OSError):
+    except (subprocess.SubprocessError, OSError) as exc:
+        event(log, "notification_failed", level=logging.WARNING, channel="osascript",
+              error=f"{type(exc).__name__}: {exc}"[:300])
         return False
 
 

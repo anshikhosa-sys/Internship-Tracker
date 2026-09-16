@@ -57,6 +57,14 @@ def _model_backend() -> OllamaBackend | None:
     return backend  # type: ignore[return-value]
 
 
+def model_available() -> bool:
+    """Whether structured tasks will go to a model (False means rules)."""
+    try:
+        return _model_backend() is not None
+    except BackendUnavailable:
+        return False
+
+
 def reset_probe() -> None:
     _backend_probe.clear()
 

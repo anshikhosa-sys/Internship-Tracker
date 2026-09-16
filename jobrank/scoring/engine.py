@@ -65,6 +65,18 @@ class ScoreResult:
         return {name: (f.value ** self.weights[name] if f.value > 0 else 0.0)
                 for name, f in self.factors.items()}
 
+    def to_log_record(self) -> dict:
+        """The per-factor breakdown without prose reasons: ~0.4 KB per posting."""
+        contributions = self.contributions()
+        return {
+            "posting_id": self.posting_id,
+            "score": self.score,
+            "role_family": self.role_family,
+            "factors": {name: {"v": round(f.value, 4), "w": self.weights[name], "c": round(contributions[name], 4),
+                               **({"neutral": True} if f.neutral else {})}
+                        for name, f in self.factors.items()},
+        }
+
     def to_dict(self) -> dict:
         return {
             "posting_id": self.posting_id,
@@ -161,7 +173,7 @@ def score_all(profile: Profile, all_postings: list, today: date | None = None, e
     if log_decisions:
         for rank, result in enumerate(results, start=1):
             decision_log.log(logging.INFO, "score", extra={"fields": {
-                "run_id": run_id, "profile": profile.user_id, "rank": rank, **result.to_dict()}})
+                "run_id": run_id, "profile": profile.user_id, "rank": rank, **result.to_log_record()}})
     return results
 
 
