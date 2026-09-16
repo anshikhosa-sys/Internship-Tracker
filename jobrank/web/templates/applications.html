@@ -10,21 +10,15 @@
 
 <header class="topbar">
   <div class="topbar-inner">
-    <div>
-      <h1>My applications</h1>
-      <p class="sub">
-        {% if items %}
-          {{ items|length }} in the pipeline
-          {% for stage in stages if stage.key and counts.get(stage.key) %}
-            · {{ counts[stage.key] }} {{ stage.label|lower }}
-          {% endfor %}
-        {% else %}
-          Nothing tracked yet
-        {% endif %}
-      </p>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">jr</span>
+      <div>
+        <h1>Applications</h1>
+        <p class="sub">{% if items %}{{ items|length }} in the pipeline{% for stage in stages if stage.key and counts.get(stage.key) %} · {{ counts[stage.key] }} {{ stage.label|lower }}{% endfor %}{% else %}Nothing tracked yet{% endif %}</p>
+      </div>
     </div>
     <div class="topbar-actions">
-      <a class="btn-refresh" href="{{ url_for('index') }}">Find more roles</a>
+      <a class="btn-secondary" href="{{ url_for('index') }}">Find more roles</a>
     </div>
   </div>
 </header>

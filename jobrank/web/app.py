@@ -25,6 +25,7 @@ THE ROUTES HERE
     GET  /stats          model usage, cache hit rates, coverage, recent runs
     POST /api/status     move an application to a stage
     POST /api/notes      save notes against an application
+    POST /profile/active set the profile the dashboard opens with
 
 Scores come from jobrank.ranking for the active profile (switch with
 ?profile=<id>); nothing here computes a score itself.
@@ -478,13 +479,10 @@ def index():
 
     conn = storage.connect()
 
+    # A GET never changes stored state. Viewing another profile's ranking is
+    # a view, not a preference; "Make default" below is a POST.
     requested = request.args.get("profile")
-    if requested:
-        chosen = active.resolve(requested, conn)
-        if chosen == requested:
-            active.set_active(conn, chosen)
-
-    ranked = ranking.rank(conn=conn)
+    ranked = ranking.rank(requested, conn=conn)
     if ranked is None:
         conn.close()
         return redirect(url_for("profiles.profile_form", first=1))
@@ -593,11 +591,27 @@ def index():
         tiers={k: {"label": v} for k, v in SIZE_LABELS.items()},
         profile=ranked.profile,
         profiles=_profile_ids(),
+        default_profile=active.resolve(None),
         factor_labels=FACTOR_LABELS,
         tier=request.args.get("tier", ""),
         filters=request.args,
         config=config,
     )
+
+
+@app.route("/profile/active", methods=["POST"])
+def set_active_profile():
+    """Make one profile the default the dashboard opens with."""
+    conn = storage.connect()
+    try:
+        wanted = request.form.get("profile")
+        chosen = active.resolve(wanted, conn)
+        if chosen != wanted:
+            return render_template("error.html", message="No such profile."), 404
+        active.set_active(conn, chosen)
+    finally:
+        conn.close()
+    return redirect(url_for("index"))
 
 
 @app.route("/stats")

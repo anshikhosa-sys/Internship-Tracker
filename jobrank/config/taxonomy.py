@@ -251,6 +251,28 @@ ROLE_FAMILIES = {
     },
 }
 
+# Words that veto a family match even though one of its title keywords hit.
+# "Infrastructure" is the clearest case: a Water Infrastructure Engineering
+# Intern and a Cloud Infrastructure Engineering Intern share a word and share
+# nothing else. Vetoes are about the DISCIPLINE, not about anyone's taste.
+NON_SOFTWARE_DISCIPLINES = [
+    "civil", "water", "wastewater", "roadway", "highway", "bridge", "structural", "geotechnical",
+    "coastal", "environmental", "mechanical", "chemical", "industrial", "biomedical", "electrical",
+    "facilities", "hvac", "mining", "petroleum", "drilling", "reservoir", "transportation",
+    "utility", "utilities", "construction", "propulsion", "flight sciences", "materials",
+    "real assets", "private equity", "corporate finance",
+]
+
+_SOFTWARE_FAMILIES = ["software_engineering", "backend", "frontend", "fullstack", "mobile",
+                      "ai_engineering", "ml_engineering", "data_engineering", "data_science",
+                      "infrastructure", "security", "qa_test", "forward_deployed"]
+
+FAMILY_DISQUALIFIERS = {family: list(NON_SOFTWARE_DISCIPLINES) for family in _SOFTWARE_FAMILIES}
+# Infrastructure additionally loses to hardware: "Hardware Engineering Intern —
+# Infrastructure Solutions Group" builds servers, not platforms.
+FAMILY_DISQUALIFIERS["infrastructure"] = FAMILY_DISQUALIFIERS["infrastructure"] + ["hardware"]
+FAMILY_DISQUALIFIERS["security"] = FAMILY_DISQUALIFIERS["security"] + ["physical security", "guard"]
+
 # Families whose day-to-day work substantially overlaps. Someone targeting
 # software engineering is plausibly interested in backend or data engineering
 # roles they did not think to list; nobody targeting SWE is implied to want

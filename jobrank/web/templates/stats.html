@@ -10,21 +10,46 @@
 
 <header class="topbar">
   <div class="topbar-inner">
-    <div>
-      <h1>Stats</h1>
-      <p class="sub">Extraction, caching and ranking — measured, not assumed.</p>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">jr</span>
+      <div>
+        <h1>Stats</h1>
+        <p class="sub">Extraction, caching and ranking — measured, not assumed.</p>
+      </div>
     </div>
     <div class="topbar-actions">
-      <a class="btn-refresh" href="{{ url_for('index') }}">Back to roles</a>
+      <a class="btn-secondary" href="{{ url_for('index') }}">Back to roles</a>
     </div>
   </div>
 </header>
 
 <main class="profile-page">
+  {% set enriched = stats.enrichment.enriched_by.values() | sum %}
+  {% set requests = stats.llm_usage | sum(attribute='requests') %}
+  {% set hits = stats.llm_usage | sum(attribute='hits') %}
+  <section class="stats-strip">
+    <div class="stat">
+      <div class="stat-value">{{ '{:,}'.format(enriched) }}</div>
+      <div class="stat-label">Postings enriched</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">{{ '{:.0f}%'.format(100 * hits / requests) if requests else '—' }}</div>
+      <div class="stat-label">Extraction cache hits</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">{{ '{:,}'.format(stats.embeddings.values() | sum) }}</div>
+      <div class="stat-label">Vectors indexed</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">{{ stats.ranking_runs | length }}</div>
+      <div class="stat-label">Recent ranking runs</div>
+    </div>
+  </section>
+
   <section class="derived">
     <h2>Structured extraction</h2>
     {% if stats.llm_usage %}
-      <table class="stats-table">
+      <div class="table-scroll"><table class="stats-table">
         <tr><th>task</th><th>backend</th><th>requests</th><th>cache hits</th><th>failures</th>
             <th>tokens in</th><th>tokens out</th><th>avg ms</th></tr>
         {% for row in stats.llm_usage %}
@@ -35,7 +60,7 @@
             <td>{{ '%.1f' % (row.avg_latency_ms or 0) }}</td>
           </tr>
         {% endfor %}
-      </table>
+      </table></div>
       <p class="sub">A local model or rules — never a paid API. Cached answers cost nothing and are never recomputed.</p>
     {% else %}
       <p class="sub">Nothing extracted yet.</p>
@@ -53,14 +78,14 @@
   <section class="derived">
     <h2>Recent ranking runs</h2>
     {% if stats.ranking_runs %}
-      <table class="stats-table">
+      <div class="table-scroll"><table class="stats-table">
         <tr><th>when</th><th>trigger</th><th>profile</th><th>postings</th><th>ms</th><th>top score</th><th>semantic</th></tr>
         {% for run in stats.ranking_runs %}
           <tr><td>{{ run.ts[:19].replace('T', ' ') }}</td><td>{{ run.trigger }}</td><td>{{ run.profile }}</td>
               <td>{{ run.postings }}</td><td>{{ run.duration_ms }}</td><td>{{ run.top_score }}</td>
               <td>{{ run.semantic_model or 'off' }}</td></tr>
         {% endfor %}
-      </table>
+      </table></div>
     {% else %}
       <p class="sub">No ranking runs logged yet.</p>
     {% endif %}

@@ -13,24 +13,12 @@
 
 <header class="topbar">
   <div class="topbar-inner">
-    <div>
-      <h1>jobrank <span class="profile-chip">for {{ profile.user_id }}</span></h1>
-      <p class="sub">
-        {{ total_count }} active postings
-        {% if new_count %}
-          · <strong class="new-count"
-                    title="Arrived since you last opened this dashboard">
-              {{ new_count }} new since your last visit
-            </strong>
-        {% endif %}
-        {% if applied_total %}
-          · {{ applied_total }} applied
-        {% endif %}
-        {% if last_run_relative %}
-          · <span title="Listings are re-fetched on a schedule, at login, and whenever you open this page with data older than a few hours">updated
-            {{ last_run_relative }}</span>
-        {% endif %}
-      </p>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">jr</span>
+      <div>
+        <h1>jobrank <span class="profile-chip">{{ profile.user_id }}</span></h1>
+        <p class="sub">Ranked for this profile{% if last_run_relative %} · updated {{ last_run_relative }}{% endif %}</p>
+      </div>
     </div>
 
     <!-- Forms, not links: these change data, and changes belong in a POST.
@@ -41,7 +29,14 @@
           <select name="profile" onchange="this.form.submit()" aria-label="Rank for profile">
             {% for pid in profiles %}<option value="{{ pid }}" {{ 'selected' if pid == profile.user_id }}>{{ pid }}</option>{% endfor %}
           </select>
+          <noscript><button type="submit" class="btn-secondary">Switch</button></noscript>
         </form>
+        {% if profile.user_id != default_profile %}
+          <form method="post" action="{{ url_for('set_active_profile') }}">
+            <input type="hidden" name="profile" value="{{ profile.user_id }}">
+            <button type="submit" class="btn-secondary" title="Open with this profile from now on">Make default</button>
+          </form>
+        {% endif %}
       {% endif %}
       <a class="btn-secondary" href="{{ url_for('profiles.profile_form', id=profile.user_id) }}">Profile</a>
       <a class="btn-secondary" href="{{ url_for('stats_route') }}">Stats</a>
@@ -61,6 +56,26 @@
 </header>
 
 <main>
+
+  <!-- The four numbers worth knowing before reading the list. -->
+  <section class="stats-strip">
+    <div class="stat">
+      <div class="stat-value">{{ '{:,}'.format(total_count) }}</div>
+      <div class="stat-label">Active postings</div>
+    </div>
+    <div class="stat {{ 'stat-accent' if new_count }}">
+      <div class="stat-value">{{ new_count }}</div>
+      <div class="stat-label" title="Arrived since you last opened this dashboard">New for you</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">{{ postings|length }}</div>
+      <div class="stat-label">Shown by filters</div>
+    </div>
+    <div class="stat">
+      <div class="stat-value">{{ applied_total }}</div>
+      <div class="stat-label">Applied</div>
+    </div>
+  </section>
 
   <!-- A banner rather than only an OS notification.
        macOS can silently suppress notifications (Focus mode, or Script
@@ -161,48 +176,54 @@
       {% endfor %}
     </select>
 
-    <label class="checkbox"
-           title="Hide roles for a term other than summer">
-      <input type="checkbox" name="nowinter" value="1"
-             {% if hide_offseason %}checked{% endif %}>
-      Summer only
-    </label>
+    <div class="filter-toggles">
+      <label class="checkbox" title="Hide roles for a term other than summer">
+        <input type="checkbox" name="nowinter" value="1"
+               {% if hide_offseason %}checked{% endif %}>
+        Summer only
+      </label>
 
-    <label class="checkbox" title="Hide full-time roles during a school term">
-      <input type="checkbox" name="nocoop" value="1"
-             {% if hide_coop %}checked{% endif %}>
-      Hide co-ops
-    </label>
+      <label class="checkbox" title="Hide full-time roles during a school term">
+        <input type="checkbox" name="nocoop" value="1"
+               {% if hide_coop %}checked{% endif %}>
+        Hide co-ops
+      </label>
 
-    <label class="checkbox" title="Only employers whose product is technology">
-      <input type="checkbox" name="techonly" value="1"
-             {% if tech_only %}checked{% endif %}>
-      Tech employers only
-    </label>
+      <label class="checkbox" title="Only employers whose product is technology">
+        <input type="checkbox" name="techonly" value="1"
+               {% if tech_only %}checked{% endif %}>
+        Tech employers only
+      </label>
 
-    <label class="checkbox">
-      <input type="checkbox" name="show_low" value="1"
-             {% if filters.get('show_low') == '1' %}checked{% endif %}>
-      Show low-fit
-    </label>
+      <label class="checkbox" title="Include postings scored below the low-fit threshold">
+        <input type="checkbox" name="show_low" value="1"
+               {% if filters.get('show_low') == '1' %}checked{% endif %}>
+        Show low-fit
+      </label>
+    </div>
 
-    <button type="submit">Apply</button>
-    <a class="clear" href="{{ url_for('index') }}">Clear</a>
+    <div class="filter-actions">
+      <button type="submit" class="btn-refresh">Apply filters</button>
+      <a class="clear" href="{{ url_for('index') }}">Clear</a>
+    </div>
   </form>
 
   {# The weekly self-check found something broken. Shown here because a
      notification fired while you were away from the machine is gone, and
      this is the one thing that should never be silently missed. #}
+  {# The failures are raw check output and can be long. Summarize, and keep
+     the detail one click away rather than pushing the list off the screen. #}
   {% if selfcheck %}
-    <div class="warn-banner selfcheck-banner">
-      <strong>Something needs attention</strong>
-      — the weekly check{% if selfcheck.when %} ({{ selfcheck.when }}){% endif %}
-      found {{ selfcheck.failures|length }} problem{{ '' if selfcheck.failures|length == 1 else 's' }}:
+    <details class="warn-banner selfcheck-banner">
+      <summary>
+        <strong>{{ selfcheck.failures|length }} check{{ '' if selfcheck.failures|length == 1 else 's' }}
+        failing</strong>{% if selfcheck.when %} as of the weekly run {{ selfcheck.when }}{% endif %} —
+        run <code>python3 healthcheck.py</code> for the detail
+      </summary>
       <ul>
         {% for failure in selfcheck.failures %}<li>{{ failure }}</li>{% endfor %}
       </ul>
-      Run <code>python3 healthcheck.py</code> for the detail.
-    </div>
+    </details>
   {% endif %}
 
   <!-- ==================== RESULTS ==================== -->
@@ -338,11 +359,11 @@
             <div class="role">{{ posting.role }}</div>
 
             <div class="meta">
-              {{ posting.location }}
-              · {{ posting.category }}
-              {% if posting.age_days is not none %}
-                · {{ posting.freshness_label|lower }}
-              {% endif %}
+              {%- set bits = [] -%}
+              {%- if posting.location %}{% set _ = bits.append(posting.location) %}{% endif -%}
+              {%- if posting.category %}{% set _ = bits.append(posting.category) %}{% endif -%}
+              {%- if posting.age_days is not none %}{% set _ = bits.append(posting.freshness_label|lower) %}{% endif -%}
+              {{ bits|join(' · ') }}
             </div>
 
             <!-- Why it scored what it did. Every factor is raised to the
@@ -350,17 +371,27 @@
                  and what it multiplied the score by. -->
             <details class="why">
               <summary>Why this score?</summary>
-              <p class="formula">
-                {% for name, f in posting.factors.items() %}{{ '%.2f' % f.value }}<sup>{{ f.weight }}</sup>{{ ' × ' if not loop.last }}{% endfor %}
-                × 100 = <strong>{{ posting.fit_score }}</strong>
-              </p>
-              {% for name, f in posting.factors.items() %}
-                <div class="factor">
-                  <span class="factor-name">{{ factor_labels[name] }}
-                    <span class="pts">×{{ '%.2f' % f.contribution }}</span>{% if f.neutral %} <span class="muted">(no data — neutral)</span>{% endif %}</span>
-                  <ul>{% for r in f.reasons %}<li>{{ r }}</li>{% endfor %}</ul>
-                </div>
-              {% endfor %}
+              <div class="why-body">
+                <p class="formula">
+                  {% for name, f in posting.factors.items() %}{{ '%.2f' % f.value }}<sup>{{ f.weight }}</sup>{{ ' × ' if not loop.last }}{% endfor %}
+                  × 100 = <strong>{{ posting.fit_score }}</strong>
+                </p>
+                {% for name, f in posting.factors.items() %}
+                  <div class="factor">
+                    <span class="factor-name">{{ factor_labels[name] }}
+                      <span class="pts">×{{ '%.2f' % f.contribution }}</span></span>
+                    <div>
+                      <div class="factor-bar {{ 'is-neutral' if f.neutral }}{{ ' is-weak' if f.value < 0.5 and not f.neutral }}">
+                        <span style="width: {{ (f.value * 100)|round|int }}%"></span>
+                      </div>
+                      <ul>
+                        {% for r in f.reasons %}<li>{{ r }}</li>{% endfor %}
+                        {% if f.neutral %}<li class="muted">Nothing to go on here, so this factor is neutral.</li>{% endif %}
+                      </ul>
+                    </div>
+                  </div>
+                {% endfor %}
+              </div>
             </details>
           </div>
 

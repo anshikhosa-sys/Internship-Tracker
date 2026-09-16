@@ -10,12 +10,15 @@
 
 <header class="topbar">
   <div class="topbar-inner">
-    <div>
-      <h1>{{ 'Profile: ' ~ user_id if profile else 'Create a profile' }}</h1>
-      <p class="sub">Your résumé is parsed in memory; only skills, dates and titles are saved — never contact details.</p>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">jr</span>
+      <div>
+        <h1>{{ user_id if profile else 'New profile' }}</h1>
+        <p class="sub">Your résumé is parsed in memory. Only skills, dates and titles are saved — never contact details.</p>
+      </div>
     </div>
     <div class="topbar-actions">
-      <a class="btn-refresh" href="{{ url_for('index') }}">Back to roles</a>
+      <a class="btn-secondary" href="{{ url_for('index') }}">Back to roles</a>
     </div>
   </div>
 </header>
@@ -104,10 +107,18 @@
         {{ profile.seniority.years_experience }} credited years ·
         eligible for {{ profile.seniority.eligible_levels|join(', ') }}
         {% if resume %}· extracted by {{ resume.extractor }}{% endif %}</p>
-      <p><strong>Skills:</strong>
-        {% for skill, weight in profile.skills|dictsort(by='value', reverse=true) %}{{ skill }} ({{ '%.2f'|format(weight) }}){{ ', ' if not loop.last }}{% endfor %}</p>
-      <p><strong>Role affinity:</strong>
-        {% for family, value in (profile.role_affinity|dictsort(by='value', reverse=true))[:6] %}{{ family.replace('_', ' ') }} ({{ '%.2f'|format(value) }}){{ ', ' if not loop.last }}{% endfor %}</p>
+      <p><strong>Skills</strong> <span class="muted small">weight reflects where each was demonstrated and how recently</span></p>
+      <ul class="skill-list">
+        {% for skill, weight in profile.skills|dictsort(by='value', reverse=true) %}
+          <li class="skill">{{ skill }} <em>{{ '%.2f'|format(weight) }}</em></li>
+        {% endfor %}
+      </ul>
+      <p style="margin-top: 16px"><strong>Role affinity</strong></p>
+      <ul class="skill-list">
+        {% for family, value in (profile.role_affinity|dictsort(by='value', reverse=true))[:8] %}
+          <li class="skill">{{ family.replace('_', ' ') }} <em>{{ '%.2f'|format(value) }}</em></li>
+        {% endfor %}
+      </ul>
       {% if resume and resume.warnings %}
         <ul class="sub">{% for w in resume.warnings %}<li>{{ w }}</li>{% endfor %}</ul>
       {% endif %}

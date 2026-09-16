@@ -647,8 +647,17 @@ def get_state(conn, key: str):
 
 
 def set_state(conn, key: str, value: str) -> None:
-    """Write a value to the small key/value table. Caller commits."""
+    """
+    Write a value to the small key/value table, and commit it.
+
+    The private _set_state leaves committing to its caller because
+    register_visit() batches several writes. This public one commits: an
+    earlier version did not, so a setting written through it survived only
+    when some later write in the same request happened to commit, and
+    silently vanished otherwise.
+    """
     _set_state(conn, key, value)
+    conn.commit()
 
 
 def register_visit(conn) -> str:

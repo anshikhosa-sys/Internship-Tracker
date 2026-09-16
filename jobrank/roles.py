@@ -35,7 +35,7 @@ def _classify_title(title: str) -> tuple[str, ...]:
     for family, spec in taxonomy.ROLE_FAMILIES.items():
         matched = [kw for kw in spec["titles"]
                    if textmatch.contains(title, kw) or textmatch.contains(expanded, kw)]
-        if matched:
+        if matched and not textmatch.find_all(title, taxonomy.FAMILY_DISQUALIFIERS.get(family, [])):
             hits.append((max(len(kw) for kw in matched), family))
     if not hits:
         return ()

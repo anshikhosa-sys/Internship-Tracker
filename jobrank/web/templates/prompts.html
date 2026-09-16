@@ -10,14 +10,12 @@
 
 <header class="topbar">
   <div class="topbar-inner">
-    <div>
-      <h1>{{ posting.company }}</h1>
-      <p class="sub">
-        {{ posting.role }} · {{ posting.location }}
-        {% if posting.role_family %}
-          · written for a <strong>{{ posting.role_family }}</strong> audience
-        {% endif %}
-      </p>
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">jr</span>
+      <div>
+        <h1>{{ posting.company }}</h1>
+        <p class="sub">{{ posting.role }} · {{ posting.location }}{% if posting.role_family %} · written for a <strong>{{ posting.role_family.replace('_', ' ') }}</strong> audience{% endif %}</p>
+      </div>
     </div>
     <div class="topbar-actions">
       <a class="btn-secondary" href="{{ url_for('index') }}">Back to list</a>

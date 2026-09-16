@@ -264,3 +264,21 @@ def test_enrichment_is_cached_by_text_hash(monkeypatch):
 def test_title_classification_of_abbreviations():
     assert postings.role_families(make_posting(role="SDE Intern")) == ["software_engineering"]
     assert postings.role_families(make_posting(role="SRE Intern")) == ["infrastructure"]
+
+
+# --- discipline vetoes ---------------------------------------------------------
+
+@pytest.mark.parametrize("title,expected", [
+    ("Water Infrastructure Engineering Intern - Summer 2027", []),
+    ("Civil Engineering Intern - Coastal Infrastructure", []),
+    ("Mechanical Design Engineer Intern", []),
+    ("Hardware Engineering Intern - Infrastructure Solutions Group", ["embedded_hardware"]),
+    ("Private Equity Infrastructure & Real Assets Summer Analyst", []),
+    ("Cloud Infrastructure Engineer Intern", ["infrastructure"]),
+    ("Site Reliability Engineer Intern", ["infrastructure"]),
+    ("Software Engineer Intern", ["software_engineering"]),
+])
+def test_non_software_disciplines_do_not_match_software_families(title, expected):
+    """"Infrastructure" is a word two unrelated professions share."""
+    from jobrank.roles import classify_title
+    assert classify_title(title) == expected
