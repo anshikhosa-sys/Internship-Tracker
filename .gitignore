@@ -33,6 +33,10 @@ eval/baselines/*
 BRIEFING.md
 HANDOFF-CHANGES.md
 
+# A generated résumé-writing brief for the project owner personally — not
+# something a visitor to the repo needs.
+RESUME_DESCRIPTION_PROMPT.md
+
 # Generated cover letter drafts. They quote your résumé and are written in
 # your name — keep them off the internet.
 letters/
