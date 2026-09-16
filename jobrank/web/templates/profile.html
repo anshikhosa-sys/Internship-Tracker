@@ -36,6 +36,68 @@
     </div>
   {% endif %}
 
+  {% if parse_warning %}
+    <div class="warn-banner" role="alert"><strong>Check this parse.</strong> {{ parse_warning }}</div>
+  {% endif %}
+
+  {% if changes %}
+    <section class="derived change-report">
+      <h2>What changed</h2>
+      <p class="sub">Extracted by {{ changes.extractor }}. Preferences were left as they were.</p>
+      <div class="change-grid">
+        <div>
+          <div class="stat-label">Seniority</div>
+          <div>{{ changes.seniority_before }} → <strong>{{ changes.seniority_after }}</strong>
+            <span class="muted small">({{ changes.years_before }} → {{ changes.years_after }} credited years)</span></div>
+        </div>
+        <div>
+          <div class="stat-label">Experience entries</div>
+          <div>{{ changes.experience_before }} → <strong>{{ changes.experience_after }}</strong>
+            <span class="muted small">· {{ changes.projects_before }} → {{ changes.projects_after }} projects</span></div>
+        </div>
+      </div>
+      {% if changes.skills_added %}
+        <p><strong>Skills added</strong></p>
+        <ul class="skill-list">
+          {% for skill in changes.skills_added %}<li class="skill skill-added">+ {{ skill }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      {% if changes.skills_removed %}
+        <p style="margin-top: 12px"><strong>No longer found</strong></p>
+        <ul class="skill-list">
+          {% for skill in changes.skills_removed %}<li class="skill skill-removed">− {{ skill }}</li>{% endfor %}
+        </ul>
+      {% endif %}
+      {% if changes.affinity_moves %}
+        <p style="margin-top: 12px"><strong>Role affinity moved</strong>
+          <span class="muted small">this is what reorders your list</span></p>
+        <ul class="skill-list">
+          {% for family, was, now in changes.affinity_moves %}
+            <li class="skill">{{ family.replace('_', ' ') }} <em>{{ '%.2f'|format(was) }} → {{ '%.2f'|format(now) }}</em></li>
+          {% endfor %}
+        </ul>
+      {% endif %}
+      {% if changes.is_empty %}<p class="muted">Nothing the scorer reads is different.</p>{% endif %}
+      <p style="margin-top: 14px"><a class="btn-refresh" href="{{ url_for('index') }}">See the new ranking</a></p>
+    </section>
+  {% endif %}
+
+  {% if profile %}
+    {# The most common return visit is "I updated my résumé", so it leads. #}
+    <section class="derived upload-card" id="resume">
+      <h2>Upload a new résumé</h2>
+      <p class="sub">Replaces the résumé this profile is scored from and shows what changed.
+        Your preferences stay as they are. PDF, DOCX, TXT or Markdown, up to
+        {{ (max_resume_bytes / 1000000)|round|int }} MB.</p>
+      <form method="post" action="{{ url_for('profiles.resume_upload', user_id=user_id) }}"
+            enctype="multipart/form-data" class="upload-form">
+        <input type="file" name="resume" accept=".pdf,.docx,.txt,.md" required aria-label="New résumé file">
+        <button type="submit" class="btn-refresh">Upload and re-score</button>
+      </form>
+      <p class="muted small">Nothing is saved if the file cannot be parsed, so a bad upload cannot damage the profile you have.</p>
+    </section>
+  {% endif %}
+
   {% if profiles %}
     <p class="sub">Existing profiles:
       {% for pid in profiles %}<a href="{{ url_for('profiles.profile_form', id=pid) }}">{{ pid }}</a>{{ ', ' if not loop.last }}{% endfor %}
@@ -48,13 +110,19 @@
       <label>Profile id
         <input name="user_id" value="{{ user_id }}" required pattern="[a-z0-9][a-z0-9_-]{0,39}" {{ 'readonly' if profile }}>
       </label>
-      <label>Résumé (PDF, DOCX, TXT or Markdown){{ ' — leave empty to keep the current one' if profile }}
-        <input type="file" name="resume" accept=".pdf,.docx,.txt,.md" {{ '' if profile else 'required' }}>
-      </label>
+      {% if not profile %}
+        <label>Résumé <small>PDF, DOCX, TXT or Markdown</small>
+          <input type="file" name="resume" accept=".pdf,.docx,.txt,.md" required>
+        </label>
+      {% else %}
+        <p class="muted small">Résumé on file, extracted by {{ resume.extractor if resume else 'rules' }}.
+          <a href="#resume">Upload a new one</a> to replace it.</p>
+      {% endif %}
     </fieldset>
 
     <fieldset>
       <legend>What you want</legend>
+      <p class="muted small">These are about the job you are looking for, not about your résumé.</p>
       <label>Target roles <small>comma-separated job titles</small>
         <input name="target_roles" value="{{ prefs.target_roles|join(', ') }}" placeholder="Software Engineer, Data Engineer">
       </label>

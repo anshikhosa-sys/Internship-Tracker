@@ -13,6 +13,7 @@ from flask import Blueprint, redirect, render_template, request, url_for
 from jobrank.config import profile as profile_cfg
 from jobrank.config import taxonomy
 from jobrank.models import Preferences
+from jobrank.profile import diff as profile_diff
 from jobrank.profile import preferences as prefs_mod
 from jobrank.profile import store
 from jobrank.resume import parser as resume_parser
@@ -21,8 +22,10 @@ bp = Blueprint("profiles", __name__)
 
 
 def _form_context(user_id: str = "", preferences: Preferences | None = None, errors=None, profile=None,
-                  resume=None):
+                  resume=None, changes=None, parse_warning=None):
     return dict(
+        changes=changes,
+        parse_warning=parse_warning,
         user_id=user_id,
         prefs=(preferences or Preferences()),
         errors=errors or [],
@@ -35,6 +38,7 @@ def _form_context(user_id: str = "", preferences: Preferences | None = None, err
         industries=taxonomy.INDUSTRIES,
         factors=profile_cfg.PRIORITY_FACTORS,
         default_priority=profile_cfg.DEFAULT_PRIORITY,
+        max_resume_bytes=profile_cfg.MAX_RESUME_BYTES,
     )
 
 
@@ -49,6 +53,42 @@ def profile_form():
         except (store.ProfileNotFound, ValueError) as exc:
             return render_template("profile.html", **_form_context(errors=[str(exc)])), 404
     return render_template("profile.html", **_form_context())
+
+
+@bp.route("/profile/<user_id>/resume", methods=["POST"])
+def resume_upload(user_id: str):
+    """
+    Replace a profile's résumé and report what changed.
+
+    Preferences are untouched: a new résumé restates what you have done, not
+    what you want. The derived profile is rebuilt from the new résumé plus the
+    preferences already on file.
+    """
+    try:
+        store.validate_user_id(user_id)
+        previous_resume, preferences = store.load_inputs(user_id)
+        before = store.load(user_id)
+    except (store.ProfileNotFound, ValueError) as exc:
+        return render_template("profile.html", **_form_context(errors=[str(exc)])), 404
+
+    upload = request.files.get("resume")
+    if not upload or not upload.filename:
+        return render_template("profile.html", **_form_context(
+            user_id, preferences, ["Choose a résumé file to upload."], before, previous_resume)), 400
+    try:
+        resume = resume_parser.parse_bytes(upload.read(profile_cfg.MAX_RESUME_BYTES + 1), upload.filename)
+    except (resume_parser.ResumeReadError, resume_parser.ResumeParseError) as exc:
+        # Nothing is saved on a failed parse: the old profile stays intact.
+        return render_template("profile.html", **_form_context(
+            user_id, preferences, [f"Résumé: {exc}"], before, previous_resume)), 400
+
+    after = store.save(user_id, resume, preferences)
+    changes = profile_diff.compare(before, after, resume, previous_resume)
+    warning = ("This résumé extracted far fewer skills than the previous one, which usually means it "
+               "parsed badly. Check the list below — a text or Markdown export usually parses best.")
+    return render_template("profile.html", **_form_context(
+        user_id, preferences, profile=after, resume=resume, changes=changes,
+        parse_warning=warning if changes.looks_like_a_worse_parse() else None))
 
 
 @bp.route("/profile", methods=["POST"])

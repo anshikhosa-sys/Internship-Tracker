@@ -623,3 +623,12 @@ input::placeholder { color: var(--text-faint); }
   .topbar-actions, .filters, .actions { display: none; }
   .posting { break-inside: avoid; box-shadow: none; }
 }
+
+/* Résumé upload and change report */
+.upload-card { border-color: var(--accent); }
+.upload-form { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; margin: var(--space-3) 0; }
+.upload-form input[type="file"] { flex: 1 1 320px; }
+.change-report { border-left: 3px solid var(--good); }
+.change-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-4); margin: var(--space-3) 0; }
+.skill-added { border-color: color-mix(in srgb, var(--good) 40%, transparent); color: var(--good); }
+.skill-removed { border-color: color-mix(in srgb, var(--danger) 35%, transparent); color: var(--danger); }
