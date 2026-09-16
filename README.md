@@ -1,264 +1,233 @@
-# Personalized Internship Finder
+# jobrank
 
-Finds Summer 2027 internship postings and ranks them by how well they fit my
-profile, so the best-fit roles are at the top instead of a wall of generic SWE
-listings.
+A local recruiting platform that reads a résumé, derives a profile from it, and
+ranks live job postings by how worth applying to they are **for that person,
+today** — with a measurable answer for whether the ranking is any good.
 
-Runs entirely on my own machine. No hosting, no account, no API keys.
+![The ranked list, with one posting's score broken down by factor](docs/dashboard.png)
 
-Data comes from [SimplifyJobs/Summer2027-Internships](https://github.com/SimplifyJobs/Summer2027-Internships),
-which is updated daily.
+Every number on that card is explained: each factor's value, the exponent the
+user's own priorities gave it, and what it multiplied the score by.
 
 ---
 
-## Setup (once)
+## The problem, and why ranking is the hard part
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-./scripts/schedule.sh install
+Aggregated internship lists are long (this one indexes **4,100+ active postings
+from 8 sources**) and undifferentiated. Filtering by keyword returns hundreds of
+rows; sorting by date ignores fit. The useful question is *which of these is
+worth an application from me, this morning* — and that depends on the person.
+
+The earlier version of this project answered it with constants tuned to one
+individual. This version derives everything from whoever uploads a résumé, and
+**measures the ranking against labelled data** rather than trusting it.
+
+## How it works
+
+```
+                                       ┌──────────────────────────┐
+  résumé (PDF/DOCX/TXT) ──► extract ──►│ derived profile          │
+  stated preferences ─────────────────►│  skills · seniority      │
+                                       │  role affinity · weights │
+                                       └────────────┬─────────────┘
+  8 job sources ──► parse ──► dedupe ──► enrich ──► │ ──► score ──► rank ──► dashboard
+                                          (cached)  │        │
+                                                    │        └──► logs/scoring.jsonl
+                                     embeddings ────┘             (per-factor record)
+                                    (local ONNX)
+                                                          golden labels ──► evaluate.py
 ```
 
-That's it. Refreshes run at 07:30, 11:30 and 16:30, at login, and whenever
-you open the dashboard with data more than a few hours old. The dashboard
-stays live at **http://127.0.0.1:5000** — bookmark it.
+**Extraction** (`jobrank/resume`, `jobrank/enrich.py`) turns documents into
+structured JSON through one interface with two backends: a local Ollama model
+when one is running, and a deterministic rule-based parser otherwise. Output is
+JSON-schema validated and cached by content hash, so the same résumé or posting
+is never analysed twice. Contact details are never extracted.
 
-**Is it really updating?** Yes, but not on the schedule above. launchd
-replays a slot missed while the Mac was asleep — only one, however many were
-missed — and never replays one missed while it was off. Real runs land at
-06:40, 10:36, 15:38 against a 07:30/11:30/16:30 schedule. What actually
-guarantees currency is the refresh when you **open the page**: it re-fetches
-all five sources in under a second if the data has aged past three hours.
-The header says `updated just now` / `updated 2 hours ago` so you never have
-to wonder.
+**Profile derivation** (`jobrank/profile`) computes what the scorer reads:
+skills weighted by where they were demonstrated and how recently, seniority from
+dated experience (internships and part-time credited at a discount, never
+self-reported), role affinity from past titles and project evidence blended with
+stated targets, and per-factor weights from the user's 1–5 priority ratings.
 
-## Everyday use
+**Scoring** (`jobrank/scoring`) composes six factors multiplicatively.
 
-Open the bookmark. The list is already filtered to roles worth applying to:
-work down it, click **Apply**, set the stage dropdown. There is nothing to
-configure and nothing to decide.
+**Evaluation** (`jobrank/eval`, `evaluate.py`) scores the current configuration
+against graded relevance labels and fails a regression gate.
 
-| Command | What it does |
-|---|---|
-| `python3 healthcheck.py` | Is everything actually working? |
-| `python3 notify.py` | Test macOS notifications, with fix instructions |
-| `python3 browser_tests.py` | Drive the real UI in a real browser |
-| `python3 selfcheck.py` | Run every check and notify if anything failed |
-| `python3 refresh.py` | Force a refresh now |
-| `./scripts/schedule.sh status` | Are the background jobs alive? |
-| `python3 tests.py` | Run the test suite |
+## The scoring model
 
-## What's on the list, and what isn't
+```
+score = 100 × Π factorᵢ ^ wᵢ        factorᵢ ∈ [0, 1]
+```
 
-The dashboard is meant to be a **don't-think-just-apply list**. Three gates
-run before anything appears:
-
-1. **It must be classifiable.** A posting matching no role family is one the
-   tool doesn't understand. Those were 56% of an earlier list and included
-   textile engineering, geoscience and actuarial roles.
-2. **You must be a plausible candidate.** Below `MIN_CANDIDACY` means
-   something in the title works against you — an advanced degree, a
-   seniority level, a technology your résumé doesn't support.
-3. **It must be recent enough to still be open**, judged per company tier.
-
-Deliberately excluded: quant and trading firms, data *analysis* (as opposed
-to data *engineering*), ML *research* (as opposed to ML *infrastructure*),
-co-ops, off-season terms, and non-technical product roles.
-
-Tick **Show low-fit** to see everything anyway. Nothing is ever deleted.
-
-### Who's hiring counts, not just the job title
-
-The same title is a different job at a different employer. "Application
-Engineering Intern" builds the product at a software company; at a
-window-blinds manufacturer it's internal IT. So the employer multiplies
-preference:
-
-| Badge | Examples | Effect |
+| Factor | Question | Neutral when |
 |---|---|---|
-| **AI / frontier** | Anthropic, Palantir, NVIDIA, Databricks, SpaceX | ×1.20 |
-| **Big tech** | Google, Microsoft, Meta, TikTok, Amazon | ×1.12 |
-| **Tech** | Notion, Figma, Datadog, Replit, Rippling | ×1.05 |
-| *(unrecognized)* | most small startups | ×0.90 |
-| **Non-tech employer** | AbbVie, Devon Energy, Deloitte, Bank of America | ×0.40 |
+| skills | Does the posting want what the résumé proves? | the posting names no skills |
+| seniority | Is this the right level, and is the user eligible? | the posting states no level |
+| role | Is this the kind of work the user wants? | the title matches no family |
+| preferences | Location, remote, company size, industry, start date | nothing stated to check |
+| freshness | Is it still open? Half-life varies by employer size | the posting has no date |
+| semantic | Résumé-to-posting similarity, local embeddings | no embedding available |
 
-A genuine ML-infrastructure or data-platform role escapes most of the
-non-tech penalty — that work is real wherever it happens.
+**Why multiply rather than add.** An application is worth making only when every
+condition holds at once. Addition averages a fatal flaw away: a role three
+levels too senior still collects most of its points from a strong title match.
+Multiplication lets a near-zero on any critical factor sink the result. The
+first version of this project *added* a large constant for a wanted title, and
+the top of the list filled with month-old postings that could not be won.
 
-Tick **Tech employers only** to hide non-tech employers entirely. Promoting
-a company is a one-line edit to `EMPLOYER_NAMES` in `config.py`.
+**Why weights are exponents.** In a product, a coefficient does nothing — it
+scales every score by the same ratio and reorders nothing. An exponent below 1
+compresses a factor toward 1 so it still moves the result but cannot dominate;
+above 1 sharpens it. A user who rates freshness 5 and role 2 gets a genuinely
+different order, with no per-person constant anywhere in the code.
 
-### Companies that cap applications
+**Why not a learned ranker.** There is no per-user training data, and a
+recruiting tool has to explain itself. Every factor here is inspectable
+(`run.py --explain`), and every change is measured before it ships. A learned
+model is the right tool once labels exist at scale; this structure produces the
+features it would use.
 
-Some employers only accept so many applications per cycle — TikTok and
-ByteDance share a pool of **2**. `APPLICATION_LIMITS` in `config.py` makes
-that a fact the tool knows rather than one you have to remember.
+**Missing data is neutral, never negative.** A posting that lists no skills is
+not a posting that wants skills the user lacks.
 
-Once you mark an application, the list stops offering more roles there than
-you have slots left, and every card shows `1 of 2 left`. When a quota is
-spent, that company's remaining roles drop off the list entirely — they are
-no longer things you can do. **show anyway** brings them back.
+## Does it work? Measured, not asserted
 
-### One company can't take over the list
+`evaluate.py` ranks a labelled pool and reports metrics beside a **random-order
+baseline over the same pool**, because a metric without one means nothing.
 
-TikTok posts 191 roles. Ranked on score alone it took 7 of the top 20, which
-turns a list of actions into a wall of one employer. The page shows your best
-`MAX_PER_COMPANY` (3) at each company and says how many it held back, with a
-**show all** link. Nothing is dropped from the database, and anything you've
-applied to is never hidden by it.
-
-## The age filter tells you what it will return
-
-Every window in the dropdown shows its own count — "Today (14)", "Last 3
-days (77)" — so you can see what you'll get before you pick it, and an
-empty window is visibly empty rather than looking like a broken page. If
-one does come back empty, the page says so and links to the nearest window
-that isn't.
-
-This exists because "posted today only" used to return nothing, every
-time: the five original sources are bot-generated on a lag and never
-published a same-day row. Two of the newer sources do, so the option
-works now.
-
-## It checks itself
-
-A LaunchAgent runs the full health check every Sunday at 09:00. It is
-**silent when everything works** and notifies only when something actually
-broke — never for warnings, because an alert that cries wolf gets ignored.
-If you were away when it fired, the dashboard shows a banner until it's
-fixed.
-
-`healthcheck.py` includes `browser_tests.py`, which drives a real Chromium
-through the real interface: it clicks the copy buttons and reads the
-clipboard back, changes an application stage and reloads to confirm it
-saved, types a note and reloads to confirm it persisted. It runs against a
-**copy** of your database, so it can never touch your real applications.
-
-Two copy-button bugs once shipped while every Python test passed — because
-neither bug was in Python. That is what this exists to prevent.
-
-## Your data is in a separate file
-
-`applications.db` holds what you applied to. It is **not** in
-`internships.db`, deliberately: the postings database is rebuildable in under
-a second, and deleting it must never cost you an application record.
-`applications.json` is a third, human-readable copy.
-
-## Where the postings come from
-
-Seven lists, merged and deduplicated — about 3,600 rows collapsing to
-~1,700 unique postings:
-
-- SimplifyJobs/Summer2027-Internships
-- vanshb03/Summer2027-Internships
-- speedyapply/2027-SWE-College-Jobs
-- speedyapply/2027-AI-College-Jobs
-- sndsh404/summer-2027-internships
-- Chieler/Summer-2027-SWE-Internships — publishes exact dates
-- DereC4/internships-and-newgrad — the broadest coverage
-
-## Tuning the rankings
-
-**Everything that affects ranking lives in [`config.py`](config.py).** No score
-numbers or keywords exist anywhere else in the codebase.
-
-| If you want to... | Edit this in `config.py` |
-|---|---|
-| Boost a kind of role | Add keywords to its entry in `ROLE_TIERS`, or raise its `points` |
-| Change which roles rank highest | Change the `points` values in `ROLE_TIERS` |
-| Care more about a topic | Raise its number in `FOCUS_BONUSES` |
-| Push irrelevant roles down | Add keywords to `OUT_OF_SCOPE_KEYWORDS` |
-| Include Quant / Hardware roles | Add them to `INGEST_CATEGORIES` |
-| See advanced-degree roles ranked normally | Set `ADVANCED_DEGREE_PENALTY = 0` |
-| Change the fit badges | Adjust `STRONG_FIT_THRESHOLD` / `GOOD_FIT_THRESHOLD` |
-| Turn off notifications | Set `NOTIFY_ON_STRONG_FIT = False` |
-| Get notified more or less often | Adjust `NOTIFY_THRESHOLD` |
-| Change how long badges persist | Adjust `VISIT_SESSION_MINUTES` |
-
-After editing, just run `python3 refresh.py` again. Scores are recomputed from
-scratch every run, so changes take effect immediately and you never need to
-delete the database.
-
-### How a score is built
-
-Each posting accumulates:
-
-1. **Role tier** — the heaviest weight. Only the single best-matching tier
-   counts, so a "Solutions Engineer" doesn't also collect generic SWE points.
-2. **Category bonus** — being listed under Product Management is itself a signal.
-3. **Focus bonuses** — AI, ML, infrastructure, data, systems, customer-facing.
-   These stack, but are capped by `MAX_FOCUS_BONUS` so a keyword-stuffed title
-   can't overturn the tiers.
-4. **Out-of-scope fields** — quant finance, hardware, and other tracks this
-   search isn't pointed at, so they sort to the bottom rather than crowding
-   out the roles being looked for.
-
-Every posting stores *why* it scored what it did. Click **"Why this score?"** on
-any row in the dashboard to see the full breakdown.
-
----
-
-## How the code is organized
+Committed example set — a fictional infrastructure-leaning student, 118 hand
+labels over a 200-posting public snapshot, reproducible on a fresh clone:
 
 ```
-config.py       ★ all keywords and weights — the only file you normally edit
-refresh.py      the command: fetch → score → store → report what's new
-app.py          the Flask dashboard
-scorer.py       applies config.py's weights (contains no numbers itself)
-storage.py      SQLite: postings, first_seen, applied marks, visit tracking
-notify.py       macOS notifications for strong new matches
-tests.py        checks the logic that's easy to get quietly wrong
-sources/
-  base.py             what every source must provide (the Posting shape)
-  simplify_readme.py  fetching + parsing this particular repo
-scripts/
-  schedule.sh         install/remove the daily automatic refresh
-templates/      the dashboard's HTML
-static/         the dashboard's CSS
+$ python3 evaluate.py --profile example --fixture eval/fixtures/example_postings.jsonl
 ```
 
-The layering is deliberate: `sources/` knows how to **get** postings, `scorer.py`
-knows how to **rank** them, and neither knows the other exists. Both only deal
-in `Posting` objects.
+| Metric | Ranking | Random | 
+|---|---|---|
+| AUC | **0.875** | 0.502 |
+| precision@10 | **0.900** | 0.259 |
+| precision@20 | **0.800** | 0.247 |
+| nDCG@10 | **0.598** | 0.178 |
+| nDCG@20 | **0.697** | 0.197 |
 
-### Adding another source later
+Real-world set — 36 genuine applications as positive labels over 4,130 live
+postings (the labels themselves stay private):
 
-To add `SimplifyJobs/New-Grad-Positions` at graduation:
+| Metric | Ranking | Random |
+|---|---|---|
+| AUC | **0.771** | 0.494 |
+| recall@500 | **0.333** | 0.112 |
+| mean rank of a relevant posting | **956** of 4,130 | 2,091 |
 
-1. Add a file in `sources/` that returns `Posting` objects.
-2. Add it to the `SOURCES` list in `refresh.py`.
+**Ablation** — AUC lost when each factor is removed, on the real set:
 
-That's the whole change. Scoring, storage, and the dashboard need no edits.
-(That repo uses the same table format, so it may only need a different URL
-passed to the existing `SimplifyReadmeSource`.)
+| Removed | AUC | Δ |
+|---|---|---|
+| (none) | 0.771 | — |
+| semantic | 0.710 | **+0.061** |
+| role affinity | 0.723 | **+0.048** |
+| seniority | 0.764 | +0.007 |
+| preferences | 0.764 | +0.007 |
+| skills | 0.785 | −0.014 |
 
----
+The semantic layer is the largest single contributor, which is the case for
+layering embeddings on top of keyword matching rather than replacing it. Skill
+overlap is within noise **on title-only data** — most sources publish no
+description, so there is usually nothing to match against; it earns its keep
+when a description is present.
 
-## Notes on the data
+### Honest limitations
 
-Things learned by inspecting the source, which the parser handles:
+- **Positive-only labels.** Applications say what was relevant, never what was
+  irrelevant, so precision@k on the real set is a lower bound and AUC is the
+  honest headline. `run.py label queue` labels the top of the current ranking,
+  which is what turns precision into a measurement.
+- **Selection bias.** Those applications were chosen while browsing an earlier
+  ranking, so they over-represent what that ranking surfaced.
+- **A ceiling from the data.** ~1,000 postings are some variant of "Software
+  Engineer Intern" with no description. Nothing in the model can separate them,
+  and the numbers above reflect that honestly.
+- **The example labels are synthetic**, assigned to a fictional profile to make
+  the harness reproducible. They are not a user study.
 
-- **The listings are HTML tables inside the README**, not markdown tables. The
-  usual `line.split("|")` approach returns nothing.
-- **Rows using `↳` as the company mean "same company as above."** There are
-  ~230 of them; parsed literally you'd get hundreds of postings from a company
-  called `↳`.
-- **There's no posted-date column** — only a relative "Age" (`18d`, `1mo`). The
-  displayed date is derived from that and is approximate. The **NEW** flag
-  ignores it and uses our own `first_seen` timestamp, which is exact.
-- **Closed roles are already excluded upstream** — they move to a separate
-  `README-Inactive.md`.
-- Postings that drop off the source are marked inactive rather than deleted, so
-  a role you'd applied to never vanishes from your records.
+## Costs nothing to run
 
-## Files that aren't committed
+No paid API, SDK, or key anywhere — a test asserts it. The LLM backend is a
+**loopback-only** Ollama server (a non-local host raises at call time rather
+than quietly sending a résumé over the network); without it, rule-based
+extraction runs. Embeddings are a 67 MB ONNX model on CPU, with hashed-token
+vectors as the fallback. Every external dependency degrades instead of failing.
 
-`internships.db` is ignored by git. It holds your applied marks, which are
-personal, and it's fully rebuildable from `refresh.py` anyway — except for the
-applied marks, so **back it up if you've been tracking applications for a
-while**:
+## Getting started
 
 ```bash
-cp internships.db internships.db.backup
+git clone https://github.com/anshikhosa-sys/Internship-Tracker.git jobrank
+cd jobrank
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+
+.venv/bin/python run.py profile create --id me --resume /path/to/resume.pdf
+.venv/bin/python refresh.py          # fetch, dedupe, enrich, score
+.venv/bin/python app.py              # dashboard on http://127.0.0.1:5000
 ```
+
+Everything else:
+
+```bash
+python3 run.py --explain <posting_id>   # why this posting scored what it did
+python3 run.py --stats                  # extraction usage, cache hits, coverage, timings
+python3 run.py label seed --profile me  # golden labels from your own applications
+python3 evaluate.py --profile me --compare   # regression gate: exits 1 on a drop
+python3 healthcheck.py                  # every subsystem, PASS/WARN/FAIL
+python3 tests.py && python3 browser_tests.py
+```
+
+Optional local model: `ollama pull llama3.1:8b` — extraction upgrades itself and
+nothing else changes.
+
+## Testing
+
+**187 tests** across extraction, profile derivation, every scoring factor, the
+evaluation harness, storage and migrations, dedupe, the dashboard, and résumé
+upload — plus **26 browser checks** driving real Chromium, because two
+clipboard bugs once shipped while every Python test passed. Tests never touch
+the real database, profiles, caches, logs, or the network.
+
+## What would change at 100× scale
+
+- **Vector search.** Exact cosine over a few thousand vectors is one matrix
+  multiply (~1 ms) and beats an approximate index on recall. Past ~10⁶ vectors
+  this becomes FAISS (IVF/HNSW) behind the same `upsert`/`similarities` seam.
+- **Scoring.** Python-per-posting is fine at 4k (about a second, cached per
+  profile and data version). At millions it becomes a two-stage retrieve-then-
+  rank: ANN candidate generation, then full scoring on the top few hundred.
+- **Storage.** SQLite with two files (postings rebuildable, applications
+  irreplaceable) is right for one machine; multi-user hosting means Postgres
+  and a job queue for ingestion.
+- **Labels.** With enough of them per user, the hand-composed factors become
+  features for a learned ranker — and the harness here is what would prove it
+  better.
+
+## Repository layout
+
+```
+jobrank/
+  config/     data only: taxonomy, company facts, scoring shape, settings
+  resume/     PDF/DOCX/text readers, date parsing, rule-based extraction
+  profile/    preference intake, derivation, storage, résumé diffing
+  scoring/    factor functions, multiplicative engine, explanations
+  semantic/   local embeddings, SQLite vector store
+  eval/       golden labels, retrieval metrics, harness and gate
+  sources/    one module per job source, behind a shared Posting contract
+  web/        Flask dashboard, profile intake, stats
+  ops/        healthcheck, weekly self-check, notifications, stats
+```
+
+Design history and the reasoning behind specific decisions:
+[docs/design-notes.md](docs/design-notes.md). Working rules for contributors:
+[CLAUDE.md](CLAUDE.md).
+
+## License
+
+MIT — see [LICENSE](LICENSE).

@@ -12,10 +12,10 @@
 # PERSONAL — never commit. This repo is public.
 # ---------------------------------------------------------------------------
 
-# Your résumé, in the form the letter generator reads. Contains your name,
-# contact details, and work history. profile_example.md is the committed
-# template; profile.md is yours and stays local.
+# A résumé kept in the project folder. Yours stays local; the committed
+# example is examples/resume_example.md.
 profile.md
+*.resume.md
 
 # Real user profiles (parsed résumé + preferences). Only the synthetic
 # example is committed.
