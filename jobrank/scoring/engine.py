@@ -61,13 +61,21 @@ decision_log = get_logger("jobrank.scoring.decisions")
 def _corpus_fingerprint(all_postings: list) -> str:
     """
     Identifies the corpus the market model was built from, so the cache is
-    rebuilt when postings change and reused when they have not. Counts alone
-    would miss a refresh that replaced as many rows as it added, so the newest
-    posting id goes in too.
+    rebuilt when postings change and reused when they have not.
+
+    Identity alone is not enough. The model is built from what postings SAY,
+    and a posting's text changes without its id changing — fetching 692
+    descriptions in one run took coverage from 26% to 40% while leaving every
+    id, and the count, exactly as it was. A fingerprint over ids alone would
+    have gone on serving skill demand learned from the thinner corpus, right
+    at the moment the data improved. So the text is fingerprinted too.
     """
     import hashlib
     ids = sorted(postings.field(p, "id") or "" for p in all_postings)
-    digest = hashlib.sha256(f"{len(ids)}:{ids[-1] if ids else ''}:{ids[0] if ids else ''}".encode())
+    described = sum(1 for p in all_postings if postings.field(p, "description"))
+    text_size = sum(len(postings.field(p, "description") or "") for p in all_postings)
+    digest = hashlib.sha256(
+        f"{len(ids)}:{ids[-1] if ids else ''}:{ids[0] if ids else ''}:{described}:{text_size}".encode())
     return digest.hexdigest()[:16]
 
 

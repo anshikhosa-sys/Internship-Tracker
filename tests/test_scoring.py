@@ -380,3 +380,16 @@ def test_one_unenrichable_posting_does_not_abort_the_run(monkeypatch, tmp_path):
     monkeypatch.setattr(enrich, "enrich_one", explode)
     stats = enrich.enrich_all(conn, rows)
     assert stats["failed"] == 1 and stats["enriched"] == 1
+
+
+def test_market_cache_notices_new_descriptions():
+    """
+    A posting's text changes without its id changing. Fetching 692
+    descriptions in one run moved coverage 26% -> 40% while leaving every id
+    and the count untouched; a fingerprint over ids alone would have kept
+    serving demand learned from the thinner corpus.
+    """
+    rows = [make_posting(id=str(n), role="Software Engineer Intern") for n in range(20)]
+    before = engine._corpus_fingerprint(rows)
+    rows[0]["description"] = "We use Kubernetes, Terraform and Go every day."
+    assert engine._corpus_fingerprint(rows) != before
