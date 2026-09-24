@@ -195,3 +195,40 @@ def test_stable_ids():
     assert (dedupe.key_for(a) == dedupe.key_for(b)) == (a.id == b.id), (
         "dedupe matching and id equality never disagree"
     )
+
+
+def test_exact_date_beats_an_approximate_one_and_age_text_follows():
+    """
+    Merging kept `max(date_a, date_b)` while its docstring promised the EXACT
+    date. Those disagree in the common direction: "1mo" rounds to a later day
+    than the source that printed "Aug 21", so the approximation won and the
+    posting scored fresher than it was. Worse, age_text was left on the losing
+    copy, so 234 live postings displayed an age their own date_posted
+    contradicted -- one read "1mo" over a date_posted of that same morning.
+    """
+    exact = make_posting(1)
+    exact.date_posted, exact.age_text = "2026-08-21", "Aug 21"
+    approx = make_posting(1)
+    approx.date_posted, approx.age_text = "2026-09-05", "1mo"
+
+    merged = dedupe.merge(exact, approx)
+    assert merged.date_posted == "2026-08-21", "the exact date wins"
+    assert merged.age_text == "Aug 21", "age_text moves with the date it describes"
+
+    # And the other way round: whichever copy is primary, exactness decides.
+    approx2 = make_posting(1)
+    approx2.date_posted, approx2.age_text = "2026-09-05", "1mo"
+    exact2 = make_posting(1)
+    exact2.date_posted, exact2.age_text = "2026-08-21", "Aug 21"
+    merged2 = dedupe.merge(approx2, exact2)
+    assert (merged2.date_posted, merged2.age_text) == ("2026-08-21", "Aug 21")
+
+
+def test_two_approximate_dates_still_keep_the_later_one():
+    """Nothing to choose between them, so the previous rule stands."""
+    a = make_posting(1)
+    a.date_posted, a.age_text = "2026-08-21", "30d"
+    b = make_posting(1)
+    b.date_posted, b.age_text = "2026-09-05", "15d"
+    merged = dedupe.merge(a, b)
+    assert (merged.date_posted, merged.age_text) == ("2026-09-05", "15d")

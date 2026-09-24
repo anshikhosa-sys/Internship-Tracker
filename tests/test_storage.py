@@ -427,3 +427,49 @@ def test_reattach_uses_same_role_matching_as_dedupe(monkeypatch, tmp_path):
     assert rows[posting.id]["applied"] == 1
 
     conn.close()
+
+
+def test_reattach_carries_status_and_applied_at_across(monkeypatch, tmp_path):
+    """
+    Re-filing an orphaned mark rewrote the row with `applied` and `notes`
+    only, so `status` and `applied_at` were dropped on the floor. An
+    application sitting at "online assessment" came back as a bare tick, the
+    date it was sent was gone, and it stopped counting against the per-company
+    quota -- which counts anything with a status. This is the one table in the
+    project that cannot be regenerated, and a posting id changes whenever a
+    source edits a title, so the path is reached by ordinary use.
+    """
+    monkeypatch.setattr(config, "APPLICATIONS_PATH", str(tmp_path / "apps.db"))
+    monkeypatch.setattr(config, "APPLICATIONS_EXPORT", str(tmp_path / "apps.json"))
+    conn = storage.connect(str(tmp_path / "reattach_status.db"))
+
+    posting = make_posting(1, role="AI Software Engineer Intern - Edge")
+    posting.company = "Microsoft"
+    storage.save_postings(conn, [posting], "2026-08-01T00:00:00+00:00")
+    storage.record_run(conn, "2026-08-01T00:00:00+00:00", 1, 0)
+
+    conn.execute(
+        "INSERT INTO appdb.applications (posting_id, applied, notes, "
+        "updated_at, company, role, status, applied_at) VALUES (?,?,?,?,?,?,?,?)",
+        ("job:orphaned", 1, "recruiter emailed", "2026-08-01T00:00:00+00:00",
+         "Microsoft", "AI Software Engineering Intern - Edge",
+         "oa", "2026-08-02T00:00:00+00:00"),
+    )
+    conn.commit()
+
+    assert storage.reattach_orphaned_marks(conn) == 1
+
+    row = conn.execute(
+        "SELECT * FROM appdb.applications WHERE posting_id = ?", (posting.id,)
+    ).fetchone()
+    assert row["status"] == "oa", "the stage survives the re-file"
+    assert row["applied_at"] == "2026-08-02T00:00:00+00:00", (
+        "when it was sent survives too -- it answers 'how long have I waited'"
+    )
+    assert row["notes"] == "recruiter emailed"
+    assert row["applied"] == 1
+    assert storage.pipeline_counts(conn) == {"oa": 1}, (
+        "and it is still in the pipeline, so the quota still counts it"
+    )
+
+    conn.close()

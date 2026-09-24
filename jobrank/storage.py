@@ -915,7 +915,8 @@ def reattach_orphaned_marks(conn) -> int:
     from jobrank import dedupe
     orphans = conn.execute(
         """
-        SELECT a.posting_id, a.applied, a.notes, a.company, a.role
+        SELECT a.posting_id, a.applied, a.notes, a.company, a.role,
+               a.status, a.applied_at
         FROM appdb.applications a
         LEFT JOIN postings p ON p.id = a.posting_id
         WHERE p.id IS NULL AND a.company != '' AND a.role != ''
@@ -944,16 +945,37 @@ def reattach_orphaned_marks(conn) -> int:
 
         if not match:
             continue
+        # status and applied_at move across with the mark. They are the whole
+        # point of the row -- "applied" alone cannot say whether this is at
+        # online-assessment, interview or rejected, and applied_at is what
+        # answers "how long have I been waiting". Re-filing without them
+        # silently demoted a tracked application back to a bare tick, and
+        # dropped it out of the per-company quota, which counts anything with
+        # a status.
         conn.execute(
             """
             INSERT INTO appdb.applications
-                (posting_id, applied, notes, updated_at, company, role)
-            VALUES (?,?,?,?,?,?)
+                (posting_id, applied, notes, updated_at, company, role,
+                 status, applied_at)
+            VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(posting_id) DO UPDATE SET
-                applied = excluded.applied
+                applied    = excluded.applied,
+                notes      = CASE WHEN excluded.notes != ''
+                                  THEN excluded.notes
+                                  ELSE appdb.applications.notes END,
+                company    = excluded.company,
+                role       = excluded.role,
+                status     = CASE WHEN appdb.applications.status = ''
+                                  THEN excluded.status
+                                  ELSE appdb.applications.status END,
+                applied_at = CASE WHEN appdb.applications.applied_at = ''
+                                  THEN excluded.applied_at
+                                  ELSE appdb.applications.applied_at END,
+                updated_at = excluded.updated_at
             """,
             (match["id"], orphan["applied"], orphan["notes"] or "",
-             now_iso(), orphan["company"], orphan["role"]),
+             now_iso(), orphan["company"], orphan["role"],
+             orphan["status"] or "", orphan["applied_at"] or ""),
         )
         conn.execute(
             "DELETE FROM appdb.applications WHERE posting_id = ?",
@@ -1004,3 +1026,25 @@ def set_score_snapshot(conn, scores: dict) -> None:
         [(score, size, posting_id) for posting_id, (score, size) in scores.items()],
     )
     conn.commit()
+
+
+def set_description(conn, posting_id: str, description: str) -> None:
+    """
+    Store a fetched job description.
+
+    Descriptions arrive from a best-effort network fetch (jobrank/descriptions),
+    so an empty one means "we could not get it", never "this job has none".
+    Writing it would erase a description a source did supply, so it is ignored.
+    """
+    if not description:
+        return
+    conn.execute("UPDATE postings SET description = ? WHERE id = ?", (description, posting_id))
+
+
+def postings_without_description(conn, limit: int | None = None) -> list[tuple[str, str]]:
+    """(id, apply_url) for active postings we have no description for."""
+    sql = ("SELECT id, apply_url FROM postings "
+           "WHERE is_active = 1 AND COALESCE(description, '') = '' AND COALESCE(apply_url, '') != ''")
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    return [(row[0], row[1]) for row in conn.execute(sql)]

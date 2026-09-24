@@ -122,3 +122,62 @@ def test_strip_html_unwraps_markdown_links_to_their_label():
 
     text = "[Algorithm Development Engineer Intern](https://analogdevices.example/apply)"
     assert _strip_html(text) == "Algorithm Development Engineer Intern"
+
+
+def test_closing_br_separates_a_multi_location_cell():
+    """
+    The aggregators write "</br>" -- not valid HTML, but what is actually in
+    the file -- between the cities of a <details> location cell. Only <br>
+    and <br/> were matched, so the tags were stripped with nothing put in
+    their place and 40 live postings carried a location like
+    "Mountain View, CAAtlanta, GAAustin, TX". That is a single token, so
+    whole-word matching against a user's wanted locations never fired and
+    every one of them took the location-mismatch multiplier.
+    """
+    from jobrank.sources import markdown_table as md
+    cell = ("<details><summary><strong>**3 locations**</strong></summary>"
+            "New York, NY</br>Seattle, WA</br>Mountain View, CA</details>")
+    assert md._strip_html(cell) == "New York, NY | Seattle, WA | Mountain View, CA", (
+        "</br> separates, and the disclosure label is not part of the location"
+    )
+    assert md._strip_html("Seattle, WA<br>Remote") == "Seattle, WA | Remote", (
+        "the plain <br> form still works"
+    )
+
+
+def test_absolute_date_handles_the_leap_day():
+    """
+    strptime with no year in the format defaults to 1900, which is not a leap
+    year -- so "Feb 29" raised ValueError and the date was discarded, leaving
+    the posting with an unknown age. Python 3.15 removes the yearless form
+    entirely, so the year has to be supplied either way.
+    """
+    from jobrank.sources import markdown_table as md
+    assert md.parse_absolute_date("Feb 29", date(2026, 8, 22)) == "2024-02-29", (
+        "a leap day resolves to the most recent leap year that isn't in the future"
+    )
+    assert md.parse_absolute_date("Feb 29", date(2024, 6, 1)) == "2024-02-29"
+    # And the ordinary cases are unchanged.
+    assert md.parse_absolute_date("Aug 21", date(2026, 8, 22)) == "2026-08-21"
+    assert md.parse_absolute_date("Dec 15", date(2026, 8, 22)) == "2025-12-15"
+    assert md.parse_absolute_date("Aug 21 2024", date(2026, 8, 22)) == "2024-08-21"
+
+
+def test_absolute_date_parsing_is_not_deprecated():
+    """
+    Python 3.15 rejects a day-of-month with no year. Fail now, not then.
+
+    Run in a subprocess: CPython caches compiled strptime formats process-wide
+    and only warns on the first compile, so an in-process check passes or
+    fails depending on which test ran first.
+    """
+    import subprocess
+    import sys
+    code = (
+        "from datetime import date\n"
+        "from jobrank.sources import markdown_table as md\n"
+        "assert md.parse_absolute_date('Aug 21', date(2026, 8, 22)) == '2026-08-21'\n"
+    )
+    result = subprocess.run([sys.executable, "-W", "error::DeprecationWarning", "-c", code],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

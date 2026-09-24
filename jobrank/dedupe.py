@@ -53,20 +53,41 @@ def key_for(posting) -> tuple:
     return (normalize(posting.company), normalize(posting.role))
 
 
-def _better_date(a, b):
+# "0d", "18d", "3mo", "2h" -- the relative shorthand. An age_text that looks
+# like this produced an APPROXIMATE date ("1mo" is anywhere from 30 to 59
+# days); anything else ("Aug 21", "2026-08-21") produced an exact one.
+_RELATIVE_AGE = re.compile(r"^\s*\d+\s*(h|d|w|mo|y)\b", re.I)
+
+
+def _is_relative(age_text) -> bool:
+    return bool(_RELATIVE_AGE.match(age_text or ""))
+
+
+def _better_date(a, age_a, b, age_b):
     """
     Prefer a real date over one derived from a relative age.
+
+    Returns (date, age_text) so the two stay in step.
 
     Sources publishing "Aug 21" give an exact day. Sources publishing "18d"
     give an approximation that also drifts. When both exist, take the exact
     one; the age_text that came with it tells us which is which.
+
+    This used to be `max(a, b)`, which read the docstring's intent backwards:
+    the approximate date is usually the LATER one (a month-old posting listed
+    as "1mo" lands on a rounded day), so the exact date lost every time and
+    the posting scored fresher than it was. 234 live postings carried an
+    age_text that contradicted their own date_posted because of it.
     """
     if not a:
-        return b
+        return b, age_b
     if not b:
-        return a
-    # An absolute age_text contains letters that aren't the relative units.
-    return a if a >= b else b
+        return a, age_a
+    if _is_relative(age_a) != _is_relative(age_b):
+        return (b, age_b) if _is_relative(age_a) else (a, age_a)
+    # Both exact or both approximate: nothing to choose between them, so keep
+    # the later one, as before.
+    return (a, age_a) if a >= b else (b, age_b)
 
 
 def merge(primary, other):
@@ -80,8 +101,11 @@ def merge(primary, other):
         primary.date_posted = other.date_posted
         primary.age_text = other.age_text
     elif other.date_posted:
-        primary.date_posted = _better_date(
-            primary.date_posted, other.date_posted
+        # age_text moves with the date it describes. Leaving it behind is how
+        # a card ended up reading "Aug 21" over a date_posted of Sep 23.
+        primary.date_posted, primary.age_text = _better_date(
+            primary.date_posted, primary.age_text,
+            other.date_posted, other.age_text,
         )
 
     if primary.category in ("", "Uncategorized") and \

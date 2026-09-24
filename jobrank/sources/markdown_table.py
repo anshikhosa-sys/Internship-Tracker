@@ -67,7 +67,16 @@ def _strip_html(text: str) -> str:
     function exists to prevent, reached by a different route. Four live
     rows hit it (Roblox, SAP, two at Figure).
     """
-    text = re.sub(r"<br\s*/?>", " | ", text, flags=re.I)
+    # "</br>" is not valid HTML but it is what these READMEs actually write
+    # between the cities in a multi-location cell, so it has to be matched
+    # alongside <br> and <br/>. Missing it left 40 live postings with a
+    # location like "Mountain View, CAAtlanta, GAAustin, TX" — one token, so
+    # whole-word matching against a user's wanted locations never fired.
+    text = re.sub(r"<\s*/?\s*br\s*/?\s*>", " | ", text, flags=re.I)
+    # A <details> cell's <summary> is a disclosure label ("**30 locations**"),
+    # not content. Dropping the tags alone would leave that count glued to the
+    # first real value.
+    text = re.sub(r"<summary\b[^>]*>.*?</summary\s*>", "", text, flags=re.I | re.S)
     text = re.sub(r"<[^>]+>", "", text)
     # Images first, then links. Both labels may contain backslash escapes.
     text = re.sub(r"!\[(?:[^\[\]\\]|\\.)*\]\([^)]*\)", "", text)
@@ -169,16 +178,29 @@ def parse_absolute_date(text: str, today: date):
         return None
 
     for fmt in ("%b %d", "%B %d", "%b %d %Y", "%B %d %Y", "%Y-%m-%d"):
-        try:
-            parsed = datetime.strptime(text, fmt).date()
-        except ValueError:
-            continue
+        if "%Y" in fmt:
+            try:
+                return datetime.strptime(text, fmt).date().isoformat()
+            except ValueError:
+                continue
 
-        if "%Y" not in fmt:
-            parsed = parsed.replace(year=today.year)
+        # The year isn't printed, so supply one rather than letting strptime
+        # default to 1900. Two reasons: 1900 is not a leap year, so "Feb 29"
+        # raised ValueError and the date was thrown away entirely; and Python
+        # 3.15 stops accepting a day-of-month with no year at all.
+        #
+        # Candidates run backwards from this year because a job cannot be
+        # posted in the future. Four years back is enough to reach the last
+        # leap day from any starting year; every other date resolves on the
+        # first or second try.
+        for year in range(today.year, today.year - 5, -1):
+            try:
+                parsed = datetime.strptime(f"{text} {year}", f"{fmt} %Y").date()
+            except ValueError:
+                continue     # e.g. Feb 29 of a non-leap year
             if parsed > today:
-                parsed = parsed.replace(year=today.year - 1)
-        return parsed.isoformat()
+                continue     # belongs to an earlier year
+            return parsed.isoformat()
 
     # Fall back to the relative form in case the column mixes both.
     return parse_relative_age(text, today)
