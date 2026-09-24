@@ -286,8 +286,8 @@ def test_enrichment_is_cached_by_text_hash(monkeypatch):
 
     conn = storage.connect(":memory:")
     rows = [make_posting(id="x", description="Kubernetes required")]
-    assert enrich.enrich_all(conn, rows) == {"enriched": 1, "unchanged": 0}
-    assert enrich.enrich_all(conn, rows) == {"enriched": 0, "unchanged": 1}
+    assert enrich.enrich_all(conn, rows) == {"enriched": 1, "unchanged": 0, "failed": 0}
+    assert enrich.enrich_all(conn, rows) == {"enriched": 0, "unchanged": 1, "failed": 0}
     rows[0]["description"] = "Kubernetes and Terraform required"
     assert enrich.enrich_all(conn, rows)["enriched"] == 1
     conn.close()
@@ -336,3 +336,47 @@ def test_category_fallback_respects_the_discipline_veto(title, category, expecte
     """
     from jobrank import postings as posting_facts
     assert posting_facts.role_families({"role": title, "category": category}) == expected
+
+
+# --- enrichment robustness ---------------------------------------------------
+
+def test_a_company_describing_its_own_age_is_not_a_requirement():
+    """
+    "a leading global asset manager with over 65 years of experience helping..."
+    is the employer's history, not something it wants from a candidate. That
+    one line failed schema validation and aborted every refresh after it; the
+    quieter version is a boast inside the schema's range, which would silently
+    make an internship look unreachable.
+    """
+    from jobrank import enrich
+    boast = ("Title: Software Engineer Intern\n"
+             "American Century Investments is a global asset manager with over "
+             "65 years of experience helping clients.")
+    assert enrich.rules_extract(boast)["required_years"] is None
+
+    in_range = ("Title: Software Engineer Intern\n"
+                "We are a firm with 20 years of experience serving customers.")
+    assert enrich.rules_extract(in_range)["required_years"] is None
+
+    # A genuine requirement still reads.
+    real = "Title: Backend Engineer\nRequires 5 years of experience in distributed systems."
+    assert enrich.rules_extract(real)["required_years"] == 5
+
+
+def test_one_unenrichable_posting_does_not_abort_the_run(monkeypatch, tmp_path):
+    """Enrichment is optional (invariant 9); a bad row is skipped, not fatal."""
+    from jobrank import enrich, storage
+    conn = storage.connect()
+    rows = [make_posting(id="good:1", role="Backend Engineer Intern"),
+            make_posting(id="bad:1", role="Data Engineer Intern")]
+
+    real = enrich.enrich_one
+
+    def explode(posting, conn=None):
+        if postings.field(posting, "id") == "bad:1":
+            raise ValueError("$.required_years: 65 > maximum 40")
+        return real(posting, conn=conn)
+
+    monkeypatch.setattr(enrich, "enrich_one", explode)
+    stats = enrich.enrich_all(conn, rows)
+    assert stats["failed"] == 1 and stats["enriched"] == 1

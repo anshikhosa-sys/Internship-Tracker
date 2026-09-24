@@ -22,6 +22,7 @@ description, or a source that publishes one).
 
 from __future__ import annotations
 
+import logging
 import re
 
 from jobrank import llm, postings, storage
@@ -31,6 +32,11 @@ from jobrank.log import event, get_logger
 from jobrank.resume.parser import canonical_skills
 from jobrank.roles import title_seniority
 
+# The most experience any real posting asks for. Anything above this is being
+# misread — almost always a company describing its own history.
+_MAX_REQUIRED_YEARS = 40
+
+
 log = get_logger(__name__)
 
 ENRICH_SCHEMA = {
@@ -38,7 +44,7 @@ ENRICH_SCHEMA = {
     "required": ["required_years", "degree_required", "entry_level", "tech_stack", "remote_status",
                  "title_contradiction"],
     "properties": {
-        "required_years": {"type": ["integer", "null"], "minimum": 0, "maximum": 40},
+        "required_years": {"type": ["integer", "null"], "minimum": 0, "maximum": _MAX_REQUIRED_YEARS},
         "degree_required": {"type": ["string", "null"], "enum": ["none", "bachelor", "master", "phd", None]},
         "entry_level": {"type": ["boolean", "null"]},
         "tech_stack": {"type": "array", "maxItems": 60, "items": {"type": "string"}},
@@ -58,6 +64,17 @@ Never guess. Unstated means null."""
 
 _YEARS = re.compile(r"(\d{1,2})\s*\+?\s*(?:-\s*\d{1,2}\s*)?(?:years?|yrs?)\b(?:\s+of)?(?:\s+\w+){0,3}\s+experience", re.I)
 _PREFERRED = re.compile(r"\b(preferred|nice to have|bonus|plus)\b", re.I)
+
+# An employer describing ITS OWN age, not a requirement of the candidate:
+# "a leading global asset manager with over 65 years of experience helping...".
+# That one line made a posting claim it wanted 65 years, which failed schema
+# validation and took the whole refresh down with it. The quieter version of
+# the same bug is a boast inside the schema's range — "with 20 years of
+# experience" — which would silently make an internship look unreachable.
+_COMPANY_TENURE = re.compile(
+    r"\b(?:with|for|over|boasts?|celebrating|bringing)\s+(?:over|nearly|more than|almost)?\s*$", re.I)
+_TENURE_OBJECT = re.compile(
+    r"^\s*(?:helping|serving|delivering|providing|supporting|working with|in business|as a)\b", re.I)
 _DEGREE = [
     ("phd", re.compile(r"\b(ph\.?d|doctorate)\b.{0,40}\brequired\b|\brequired\b.{0,40}\b(ph\.?d|doctorate)\b", re.I)),
     ("master", re.compile(r"\b(master'?s|m\.s\.|ms degree)\b.{0,40}\brequired\b|\brequired\b.{0,40}\b(master'?s|m\.s\.)", re.I)),
@@ -83,7 +100,15 @@ def rules_extract(text: str) -> dict:
         window = body[max(0, match.start() - 60): match.end() + 60]
         if _PREFERRED.search(window):
             continue
+        # Skip the employer talking about itself rather than about the
+        # candidate, from either side of the phrase.
+        if _COMPANY_TENURE.search(body[max(0, match.start() - 40):match.start()]):
+            continue
+        if _TENURE_OBJECT.match(body[match.end():match.end() + 40]):
+            continue
         value = int(match.group(1))
+        if value > _MAX_REQUIRED_YEARS:
+            continue          # implausible as a requirement; the schema would reject it anyway
         years = value if years is None else min(years, value)
 
     degree = None
@@ -151,7 +176,7 @@ def enrich_all(conn, rows: list, limit: int | None = None) -> dict:
     cheap and unbounded.
     """
     existing = storage.get_enrichments(conn)
-    done = skipped = 0
+    done = skipped = failed = 0
     llm_conn = llm.cache.connect()
     try:
         for posting in rows:
@@ -162,14 +187,26 @@ def enrich_all(conn, rows: list, limit: int | None = None) -> dict:
                 continue
             if limit is not None and done >= limit:
                 break
-            data, extractor, text_hash = enrich_one(posting, conn=llm_conn)
+            try:
+                data, extractor, text_hash = enrich_one(posting, conn=llm_conn)
+            except Exception as exc:  # noqa: BLE001
+                # One posting must never take the run down. Enrichment is an
+                # optional layer (invariant 9): a posting that cannot be
+                # analysed keeps no enrichment and scores on its title alone.
+                # A single description reading "with over 65 years of
+                # experience" — the employer's age, not a requirement — failed
+                # schema validation and aborted every refresh after it.
+                failed += 1
+                event(log, "enrichment_failed", level=logging.WARNING,
+                      posting_id=posting_id, error=f"{type(exc).__name__}: {exc}"[:200])
+                continue
             storage.put_enrichment(conn, posting_id, text_hash, extractor, data)
             done += 1
         conn.commit()
     finally:
         llm_conn.close()
-    event(log, "enrichment_run", enriched=done, unchanged=skipped)
-    return {"enriched": done, "unchanged": skipped}
+    event(log, "enrichment_run", enriched=done, unchanged=skipped, failed=failed)
+    return {"enriched": done, "unchanged": skipped, "failed": failed}
 
 
 def contradicts_title(enrichment: dict | None) -> bool:
