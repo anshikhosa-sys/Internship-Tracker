@@ -10,7 +10,6 @@ import pytest
 
 from jobrank import config, ranking, storage
 from jobrank.config import semantic as semantic_cfg
-from jobrank.models import Preferences
 from jobrank.profile import store
 from jobrank.resume import parser
 
@@ -22,8 +21,8 @@ def client(tmp_path, monkeypatch, example_resume_text, plain_resume_text):
     monkeypatch.setattr(config, "APPLICATIONS_EXPORT", str(tmp_path / "applications.json"))
     monkeypatch.setattr(semantic_cfg, "BACKEND", "hashing")
     monkeypatch.setattr(semantic_cfg, "VECTOR_DB_PATH", str(tmp_path / "vectors.db"))
-    store.save("alpha", parser.parse_text(example_resume_text), Preferences())
-    store.save("beta", parser.parse_text(plain_resume_text), Preferences())
+    store.save("alpha", parser.parse_text(example_resume_text))
+    store.save("beta", parser.parse_text(plain_resume_text))
     conn = storage.connect()
     storage.record_run(conn, storage.now_iso(), 0, 0)   # stops the stale-data catch-up refresh
     storage.set_state(conn, "active_profile", "alpha")
@@ -76,8 +75,9 @@ def test_requested_profile_is_the_one_ranked(client):
 
 def test_dashboard_renders_the_pieces_a_user_needs(client):
     page = client.get("/", headers={"Accept": "text/html"}).data.decode()
-    for fragment in ["stats-strip", "Active postings", "form class=\"filters\"",
-                     "Apply filters", 'class="brand-mark"']:
+    # The stat strip and its "Active postings" heading went when the dashboard
+    # became a two-pane job board; the counts fold into one line above results.
+    for fragment in ["form class=\"filters\"", "Apply filters", 'class="brand-mark"']:
         assert fragment in page
 
 

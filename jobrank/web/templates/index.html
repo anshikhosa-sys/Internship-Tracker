@@ -9,229 +9,269 @@
        if the app ever moves to a sub-path. -->
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
-<body>
+{# job-open only matters under 900px, where the list and the detail pane
+   can't both be on screen: it says which of the two this URL is asking
+   for. Wider than that, the class is ignored and you get both. #}
+<body class="board {{ 'job-open' if filters.get('job') }}">
 
 <header class="topbar">
-  <div class="topbar-inner">
-    <div class="brand">
+  <div class="topbar-row">
+    <a class="brand" href="{{ url_for('index') }}">
       <span class="brand-mark" aria-hidden="true">jr</span>
-      <div>
-        <h1>jobrank <span class="profile-chip">{{ profile.user_id }}</span></h1>
-        <p class="sub">Ranked for this profile{% if last_run_relative %} · updated {{ last_run_relative }}{% endif %}</p>
-      </div>
+      <span class="brand-name">jobrank</span>
+    </a>
+
+    {# The search inputs belong to the filter form below but sit in this
+       row, which nested forms can't do — the form attribute can. It also
+       keeps the nav's POST forms out of a GET form. #}
+    <div class="searchbar">
+      <label class="searchfield">
+        <span class="searchfield-icon" aria-hidden="true">⌕</span>
+        <input form="filters" type="search" name="q"
+               aria-label="Search job title or company"
+               placeholder="Search job title or company"
+               value="{{ filters.get('q', '') }}">
+      </label>
+      <label class="searchfield">
+        <span class="searchfield-icon" aria-hidden="true">⌖</span>
+        <input form="filters" type="search" name="l"
+               aria-label="Location"
+               placeholder="City, state, or remote"
+               value="{{ filters.get('l', '') }}">
+      </label>
+      <button form="filters" type="submit" class="btn-search">Find jobs</button>
     </div>
 
-    <!-- Forms, not links: these change data, and changes belong in a POST.
-         Links should never have side effects. -->
-    <div class="topbar-actions">
-      {% if profiles|length > 1 %}
-        <form method="get" class="profile-switch">
-          <select name="profile" onchange="this.form.submit()" aria-label="Rank for profile">
-            {% for pid in profiles %}<option value="{{ pid }}" {{ 'selected' if pid == profile.user_id }}>{{ pid }}</option>{% endfor %}
-          </select>
-          <noscript><button type="submit" class="btn-secondary">Switch</button></noscript>
-        </form>
-        {% if profile.user_id != default_profile %}
-          <form method="post" action="{{ url_for('set_active_profile') }}">
-            <input type="hidden" name="profile" value="{{ profile.user_id }}">
-            <button type="submit" class="btn-secondary" title="Open with this profile from now on">Make default</button>
-          </form>
-        {% endif %}
-      {% endif %}
-      <a class="btn-secondary" href="{{ url_for('profiles.profile_form', id=profile.user_id) }}">Profile</a>
-      <a class="btn-secondary" href="{{ url_for('stats_route') }}">Stats</a>
-      <a class="btn-secondary" href="{{ url_for('applications_route') }}">
-        My applications{% if applied_total %} ({{ applied_total }}){% endif %}
+    <nav class="topnav">
+      <a class="topnav-link" href="{{ url_for('applications_route') }}">
+        My applications{% if applied_total %} <span class="pill">{{ applied_total }}</span>{% endif %}
       </a>
-      {% if new_count %}
-        <form method="post" action="{{ url_for('mark_seen_route') }}">
-          <button type="submit" class="btn-secondary">Mark all as seen</button>
-        </form>
-      {% endif %}
-      <form method="post" action="{{ url_for('refresh_route') }}">
-        <button type="submit" class="btn-refresh">Refresh listings</button>
-      </form>
-    </div>
+
+      <!-- Everything that used to be its own button in the header. These
+           are forms, not links: they change data, and a link should never
+           have a side effect. -->
+      <details class="menu">
+        <summary class="topnav-link" title="More">
+          <span class="menu-avatar" aria-hidden="true">{{ profile.user_id[:2]|upper }}</span>
+          <span class="menu-caret" aria-hidden="true">▾</span>
+        </summary>
+        <div class="menu-panel">
+          <p class="menu-heading">
+            Ranked for <span class="profile-chip">{{ profile.user_id }}</span>
+            {% if last_run_relative %}<br><span class="muted small">updated {{ last_run_relative }}</span>{% endif %}
+          </p>
+          {% if profiles|length > 1 %}
+            <form method="get" class="menu-row">
+              <select name="profile" aria-label="Rank for profile">
+                {% for pid in profiles %}<option value="{{ pid }}" {{ 'selected' if pid == profile.user_id }}>{{ pid }}</option>{% endfor %}
+              </select>
+              <button type="submit" class="btn-secondary">Switch</button>
+            </form>
+            {% if profile.user_id != default_profile %}
+              <form method="post" action="{{ url_for('set_active_profile') }}" class="menu-row">
+                <input type="hidden" name="profile" value="{{ profile.user_id }}">
+                <button type="submit" class="menu-item" title="Open with this profile from now on">Make default</button>
+              </form>
+            {% endif %}
+          {% endif %}
+          <a class="menu-item" href="{{ url_for('profiles.profile_form', id=profile.user_id) }}">Profile &amp; résumé</a>
+          <a class="menu-item" href="{{ url_for('stats_route') }}">Stats</a>
+          {% if new_count %}
+            <form method="post" action="{{ url_for('mark_seen_route') }}">
+              <button type="submit" class="menu-item">Mark all {{ new_count }} as seen</button>
+            </form>
+          {% endif %}
+          <form method="post" action="{{ url_for('refresh_route') }}">
+            <button type="submit" class="menu-item menu-item-strong">Refresh listings</button>
+          </form>
+        </div>
+      </details>
+    </nav>
   </div>
+
+  <!-- ==================== FILTER CHIPS ====================
+       method="get", so a filtered view is in the URL: bookmarkable, and it
+       survives a reload. The hidden f=1 marks the form as submitted, which
+       is the only way to tell an unticked default-on box from a page that
+       just loaded. -->
+  <form class="filters" id="filters" method="get">
+    <input type="hidden" name="f" value="1">
+    <input type="hidden" name="profile" value="{{ profile.user_id }}">
+    {% if showing_stale %}<input type="hidden" name="stale" value="1">{% endif %}
+    {% if showing_all_per %}<input type="hidden" name="allper" value="1">{% endif %}
+
+    {# Each option carries the number of postings it would actually show,
+       so an empty window looks empty BEFORE you pick it. #}
+    <span class="chip {{ 'is-active' if within not in ('', none) }}">
+      <select name="within" aria-label="Date posted"
+              title="How recent — the count is what you'd see">
+        {% for window in age_windows %}
+          <option value="{{ window.value }}" {% if within == window.value %}selected{% endif %}>
+            {% if window.value == '' %}Any date{% else %}{{ window.label }}{% endif %} ({{ window.count }})
+          </option>
+        {% endfor %}
+      </select>
+    </span>
+
+    <span class="chip {{ 'is-active' if show_low }}">
+      <select name="show_low" aria-label="Fit">
+        <option value="">Good fits only</option>
+        <option value="1" {% if show_low %}selected{% endif %}>Include low fit</option>
+      </select>
+    </span>
+
+    <span class="chip {{ 'is-active' if filters.get('category') }}">
+      <select name="category" aria-label="Job category">
+        <option value="">Job category</option>
+        {% for category in categories %}
+          <option value="{{ category }}" {% if filters.get('category') == category %}selected{% endif %}>{{ category }}</option>
+        {% endfor %}
+      </select>
+    </span>
+
+    <span class="chip {{ 'is-active' if tier }}">
+      <select name="tier" aria-label="Company size"
+              title="Large-company pipelines close fastest; small ones stay open longer">
+        <option value="">Company size</option>
+        {% for key, spec in tiers.items() %}
+          <option value="{{ key }}" {% if tier == key %}selected{% endif %}>{{ spec.label }}</option>
+        {% endfor %}
+      </select>
+    </span>
+
+    <span class="chip {{ 'is-active' if filters.get('status') }}">
+      <select name="status" aria-label="Application status">
+        <option value="">Any status</option>
+        <option value="new" {% if filters.get('status') == 'new' %}selected{% endif %}>New to me</option>
+        <option value="not_applied" {% if filters.get('status') == 'not_applied' %}selected{% endif %}>Not applied yet</option>
+        <option value="applied" {% if filters.get('status') == 'applied' %}selected{% endif %}>Applied</option>
+      </select>
+    </span>
+
+    {# One control, not two. "Summer only" and "No co-ops" overlapped: most
+       co-ops are summer terms, so ticking both hid postings the labels did not
+       say would go. These options are mutually exclusive by construction. #}
+    <span class="chip chip-select">
+      <select name="term" aria-label="Term">
+        <option value="">Any term</option>
+        <option value="summer" {% if term == 'summer' %}selected{% endif %}>Summer internships</option>
+        <option value="coop" {% if term == 'coop' %}selected{% endif %}>Co-ops only</option>
+        <option value="offseason" {% if term == 'offseason' %}selected{% endif %}>Off-season terms</option>
+      </select>
+    </span>
+    <label class="chip chip-toggle" title="Only postings whose location says remote">
+      <input type="checkbox" name="remote" value="1" {% if remote_only %}checked{% endif %}>
+      Remote
+    </label>
+    <label class="chip chip-toggle" title="Only employers whose product is technology">
+      <input type="checkbox" name="techonly" value="1" {% if tech_only %}checked{% endif %}>
+      Tech only
+    </label>
+
+    <!-- The chips submit themselves with JavaScript. This button is what
+         makes them work without it, and it is what the browser tests
+         click. -->
+    <button type="submit" class="chip chip-apply">Apply filters</button>
+    <a class="chip chip-clear" href="{{ url_for('index') }}">Reset</a>
+  </form>
 </header>
 
-<main>
+<main class="board-main">
 
-  <!-- The four numbers worth knowing before reading the list. -->
-  <section class="stats-strip">
-    <div class="stat">
-      <div class="stat-value">{{ '{:,}'.format(total_count) }}</div>
-      <div class="stat-label">Active postings</div>
-    </div>
-    <div class="stat {{ 'stat-accent' if new_count }}">
-      <div class="stat-value">{{ new_count }}</div>
-      <div class="stat-label" title="Arrived since you last opened this dashboard">New for you</div>
-    </div>
-    <div class="stat">
-      <div class="stat-value">{{ postings|length }}</div>
-      <div class="stat-label">Shown by filters</div>
-    </div>
-    <div class="stat">
-      <div class="stat-value">{{ applied_total }}</div>
-      <div class="stat-label">Applied</div>
-    </div>
-  </section>
-
-  <!-- A banner rather than only an OS notification.
-       macOS can silently suppress notifications (Focus mode, or Script
-       Editor lacking notification permission), and a notification you
-       never saw is indistinguishable from one that never fired. This
-       cannot be suppressed — if something new arrived, it's on the page. -->
   {% if caught_up %}
-    <div class="new-banner">
-      Data was out of date, so this was refreshed just now.
-    </div>
+    <p class="notice notice-ok">Data was out of date, so this was refreshed just now.</p>
   {% endif %}
 
-  {% if new_count %}
-    <div class="new-banner">
-      <strong>{{ new_count }} new</strong> since you last looked.
-      <a href="{{ url_for('index', **dict(filters, f='1', status='new')) }}">Show only those</a>
-    </div>
-  {% endif %}
-
-  <!-- ==================== FILTERS ==================== -->
-  <!-- method="get" puts the filters in the URL, so a filtered view can be
-       bookmarked and survives a page reload. -->
-  <form class="filters" method="get">
-    <!-- Marks the form as submitted, so an unticked checkbox is read as a
-         real choice rather than as "page just loaded". Without this a
-         default-on filter could never be switched off. -->
-    <input type="hidden" name="f" value="1">
-    <input type="search" name="q" placeholder="Search company, role, location…"
-           value="{{ filters.get('q', '') }}">
-
-    <select name="category">
-      <option value="">All categories</option>
-      {% for category in categories %}
-        <option value="{{ category }}"
-                {% if filters.get('category') == category %}selected{% endif %}>
-          {{ category }}
-        </option>
-      {% endfor %}
-    </select>
-
-    <select name="status">
-      <option value="">All postings</option>
-      <option value="new"
-              {% if filters.get('status') == 'new' %}selected{% endif %}>
-        New since my last visit
-      </option>
-      <option value="not_applied"
-              {% if filters.get('status') == 'not_applied' %}selected{% endif %}>
-        Not yet applied
-      </option>
-      <option value="applied"
-              {% if filters.get('status') == 'applied' %}selected{% endif %}>
-        Applied
-      </option>
-    </select>
-
-    <select name="sort">
-      <option value="score"
-              {% if sort == 'score' %}selected{% endif %}>
-        Best to apply to now
-      </option>
-      <option value="role"
-              {% if sort == 'role' %}selected{% endif %}>
-        Closest to the roles you want
-      </option>
-      <option value="skills"
-              {% if sort == 'skills' %}selected{% endif %}>
-        Best skill match
-      </option>
-      <option value="recency"
-              {% if sort == 'recency' %}selected{% endif %}>
-        Newest first
-      </option>
-      <option value="pay"
-              {% if sort == 'pay' %}selected{% endif %}>
-        Highest paid first
-      </option>
-    </select>
-
-    <select name="tier" title="Large-company pipelines close fastest; small ones stay open longer">
-      <option value="" {% if not tier %}selected{% endif %}>All company sizes</option>
-      {% for key, spec in tiers.items() %}
-        <option value="{{ key }}" {% if tier == key %}selected{% endif %}>
-          {{ spec.label }} only
-        </option>
-      {% endfor %}
-    </select>
-
-    {# Options come from config.AGE_WINDOWS, each with the number of
-       postings it would actually show, so an empty window looks empty
-       before it is picked. #}
-    <select name="within" title="How recent — the count is what you'd see">
-      {% for window in age_windows %}
-        <option value="{{ window.value }}"
-                {% if within == window.value %}selected{% endif %}>
-          {{ window.label }} ({{ window.count }})
-        </option>
-      {% endfor %}
-    </select>
-
-    <div class="filter-toggles">
-      <label class="checkbox" title="Hide roles for a term other than summer">
-        <input type="checkbox" name="nowinter" value="1"
-               {% if hide_offseason %}checked{% endif %}>
-        Summer only
-      </label>
-
-      <label class="checkbox" title="Hide full-time roles during a school term">
-        <input type="checkbox" name="nocoop" value="1"
-               {% if hide_coop %}checked{% endif %}>
-        Hide co-ops
-      </label>
-
-      <label class="checkbox" title="Only employers whose product is technology">
-        <input type="checkbox" name="techonly" value="1"
-               {% if tech_only %}checked{% endif %}>
-        Tech employers only
-      </label>
-
-      <label class="checkbox" title="Include postings scored below the low-fit threshold">
-        <input type="checkbox" name="show_low" value="1"
-               {% if filters.get('show_low') == '1' %}checked{% endif %}>
-        Show low-fit
-      </label>
-    </div>
-
-    <div class="filter-actions">
-      <button type="submit" class="btn-refresh">Apply filters</button>
-      <a class="clear" href="{{ url_for('index') }}">Clear</a>
-    </div>
-  </form>
-
-  {# The weekly self-check found something broken. Shown here because a
-     notification fired while you were away from the machine is gone, and
-     this is the one thing that should never be silently missed. #}
-  {# The failures are raw check output and can be long. Summarize, and keep
-     the detail one click away rather than pushing the list off the screen. #}
+  {# The weekly self-check found something broken. It stays on the page —
+     a notification that fired while you were away from the machine is
+     gone — but it is a footnote, not an alarm: nothing here stops you
+     applying to anything. #}
   {% if selfcheck %}
-    <details class="warn-banner selfcheck-banner">
+    <details class="notice notice-check" id="selfcheck-note"
+             data-signature="{{ selfcheck.failures|length }}:{{ selfcheck.when }}">
       <summary>
-        <strong>{{ selfcheck.failures|length }} check{{ '' if selfcheck.failures|length == 1 else 's' }}
-        failing</strong>{% if selfcheck.when %} as of the weekly run {{ selfcheck.when }}{% endif %} —
-        run <code>python3 healthcheck.py</code> for the detail
+        {{ selfcheck.failures|length }} self-check{{ '' if selfcheck.failures|length == 1 else 's' }}
+        failing{% if selfcheck.when %} as of {{ selfcheck.when }}{% endif %}
       </summary>
       <ul>
         {% for failure in selfcheck.failures %}<li>{{ failure }}</li>{% endfor %}
       </ul>
+      <p class="muted small">Run <code>python3 healthcheck.py</code> for the detail.</p>
+      <button type="button" class="notice-dismiss" data-dismiss="selfcheck-note">Dismiss</button>
     </details>
   {% endif %}
 
-  <!-- ==================== RESULTS ==================== -->
+  <!-- One thin line where a four-tile stat strip used to be. -->
+  <div class="results-head">
+    <p class="result-count">
+      <strong>{{ '{:,}'.format(result_count) }}</strong> job{{ '' if result_count == 1 else 's' }}
+      {%- if postings %} · showing {{ page_first }}–{{ page_last }}{% endif %}
+      {%- if new_count %} · <a href="{{ qurl(f='1', status='new', page='', job='') }}">{{ new_count }} new</a>{% endif %}
+      {%- if applied_total %} · {{ applied_total }} applied{% endif %}
+    </p>
+
+    <div class="results-tools">
+      <span class="chip chip-sort {{ 'is-active' if sort != 'score' }}">
+        <select form="filters" name="sort" aria-label="Sort by">
+          <option value="score" {% if sort == 'score' %}selected{% endif %}>Best match</option>
+          <option value="recency" {% if sort == 'recency' %}selected{% endif %}>Most recent</option>
+          <option value="role" {% if sort == 'role' %}selected{% endif %}>Closest role</option>
+          <option value="skills" {% if sort == 'skills' %}selected{% endif %}>Best skill match</option>
+          <option value="pay" {% if sort == 'pay' %}selected{% endif %}>Highest paid</option>
+        </select>
+      </span>
+
+    {# Nothing here is deleted, only folded up: every override link that
+       used to shout from a paragraph is still one click away. #}
+    {% set has_notes = (hidden_by_age and not showing_stale) or showing_stale or quota_limited or exhausted or (crowded_total and not showing_all_per) or showing_all_per %}
+    {% if has_notes %}
+      <details class="notices">
+        <summary>Some results are held back</summary>
+        <ul>
+          {% if hidden_by_age and not showing_stale %}
+            <li>{{ hidden_by_age }} hidden as older than {{ max_age_days }} days
+              <!-- Also lifts show_low. With the steep freshness curve every
+                   stale posting scores under the low-fit cutoff, so stale=1
+                   on its own would appear to do nothing. -->
+              <a href="{{ qurl(stale='1', show_low='1', page='', job='') }}">show them</a></li>
+          {% elif showing_stale %}
+            <li>including stale postings
+              <a href="{{ qurl(stale='', show_low='', page='', job='') }}">hide them</a></li>
+          {% endif %}
+
+          {% for q, held in quota_limited %}
+            <li>{{ q.name }}: showing your best {{ q.left }} — you've used
+              {{ q.used }} of {{ q.limit }} applications, so {{ held }}
+              other role{{ 's' if held != 1 }} {{ 'are' if held != 1 else 'is' }} hidden
+              <a href="{{ qurl(allper='1', page='', job='') }}">show anyway</a></li>
+          {% endfor %}
+
+          {% for q in exhausted %}
+            <li>{{ q.name }} quota used ({{ q.used }} of {{ q.limit }}) — its
+              remaining roles are hidden
+              <a href="{{ qurl(allper='1', page='', job='') }}">show anyway</a></li>
+          {% endfor %}
+
+          {% if crowded_total and not showing_all_per %}
+            <li>showing your best {{ max_per_company }} at each company —
+              {{ crowded_total }} more at
+              {% for name, count in crowded[:3] %}{{ name }} ({{ count }}){% if not loop.last %}, {% endif %}{% endfor %}
+              {%- if crowded|length > 3 %} and {{ crowded|length - 3 }} others{% endif %}
+              <a href="{{ qurl(allper='1', page='', job='') }}">show all</a></li>
+          {% elif showing_all_per %}
+            <li>showing every role at every company
+              <a href="{{ qurl(allper='', page='', job='') }}">limit to {{ max_per_company }} each</a></li>
+          {% endif %}
+        </ul>
+      </details>
+    {% endif %}
+    </div>
+  </div>
+
   {% if not postings %}
     {# An empty list must say WHY, and offer the nearest thing that isn't
        empty. "No postings match these filters" on its own reads as a
-       broken page — which is exactly how the old "today only" option
-       looked every single time it was picked. #}
+       broken page. #}
     <p class="empty">
       No postings match these filters.
       {% if total_count == 0 %}
@@ -242,217 +282,266 @@
           <br>
           The nearest window with anything in it:
           {% for window in roomier %}
-            <a class="clear" href="{{ url_for('index', **dict(filters,
-                                              f='1', within=window.value)) }}">{{ window.label }}
-              ({{ window.count }})</a>{% if not loop.last %} · {% endif %}
+            <a href="{{ qurl(f='1', within=window.value, page='', job='') }}">{{ window.label }} ({{ window.count }})</a>{% if not loop.last %} · {% endif %}
           {% endfor %}
         {% else %}
           <br>
           Nothing is inside the {{ max_age_days }}-day cutoff right now.
-          <a class="clear" href="{{ url_for('index', **dict(filters,
-                                            stale='1', show_low='1')) }}">Show
-            everything anyway</a>
+          <a href="{{ qurl(stale='1', show_low='1', page='', job='') }}">Show everything anyway</a>
         {% endif %}
       {% endif %}
     </p>
   {% else %}
 
-    <p class="result-count">
-      Showing {{ postings|length }} postings
-      {% if hidden_by_age and not showing_stale %}
-        · <span class="muted">{{ hidden_by_age }} hidden as older than
-          {{ max_age_days }} days</span>
-        <!-- Also lifts show_low. With the steep freshness curve every stale
-             posting scores under the low-fit cutoff, so a stale=1 link on its
-             own would appear to do nothing. -->
-        <a class="clear" href="{{ url_for('index', **dict(filters,
-                                          stale='1', show_low='1')) }}">show
-          them</a>
-      {% elif showing_stale %}
-        · <span class="muted">including stale postings</span>
-        <a class="clear" href="{{ url_for('index', **dict(filters,
-                                          stale='', show_low='')) }}">hide
-          them</a>
-      {% endif %}
-
-      {# A company that caps applications per cycle. Stated plainly, because
-         the reason its roles vanished is otherwise invisible. #}
-      {# Quota-limited: the list is showing only what you can still act on. #}
-      {% for q, held in quota_limited %}
-        · <span class="muted">{{ q.name }}: showing your best
-          {{ q.left }} — you've used {{ q.used }} of {{ q.limit }}
-          applications, so {{ held }} other role{{ 's' if held != 1 }}
-          {{ 'are' if held != 1 else 'is' }} hidden</span>
-        <a class="clear" href="{{ url_for('index', **dict(filters,
-                                          allper='1')) }}">show anyway</a>
-      {% endfor %}
-
-      {% for q in exhausted %}
-        · <span class="muted">{{ q.name }} quota used
-          ({{ q.used }} of {{ q.limit }}) — its remaining roles are
-          hidden</span>
-        <a class="clear" href="{{ url_for('index', **dict(filters,
-                                          allper='1')) }}">show anyway</a>
-      {% endfor %}
-
-      {# One company shouldn't be the whole list. Says which, and how many,
-         so the cap is never silent. #}
-      {% if crowded_total and not showing_all_per %}
-        · <span class="muted">showing your best {{ max_per_company }} at
-          each company —
-          {{ crowded_total }} more at
-          {% for name, count in crowded[:3] %}{{ name }} ({{ count }}){% if not loop.last %}, {% endif %}{% endfor %}
-          {%- if crowded|length > 3 %} and {{ crowded|length - 3 }} others{% endif %}</span>
-        <a class="clear" href="{{ url_for('index', **dict(filters,
-                                          allper='1')) }}">show all</a>
-      {% elif showing_all_per %}
-        · <span class="muted">showing every role at every company</span>
-        <a class="clear" href="{{ url_for('index', **dict(filters,
-                                          allper='')) }}">limit to
-          {{ max_per_company }} each</a>
-      {% endif %}
-    </p>
-
-    <ol class="postings">
-      {% for posting in postings %}
-        <li class="posting fit-{{ posting.fit }}
-                   {% if posting.status %}is-applied{% endif %}">
-
-          <!-- Score badge. The title attribute shows the full breakdown on
-               hover, so a score is never an unexplained number. -->
-          <div class="score" title="{% for name, f in posting.factors.items() %}{{ factor_labels[name] }}: {{ '%.2f' % f.value }}&#10;{% endfor %}">
-            <span class="score-value">{{ posting.fit_score }}</span>
-            <span class="score-label">{{ posting.fit }}</span>
-          </div>
-
-          <div class="details">
-            <div class="role-line">
-              <span class="company">{{ posting.company }}</span>
-              {% if posting.industry %}
-                <span class="tag emp-{{ 'tech' if posting.is_tech_employer else 'non_tech' }}"
-                      title="Employer industry">{{ posting.industry.replace('_', ' ') }}</span>
-              {% endif %}
-              {% if posting.status %}
-                <span class="tag tag-mine" title="You've applied — always shown, whatever the filters">{{ posting.status|upper }}</span>
-              {% endif %}
-              {% if posting.is_new %}<span class="tag tag-new">NEW</span>{% endif %}
-              {% if posting.is_fresh %}<span class="tag tag-fresh">{{ posting.freshness_label }}</span>{% endif %}
-              {% if posting.salary %}<span class="tag tag-pay">{{ posting.salary }}</span>{% endif %}
-              <span class="tag tier-{{ posting.company_tier }}"
-                    title="{% if posting.company_tier == 'large' %}Fills fast — apply the day it appears{% elif posting.company_tier == 'startup' %}Slower pipeline — a few days is usually still fine{% else %}Moderate pace{% endif %}">{{ posting.tier_label }}</span>
-              {% if posting.quota %}
-                <span class="tag tag-quota"
-                      title="{{ posting.quota.name }} accepts {{ posting.quota.limit }} applications per cycle. You've used {{ posting.quota.used }}.">{{ posting.quota.left }} of
-                  {{ posting.quota.limit }} left</span>
-              {% endif %}
-              {% if posting.is_coop %}<span class="tag tag-warn" title="Full-time during a school term">CO-OP</span>{% endif %}
-              {% if posting.is_off_season %}<span class="tag tag-warn" title="Runs during the academic year, not summer">OFF-SEASON</span>{% endif %}
-              {% if posting.sources and posting.sources|length > 1 %}
-                <span class="tag" title="Listed by {{ posting.sources|join(', ') }}">{{ posting.sources|length }} lists</span>
-              {% endif %}
-              {% if posting.is_faang %}<span class="tag">FAANG+</span>{% endif %}
-              {% if posting.needs_advanced_degree %}
-                <span class="tag tag-warn">Adv. degree</span>
-              {% endif %}
-            </div>
-
-            <div class="role">{{ posting.role }}</div>
-
-            <div class="meta">
-              {%- set bits = [] -%}
-              {%- if posting.location %}{% set _ = bits.append(posting.location) %}{% endif -%}
-              {%- if posting.category %}{% set _ = bits.append(posting.category) %}{% endif -%}
-              {%- if posting.age_days is not none %}{% set _ = bits.append(posting.freshness_label|lower) %}{% endif -%}
-              {{ bits|join(' · ') }}
-            </div>
-
-            <!-- Why it scored what it did. Every factor is raised to the
-                 profile's weight and multiplied, so each shows its own value
-                 and what it multiplied the score by. -->
-            <details class="why">
-              <summary>Why this score?</summary>
-              <div class="why-body">
-                <p class="formula">
-                  {% for name, f in posting.factors.items() %}{{ '%.2f' % f.value }}<sup>{{ f.weight }}</sup>{{ ' × ' if not loop.last }}{% endfor %}
-                  × 100 = <strong>{{ posting.fit_score }}</strong>
-                </p>
-                {% for name, f in posting.factors.items() %}
-                  <div class="factor">
-                    <span class="factor-name">{{ factor_labels[name] }}
-                      <span class="pts">×{{ '%.2f' % f.contribution }}</span></span>
-                    <div>
-                      <div class="factor-bar {{ 'is-neutral' if f.neutral }}{{ ' is-weak' if f.value < 0.5 and not f.neutral }}">
-                        <span style="width: {{ (f.value * 100)|round|int }}%"></span>
-                      </div>
-                      <ul>
-                        {% for r in f.reasons %}<li>{{ r }}</li>{% endfor %}
-                        {% if f.neutral %}<li class="muted">Nothing to go on here, so this factor is neutral.</li>{% endif %}
-                      </ul>
-                    </div>
-                  </div>
-                {% endfor %}
-              </div>
-            </details>
-          </div>
-
-          <div class="actions">
-            <!-- rel="noopener" is a security habit worth keeping: without it,
-                 the page you open can reach back and redirect this tab. -->
-            <a class="btn-apply" href="{{ posting.apply_url }}"
-               target="_blank" rel="noopener noreferrer">Apply</a>
-
-            <a class="btn-draft"
-               href="{{ url_for('prompts_route', posting_id=posting.id) }}">
-              Application prep
+  <!-- ==================== TWO PANES ====================
+       Left: one page of compact cards. Right: the selected job in full.
+       Each card is a real link to ?job=<id>, which server-renders this
+       same page with that job open — the JavaScript below only makes it
+       quicker, it is not what makes it work. -->
+  <div class="panes">
+    <section class="pane-list" aria-label="Results">
+      <ol class="jobs" id="results" data-total="{{ result_count }}">
+        {% for posting in postings %}
+          <li class="posting fit-{{ posting.fit }}
+                     {%- if posting.status %} is-applied{% endif %}
+                     {%- if selected and posting.id == selected.id %} is-selected{% endif %}">
+            <a class="posting-link" href="{{ qurl(job=posting.id) }}"
+               data-id="{{ posting.id }}"
+               {% if selected and posting.id == selected.id %}aria-current="true"{% endif %}>
+              <span class="score">
+                <span class="score-value">{{ posting.fit_score }}</span>
+                <span class="score-label">{{ posting.fit }}</span>
+              </span>
+              <span class="job-info">
+                <span class="card-role">{{ posting.role }}</span>
+                <span class="card-company">{{ posting.company }}{% if posting.location %} <span class="card-where">· {{ posting.location }}</span>{% endif %}</span>
+                <span class="card-meta">
+                  {%- set bits = [] -%}
+                  {%- if posting.age_days is not none %}{% set _ = bits.append(posting.freshness_label) %}{% endif -%}
+                  {%- if posting.salary %}{% set _ = bits.append(posting.salary) %}{% endif -%}
+                  {{ bits|join(' · ') }}
+                </span>
+                {# At most two tags, and only the ones that change a
+                   decision. Everything else moved to the detail pane. #}
+                {%- set tags = [] -%}
+                {%- if posting.status %}{% set _ = tags.append(('tag-mine', posting.status|upper)) %}{% endif -%}
+                {%- if posting.is_new %}{% set _ = tags.append(('tag-new', 'NEW')) %}{% endif -%}
+                {%- if posting.is_coop %}{% set _ = tags.append(('tag-warn', 'CO-OP')) %}{% endif -%}
+                {%- if posting.is_off_season %}{% set _ = tags.append(('tag-warn', 'OFF-SEASON')) %}{% endif -%}
+                {%- if posting.is_remote %}{% set _ = tags.append(('', 'REMOTE')) %}{% endif -%}
+                {%- if tags %}
+                  <span class="card-tags">
+                    {% for cls, label in tags[:2] %}<span class="tag {{ cls }}">{{ label }}</span>{% endfor %}
+                  </span>
+                {%- endif %}
+              </span>
             </a>
+          </li>
+        {% endfor %}
+      </ol>
 
-            <!-- A stage, not a checkbox. "Applied" is binary and stops
-                 being enough the moment you have more than a handful in
-                 flight and need to know which are actually live. -->
-            <select class="stage-select" data-id="{{ posting.id }}">
-              {% for stage in stages %}
-                <option value="{{ stage.key }}"
-                        {% if posting.status == stage.key %}selected{% endif %}>
-                  {{ stage.label }}
-                </option>
-              {% endfor %}
-            </select>
-          </div>
-        </li>
-      {% endfor %}
-    </ol>
+      {% if page_count > 1 %}
+        <nav class="pager" aria-label="Pages">
+          {% if page > 1 %}
+            <a class="btn-secondary" href="{{ qurl(page=page - 1, job='') }}">‹ Previous</a>
+          {% else %}
+            <span class="btn-secondary is-disabled" aria-disabled="true">‹ Previous</span>
+          {% endif %}
+          <span class="pager-state">Page {{ page }} of {{ page_count }}</span>
+          {% if page < page_count %}
+            <a class="btn-secondary" href="{{ qurl(page=page + 1, job='') }}">Next ›</a>
+          {% else %}
+            <span class="btn-secondary is-disabled" aria-disabled="true">Next ›</span>
+          {% endif %}
+        </nav>
+      {% endif %}
+    </section>
+
+    <aside class="pane-detail" id="detail" aria-live="polite">
+      {% if selected %}
+        {% with posting = selected %}{% include "_detail.html" %}{% endwith %}
+      {% endif %}
+    </aside>
+  </div>
   {% endif %}
 </main>
 
 <script>
 // ===========================================================================
-// Changing a stage saves immediately, without reloading the page.
-//
-// A reload here would throw away your scroll position mid-way down a list
-// you're working through, which is exactly when you're using this.
+// The list is a set of real links. Everything below only makes following
+// one quicker — with JavaScript off, ?job=<id> server-renders the same
+// page with the same job open.
 // ===========================================================================
-document.querySelectorAll('.stage-select').forEach(function (select) {
-  let previous = select.value;
-  select.addEventListener('change', async function () {
-    const row = select.closest('.posting');
-    row.classList.toggle('is-applied', select.value !== '');
+(function () {
+  const detail = document.getElementById('detail');
+  const results = document.getElementById('results');
+  if (!detail || !results) return;
 
+  function panelUrl(id) {
+    // Carry the current query along: the fragment builds its own "all
+    // results" link from it, and the profile decides the ranking.
+    const params = new URLSearchParams(window.location.search);
+    params.delete('job');
+    const rest = params.toString();
+    return '/job/' + encodeURIComponent(id) + (rest ? '?' + rest : '');
+  }
+
+  function highlight(id) {
+    results.querySelectorAll('li.posting').forEach(function (li) {
+      const link = li.querySelector('.posting-link');
+      const mine = link && link.dataset.id === id;
+      li.classList.toggle('is-selected', !!mine);
+      if (link) {
+        if (mine) link.setAttribute('aria-current', 'true');
+        else link.removeAttribute('aria-current');
+      }
+    });
+  }
+
+  async function show(id, href, push) {
+    detail.classList.add('is-loading');
+    let html;
     try {
-      const res = await fetch('/api/status', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({id: select.dataset.id, status: select.value}),
-      });
-      if (!res.ok) throw new Error('save failed');
-      previous = select.value;
+      const res = await fetch(panelUrl(id), {headers: {'Accept': 'text/html'}});
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      html = await res.text();
     } catch (err) {
-      // Put it back rather than showing state the database disagrees with.
-      select.value = previous;
-      row.classList.toggle('is-applied', previous !== '');
-      alert('Could not save that — is the server still running?');
+      // A full navigation still works, so fall back to it rather than
+      // leaving the pane showing the wrong job.
+      window.location.href = href;
+      return;
+    }
+    detail.innerHTML = html;
+    detail.classList.remove('is-loading');
+    highlight(id);
+    document.body.classList.add('job-open');
+    if (push) history.pushState({job: id}, '', href);
+    detail.scrollTop = 0;
+    if (window.matchMedia('(max-width: 899px)').matches) window.scrollTo(0, 0);
+  }
+
+  results.addEventListener('click', function (event) {
+    // Leave modified clicks alone — cmd-click should still open a tab.
+    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    if (event.button !== 0) return;
+    const link = event.target.closest('a.posting-link');
+    if (!link) return;
+    event.preventDefault();
+    show(link.dataset.id, link.href, true);
+  });
+
+  // Back and forward move between selected jobs, because each one is a
+  // real URL and was pushed as one.
+  window.addEventListener('popstate', function () {
+    const id = new URLSearchParams(window.location.search).get('job');
+    if (id) {
+      show(id, window.location.href, false);
+    } else {
+      document.body.classList.remove('job-open');
+      const first = results.querySelector('.posting-link');
+      if (first) show(first.dataset.id, first.href, false);
     }
   });
+
+  // The mobile "all results" link is a real link; intercept it so it uses
+  // history rather than a reload.
+  detail.addEventListener('click', function (event) {
+    const back = event.target.closest('.detail-back');
+    if (!back) return;
+    event.preventDefault();
+    document.body.classList.remove('job-open');
+    history.pushState({}, '', back.href);
+    window.scrollTo(0, 0);
+  });
+})();
+
+// ===========================================================================
+// Saving a stage or a note. Delegated from the document, because the
+// detail pane is replaced wholesale every time you pick another job and
+// handlers bound to the old markup would go with it.
+// ===========================================================================
+document.addEventListener('change', async function (event) {
+  const select = event.target.closest('.stage-select[data-id]');
+  if (!select) return;
+  const previous = select.dataset.previous || '';
+  const card = document.querySelector(
+    '.posting-link[data-id="' + CSS.escape(select.dataset.id) + '"]');
+  try {
+    const res = await fetch('/api/status', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: select.dataset.id, status: select.value}),
+    });
+    if (!res.ok) throw new Error('save failed');
+    select.dataset.previous = select.value;
+    if (card) card.closest('li.posting').classList.toggle('is-applied', select.value !== '');
+  } catch (err) {
+    // Put it back rather than showing state the database disagrees with.
+    select.value = previous;
+    alert('Could not save that — is the server still running?');
+  }
 });
+
+document.addEventListener('focusin', function (event) {
+  const box = event.target.closest('.notes[data-id]');
+  if (box) box.dataset.saved = box.value;
+});
+
+document.addEventListener('focusout', async function (event) {
+  const box = event.target.closest('.notes[data-id]');
+  if (!box || box.value === box.dataset.saved) return;
+  try {
+    const res = await fetch('/api/notes', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({id: box.dataset.id, notes: box.value}),
+    });
+    if (!res.ok) throw new Error('save failed');
+    box.dataset.saved = box.value;
+    box.classList.add('saved');
+    setTimeout(function () { box.classList.remove('saved'); }, 1200);
+  } catch (err) {
+    alert('Could not save those notes.');
+  }
+});
+
+// A stage select keeps its own last-saved value, so a failed save can be
+// rolled back to what the database actually holds.
+document.querySelectorAll('.stage-select[data-id]').forEach(function (s) {
+  s.dataset.previous = s.value;
+});
+
+// ===========================================================================
+// Chips apply as soon as you change them. The Apply filters button does
+// the same thing without JavaScript.
+// ===========================================================================
+(function () {
+  const form = document.getElementById('filters');
+  if (!form) return;
+  // Listening on the document, not the form: the search boxes and the sort
+  // chip belong to this form through the form attribute rather than by
+  // being inside it, so their events never reach it.
+  document.addEventListener('change', function (event) {
+    const field = event.target;
+    if (field.form !== form) return;
+    if (field.matches('select, input[type="checkbox"]')) form.submit();
+  });
+})();
+
+// The self-check note stays dismissed until the check result changes.
+(function () {
+  const note = document.getElementById('selfcheck-note');
+  if (!note) return;
+  const key = 'jobrank.selfcheck.dismissed';
+  try {
+    if (localStorage.getItem(key) === note.dataset.signature) note.hidden = true;
+  } catch (err) { /* private browsing: just show it */ }
+  note.addEventListener('click', function (event) {
+    if (!event.target.matches('[data-dismiss]')) return;
+    note.hidden = true;
+    try { localStorage.setItem(key, note.dataset.signature); } catch (err) {}
+  });
+})();
 </script>
 
 </body>

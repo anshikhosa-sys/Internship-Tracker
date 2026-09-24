@@ -1,0 +1,109 @@
+{# One posting, in full.
+
+   Rendered two ways and never written twice: the dashboard includes it for
+   whichever card is selected, and /job/<id> returns it on its own for the
+   list to swap in. Everything that used to be repeated on 361 cards —
+   every tag, the stage dropdown, the score breakdown — lives here, shown
+   for the one job being looked at. #}
+<article class="detail-card fit-{{ posting.fit }}" data-id="{{ posting.id }}">
+
+  <a class="detail-back" href="{{ qurl(job='') }}">‹ All results</a>
+
+  <div class="detail-head">
+    <div class="detail-headline">
+      <h2 class="detail-role">{{ posting.role }}</h2>
+      <p class="detail-company">
+        <strong>{{ posting.company }}</strong>
+        {% if posting.location %} · {{ posting.location }}{% endif %}
+        {% if posting.tier_label %} · {{ posting.tier_label }}{% endif %}
+      </p>
+      <p class="detail-meta">
+        {%- set bits = [] -%}
+        {%- if posting.age_days is not none %}{% set _ = bits.append(posting.freshness_label) %}{% endif -%}
+        {%- if posting.salary %}{% set _ = bits.append(posting.salary) %}{% endif -%}
+        {%- if posting.category %}{% set _ = bits.append(posting.category) %}{% endif -%}
+        {%- if posting.sources %}{% set _ = bits.append('Listed by ' ~ posting.sources|join(', ')) %}{% endif -%}
+        {{ bits|join(' · ') }}
+      </p>
+    </div>
+
+    <div class="detail-score" title="{% for name, f in posting.factors.items() %}{{ factor_labels[name] }}: {{ '%.2f' % f.value }}&#10;{% endfor %}">
+      <span class="score-value">{{ posting.fit_score }}</span>
+      <span class="score-label">{{ posting.fit }} fit</span>
+    </div>
+  </div>
+
+  <div class="detail-actions">
+    <!-- rel="noopener" is a security habit worth keeping: without it, the
+         page you open can reach back and redirect this tab. -->
+    <a class="btn-apply" href="{{ posting.apply_url }}"
+       target="_blank" rel="noopener noreferrer">Apply now</a>
+    <a class="btn-secondary"
+       href="{{ url_for('prompts_route', posting_id=posting.id) }}">Application prep</a>
+    <!-- A stage, not a checkbox. "Applied" stops being enough the moment
+         you have more than a handful in flight. -->
+    <select class="stage-select" data-id="{{ posting.id }}"
+            aria-label="Application stage">
+      {% for stage in stages %}
+        <option value="{{ stage.key }}"
+                {% if posting.status == stage.key %}selected{% endif %}>
+          {{ stage.label }}
+        </option>
+      {% endfor %}
+    </select>
+  </div>
+
+  {% set tags = [] %}
+  <div class="detail-tags">
+    {% if posting.status %}
+      <span class="tag tag-mine" title="You've applied — always shown, whatever the filters">{{ posting.status|upper }}</span>
+    {% endif %}
+    {% if posting.is_new %}<span class="tag tag-new">NEW</span>{% endif %}
+    {% if posting.is_fresh %}<span class="tag tag-fresh">{{ posting.freshness_label }}</span>{% endif %}
+    {% if posting.salary %}<span class="tag tag-pay">{{ posting.salary }}</span>{% endif %}
+    {% if posting.is_remote %}<span class="tag">Remote</span>{% endif %}
+    {% if posting.industry %}
+      <span class="tag emp-{{ 'tech' if posting.is_tech_employer else 'non_tech' }}"
+            title="Employer industry">{{ posting.industry.replace('_', ' ') }}</span>
+    {% endif %}
+    {% if posting.is_faang %}<span class="tag">FAANG+</span>{% endif %}
+    {% if posting.is_coop %}<span class="tag tag-warn" title="Full-time during a school term">CO-OP</span>{% endif %}
+    {% if posting.is_off_season %}<span class="tag tag-warn" title="Runs during the academic year, not summer">OFF-SEASON</span>{% endif %}
+    {% if posting.needs_advanced_degree %}<span class="tag tag-warn">Adv. degree</span>{% endif %}
+    {% if posting.no_sponsorship %}<span class="tag tag-warn">No sponsorship</span>{% endif %}
+    {% if posting.citizenship_required %}<span class="tag tag-warn">Citizenship</span>{% endif %}
+    {% if posting.quota %}
+      <span class="tag tag-quota"
+            title="{{ posting.quota.name }} accepts {{ posting.quota.limit }} applications per cycle. You've used {{ posting.quota.used }}.">{{ posting.quota.left }} of {{ posting.quota.limit }} left at {{ posting.quota.name }}</span>
+    {% endif %}
+  </div>
+
+  <label class="detail-notes">
+    <span class="detail-section-label">Your notes</span>
+    <textarea class="notes" data-id="{{ posting.id }}" rows="2"
+      placeholder="Recruiter name, OA deadline, who referred you…">{{ posting.notes }}</textarea>
+  </label>
+
+  <section class="detail-why">
+    <h3 class="detail-section-label">Why this score</h3>
+    <p class="formula">
+      {% for name, f in posting.factors.items() %}{{ '%.2f' % f.value }}<sup>{{ f.weight }}</sup>{{ ' × ' if not loop.last }}{% endfor %}
+      × 100 = <strong>{{ posting.fit_score }}</strong>
+    </p>
+    {% for name, f in posting.factors.items() %}
+      <div class="factor">
+        <span class="factor-name">{{ factor_labels[name] }}
+          <span class="pts">×{{ '%.2f' % f.contribution }}</span></span>
+        <div>
+          <div class="factor-bar {{ 'is-neutral' if f.neutral }}{{ ' is-weak' if f.value < 0.5 and not f.neutral }}">
+            <span style="width: {{ (f.value * 100)|round|int }}%"></span>
+          </div>
+          <ul>
+            {% for r in f.reasons %}<li>{{ r }}</li>{% endfor %}
+            {% if f.neutral %}<li class="muted">Nothing to go on here, so this factor is neutral.</li>{% endif %}
+          </ul>
+        </div>
+      </div>
+    {% endfor %}
+  </section>
+</article>

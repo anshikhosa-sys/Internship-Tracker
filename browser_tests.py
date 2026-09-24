@@ -125,6 +125,9 @@ def main():
             _test_stage_saves(browser, base)
             _test_notes_save(browser, base)
             _test_age_window_counts(browser, base)
+            _test_no_javascript_filtering(browser, base)
+            _test_detail_pane(browser, base)
+            _test_narrow_screen(browser, base)
         finally:
             browser.close()
 
@@ -290,23 +293,49 @@ def _test_age_window_counts(browser, base):
     check(len({o["value"] for o in options}) == len(options),
           "no two windows share a value")
 
+    from jobrank.web.app import PAGE_SIZE
+
     for option in options:
         promised = int(option["label"].rsplit("(", 1)[1].rstrip(")"))
 
-        # form.filters, not just button[type=submit]: the header carries
-        # "Mark all as seen" and "Refresh listings", both POST forms, and a
-        # bare selector clicks the first of those instead. Every window then
-        # rendered the same number and looked like an app bug.
-        page.select_option('form.filters select[name="within"]',
-                           option["value"])
-        page.click('form.filters button[type="submit"]')
-        page.wait_for_load_state("load")
-        page.wait_for_timeout(200)
+        # The chips submit themselves on change, so changing one IS a
+        # navigation and has to be waited for as one. Picking the window
+        # that is already selected fires no change event, so that case
+        # goes through the form's own submit button instead — which is
+        # also the button the no-JavaScript path depends on.
+        #
+        # form.filters, not a bare button[type=submit]: the header carries
+        # POST forms too, and a bare selector used to submit one of those
+        # instead — every window then rendered the same number and looked
+        # like an app bug.
+        chosen = page.eval_on_selector(
+            'form.filters select[name="within"]', "el => el.value")
+        with page.expect_navigation(wait_until="load"):
+            if chosen == option["value"]:
+                page.click('form.filters button[type="submit"]')
+            else:
+                page.select_option('form.filters select[name="within"]',
+                                   option["value"])
+        page.wait_for_timeout(250)
 
+        # The list is paged now, so "what it promises" is the size of the
+        # RESULT SET, which the page reports, and the rendered cards are
+        # one page of it. Both halves are checked: a count that disagrees
+        # with its own list is the bug this test exists for, and a page
+        # that quietly renders 25 of 300 as if that were all of them is
+        # the same bug wearing a hat.
+        total = page.evaluate("""() => {
+          const el = document.getElementById('results');
+          return el ? Number(el.dataset.total) : 0;
+        }""")
         shown = page.locator("li.posting").count()
-        check(shown == promised,
-              f"{option['label']!r} shows exactly what it promises",
-              f"promised {promised}, rendered {shown}")
+
+        check(total == promised,
+              f"{option['label']!r} finds exactly what it promises",
+              f"promised {promised}, found {total}")
+        check(shown == min(promised, PAGE_SIZE),
+              f"{option['label']!r} renders one page of that result set",
+              f"{shown} cards, page size {PAGE_SIZE}")
 
         if promised == 0:
             body = page.locator("body").inner_text()
@@ -317,6 +346,140 @@ def _test_age_window_counts(browser, base):
         page.wait_for_timeout(150)
 
     check(not errors, "no JavaScript errors while filtering",
+          "; ".join(errors[:2]) or "none")
+    context.close()
+
+
+def _test_no_javascript_filtering(browser, base):
+    """
+    The filters must work with JavaScript switched off.
+
+    The chips submit themselves on change, which is the nice path. The
+    form's own submit button is the one that has to work regardless, and
+    with scripting disabled it is the ONLY thing that can.
+    """
+    print("\nFILTERS WITHOUT JAVASCRIPT")
+    context = browser.new_context(java_script_enabled=False)
+    page = context.new_page()
+    page.goto(base + "/")
+
+    # No page.evaluate here: this context has no JavaScript to evaluate.
+    values = page.locator('form.filters select[name="within"] option')
+    count = values.count()
+    if count == 0:
+        check(False, "the age dropdown exists without JavaScript")
+        context.close()
+        return
+
+    label = (values.nth(count - 1).text_content() or "").strip()
+    value = values.nth(count - 1).get_attribute("value")
+    promised = int(label.rsplit("(", 1)[1].rstrip(")"))
+
+    page.select_option('form.filters select[name="within"]', value)
+    page.click('form.filters button[type="submit"]')
+    page.wait_for_load_state("load")
+
+    total = page.locator("#results").get_attribute("data-total")
+    check(total is not None and int(total) == promised,
+          "submitting the filter form with no JavaScript filters the list",
+          f"promised {promised}, found {total}")
+
+    # A card is a real link, so the detail pane works with no scripting.
+    first = page.locator("a.posting-link").first
+    if first.count():
+        first.click()
+        page.wait_for_load_state("load")
+        check("job=" in page.url, "a card is a real link to its own URL",
+              page.url.split("?")[-1][:60])
+        check(page.locator(".detail-card").count() == 1,
+              "the server renders the selected job with no JavaScript")
+    context.close()
+
+
+def _test_detail_pane(browser, base):
+    """
+    Picking a job swaps the pane, changes the URL, and the back button
+    undoes it — without reloading the page.
+    """
+    print("\nDETAIL PANE")
+    context = browser.new_context(viewport={"width": 1512, "height": 950})
+    page = context.new_page()
+    errors = _errors_on(page)
+    page.goto(base + "/")
+    page.wait_for_timeout(400)
+
+    cards = page.locator("a.posting-link")
+    if cards.count() < 2:
+        check(False, "at least two results to choose between",
+              f"{cards.count()} cards")
+        context.close()
+        return
+
+    # A marker that a full page load would destroy: if it survives, the
+    # swap really was done in place.
+    page.evaluate("window.__notReloaded = true")
+
+    first_detail = page.locator(".detail-card").get_attribute("data-id")
+    target = cards.nth(1).get_attribute("data-id")
+    cards.nth(1).click()
+    page.wait_for_timeout(600)
+
+    check(page.locator(".detail-card").get_attribute("data-id") == target,
+          "clicking a card shows that job in the detail pane")
+    check(page.evaluate("window.__notReloaded === true") is True,
+          "the pane is swapped in place, not by reloading the page")
+    check(f"job={target}" in page.url.replace("%3A", ":"),
+          "the URL names the selected job", page.url.split("?")[-1][:70])
+    check(page.locator("li.posting.is-selected").count() == 1,
+          "exactly one card is marked as selected")
+
+    page.go_back()
+    page.wait_for_timeout(600)
+    back_to = page.locator(".detail-card").get_attribute("data-id")
+    check(back_to == first_detail,
+          "the back button returns to the job you were looking at",
+          f"{back_to}")
+
+    height = page.evaluate("document.documentElement.scrollHeight")
+    check(height < 8000, "the page is a screenful of results, not a scroll of "
+                         "every posting ever seen", f"{height}px tall")
+
+    check(not errors, "no JavaScript errors while browsing jobs",
+          "; ".join(errors[:2]) or "none")
+    context.close()
+
+
+def _test_narrow_screen(browser, base):
+    """A phone gets one column and never scrolls sideways."""
+    print("\nNARROW SCREEN (390px)")
+    context = browser.new_context(viewport={"width": 390, "height": 844})
+    page = context.new_page()
+    errors = _errors_on(page)
+    page.goto(base + "/")
+    page.wait_for_timeout(400)
+
+    overflow = page.evaluate(
+        "document.documentElement.scrollWidth - window.innerWidth")
+    check(overflow <= 0, "no horizontal scrolling at 390px",
+          f"{overflow}px wider than the screen")
+
+    check(page.locator(".pane-detail").is_visible() is False,
+          "the list, not the detail pane, is what a phone opens on")
+
+    card = page.locator("a.posting-link").first
+    if card.count():
+        card.click()
+        page.wait_for_timeout(600)
+        check(page.locator(".detail-card").is_visible(),
+              "tapping a card opens that job")
+        check(page.locator(".pane-list").is_visible() is False,
+              "the list gets out of the way on a phone")
+        overflow = page.evaluate(
+            "document.documentElement.scrollWidth - window.innerWidth")
+        check(overflow <= 0, "no horizontal scrolling on the job view",
+              f"{overflow}px wider than the screen")
+
+    check(not errors, "no JavaScript errors on a narrow screen",
           "; ".join(errors[:2]) or "none")
     context.close()
 

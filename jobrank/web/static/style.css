@@ -632,3 +632,563 @@ input::placeholder { color: var(--text-faint); }
 .change-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-4); margin: var(--space-3) 0; }
 .skill-added { border-color: color-mix(in srgb, var(--good) 40%, transparent); color: var(--good); }
 .skill-removed { border-color: color-mix(in srgb, var(--danger) 35%, transparent); color: var(--danger); }
+
+/* ==========================================================================
+   THE BOARD — search header, filter chips, results list, detail pane
+
+   The dashboard is a two-pane job board: a page of compact cards on the
+   left, one job in full on the right. Everything below is scoped to that
+   page (.board, .jobs, .detail-card), so the older list styles above still
+   belong to the applications pipeline, which is a different shape.
+   ========================================================================== */
+
+:root {
+  --board-width: 1560px;
+  /* The sticky detail pane hangs off the bottom of the header, so the two
+     have to agree on how tall it is. */
+  --header-h: 112px;
+}
+
+.board { background: var(--bg); }
+
+.board .topbar {
+  padding: 0;
+  background: var(--surface);
+  backdrop-filter: none;
+}
+
+.topbar-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  max-width: var(--board-width);
+  margin: 0 auto;
+  padding: var(--space-2) var(--space-4);
+}
+
+.board .brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+  text-decoration: none;
+  flex: none;
+}
+
+.board .brand:hover { text-decoration: none; }
+.brand-name { font-weight: 680; font-size: 1.02rem; letter-spacing: -0.02em; }
+.board .brand-mark { width: 28px; height: 28px; font-size: 0.74rem; border-radius: 8px; }
+
+/* Search ---------------------------------------------------------------- */
+
+.searchbar {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+  flex: 1 1 auto;
+  max-width: 820px;
+}
+
+.searchfield {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 0;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 0 var(--space-3);
+}
+
+.searchfield:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.searchfield-icon { color: var(--text-faint); font-size: 1rem; line-height: 1; flex: none; }
+
+.searchfield input {
+  border: none;
+  background: none;
+  padding: 9px 0;
+  width: 100%;
+  min-width: 0;
+  font-size: 0.9rem;
+}
+
+.searchfield input:focus { outline: none; box-shadow: none; border: none; }
+.searchfield input::-webkit-search-cancel-button { cursor: pointer; }
+
+.btn-search {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-text);
+  border-radius: 999px;
+  padding: 9px 20px;
+  font-weight: 600;
+  flex: none;
+}
+
+.btn-search:hover { background: var(--accent-hover); border-color: transparent; }
+
+/* Nav ------------------------------------------------------------------- */
+
+.topnav { display: flex; align-items: center; gap: var(--space-2); margin-left: auto; flex: none; }
+
+.topnav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.87rem;
+  font-weight: 560;
+  color: var(--text);
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+
+.topnav-link:hover { background: var(--surface-2); text-decoration: none; }
+
+.pill {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 0 7px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.menu { position: relative; }
+.menu > summary { list-style: none; cursor: pointer; }
+.menu > summary::-webkit-details-marker { display: none; }
+
+.menu-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  display: grid;
+  place-items: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.menu-caret { font-size: 0.6rem; color: var(--text-muted); }
+
+.menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  width: 250px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-2);
+  z-index: 40;
+}
+
+.menu-heading { font-size: 0.82rem; margin: 0; padding: var(--space-2) var(--space-2) var(--space-3); border-bottom: 1px solid var(--border); }
+.menu-row { display: flex; gap: 6px; padding: var(--space-2); }
+.menu-row select { flex: 1; min-width: 0; }
+
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 0.87rem;
+  font-weight: 500;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+}
+
+.menu-item:hover { background: var(--surface-2); text-decoration: none; }
+.menu-item-strong { color: var(--accent); font-weight: 620; }
+.menu form { margin: 0; }
+
+/* Filter chips ----------------------------------------------------------- */
+
+.board .filters {
+  background: var(--surface);
+  border: none;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+  margin: 0;
+  max-width: none;
+  padding: var(--space-2) var(--space-4);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.board .filters > * { flex: none; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 540;
+  color: var(--text);
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.chip:hover { background: var(--surface-2); }
+
+.chip select {
+  appearance: none;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 0.82rem;
+  font-weight: inherit;
+  padding: 6px 26px 6px 13px;
+  border-radius: 999px;
+  cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+                    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 14px) calc(50% + 1px), calc(100% - 10px) calc(50% + 1px);
+  background-size: 4px 4px, 4px 4px;
+  background-repeat: no-repeat;
+  max-width: 230px;
+  text-overflow: ellipsis;
+}
+
+.chip select:focus { outline: none; box-shadow: none; }
+.chip:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* An active filter has to look different from an untouched one, or the
+   only way to know what's applied is to read every dropdown. */
+.chip.is-active,
+.chip-toggle:has(input:checked) {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  color: var(--accent);
+  font-weight: 620;
+}
+
+.chip-toggle { padding: 6px 13px; }
+.chip-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.chip-toggle::before {
+  content: "";
+  width: 13px;
+  height: 13px;
+  border: 1.5px solid var(--border-strong);
+  border-radius: 4px;
+  flex: none;
+}
+
+.chip-toggle:has(input:checked)::before {
+  background: var(--accent);
+  border-color: var(--accent);
+  /* A tick drawn in CSS: no icon font, no image request. */
+  background-image: linear-gradient(45deg, transparent 45%, var(--accent-text) 45%, var(--accent-text) 55%, transparent 55%),
+                    linear-gradient(-45deg, transparent 45%, var(--accent-text) 45%, var(--accent-text) 55%, transparent 55%);
+  background-size: 9px 9px, 9px 9px;
+  background-position: 1px 3px, -2px 3px;
+  background-repeat: no-repeat;
+}
+
+.chip-toggle:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+
+.board .chip-apply {
+  padding: 6px 14px;
+  font-size: 0.82rem;
+  font-weight: 560;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+}
+
+.board .chip-apply:hover { background: var(--surface-2); color: var(--text); }
+.chip-clear { padding: 6px 12px; color: var(--text-muted); border-style: dashed; }
+.chip-clear:hover { text-decoration: none; color: var(--text); }
+
+/* Results header --------------------------------------------------------- */
+
+.board-main {
+  max-width: var(--board-width);
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-4) var(--space-6);
+}
+
+.results-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.board .result-count { margin: 0; font-size: 0.88rem; color: var(--text-muted); }
+.board .result-count strong { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.notices { font-size: 0.82rem; color: var(--text-muted); }
+.notices summary { cursor: pointer; list-style: none; }
+.notices summary::-webkit-details-marker { display: none; }
+.notices summary::after { content: " ▾"; font-size: 0.7em; }
+.notices[open] summary::after { content: " ▴"; }
+.notices summary:hover { color: var(--text); }
+.notices ul { margin: var(--space-2) 0 0; padding-left: 18px; }
+.notices li { margin-bottom: 3px; }
+
+/* A self-check failure is worth knowing and is not an emergency. */
+.notice {
+  font-size: 0.83rem;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px var(--space-3);
+  margin: 0 0 var(--space-3);
+}
+
+.notice summary { cursor: pointer; list-style: none; }
+.notice summary::-webkit-details-marker { display: none; }
+.notice summary::before { content: "⚠ "; color: var(--warn); }
+.notice ul { margin: var(--space-2) 0; padding-left: 18px; }
+.notice li { overflow-wrap: anywhere; }
+.notice-ok { background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 25%, transparent); color: var(--good); }
+.notice-dismiss { font-size: 0.78rem; padding: 4px 10px; }
+
+/* Two panes -------------------------------------------------------------- */
+
+.panes {
+  display: grid;
+  grid-template-columns: minmax(0, 40fr) minmax(0, 60fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+.pane-list { min-width: 0; }
+
+.pane-detail {
+  min-width: 0;
+  position: sticky;
+  top: calc(var(--header-h) + var(--space-3));
+  max-height: calc(100vh - var(--header-h) - var(--space-5));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.pane-detail.is-loading { opacity: 0.55; }
+
+/* Result cards ----------------------------------------------------------- */
+
+.jobs { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+
+.jobs .posting {
+  display: block;
+  padding: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: none;
+  overflow: hidden;
+}
+
+.jobs .posting:hover { border-color: var(--border-strong); box-shadow: var(--shadow-sm); }
+
+.jobs .posting.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+  background: var(--surface);
+}
+
+.jobs .posting.is-applied { background: var(--surface); border-style: solid; }
+.jobs .posting.is-applied .card-role { color: var(--text-muted); }
+
+.posting-link {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: start;
+  padding: var(--space-3) var(--space-4);
+  color: inherit;
+  text-decoration: none;
+}
+
+.posting-link:hover { text-decoration: none; }
+
+.jobs .score {
+  width: 46px;
+  padding: 5px 0;
+  border-radius: var(--radius-sm);
+  text-align: center;
+  display: block;
+}
+
+.jobs .score-value { font-size: 1.02rem; font-weight: 700; }
+.jobs .score-label { font-size: 0.55rem; letter-spacing: 0.06em; }
+
+.job-info { display: block; min-width: 0; }
+.card-role { display: block; font-size: 0.97rem; font-weight: 620; color: var(--text); line-height: 1.3; overflow-wrap: anywhere; }
+.card-company { display: block; font-size: 0.85rem; color: var(--text); margin-top: 2px; overflow-wrap: anywhere; }
+.card-where { color: var(--text-muted); }
+.card-meta { display: block; font-size: 0.79rem; color: var(--text-muted); margin-top: 2px; }
+.card-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.card-tags .tag { font-size: 0.62rem; }
+
+.pager { display: flex; align-items: center; justify-content: center; gap: var(--space-3); margin: var(--space-4) 0 0; }
+.pager-state { font-size: 0.84rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.btn-secondary.is-disabled { opacity: 0.4; pointer-events: none; }
+
+/* Detail pane ------------------------------------------------------------ */
+
+.detail-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-sm);
+}
+
+.detail-back { display: none; font-size: 0.85rem; font-weight: 560; margin-bottom: var(--space-3); }
+
+.detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); }
+.detail-headline { min-width: 0; }
+.detail-role { font-size: 1.35rem; line-height: 1.25; margin: 0 0 4px; overflow-wrap: anywhere; }
+.detail-company { margin: 0; font-size: 0.94rem; }
+.detail-meta { margin: 4px 0 0; font-size: 0.84rem; color: var(--text-muted); }
+
+.detail-score {
+  flex: none;
+  min-width: 76px;
+  text-align: center;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+}
+
+.fit-strong .detail-score { background: var(--good-soft); border-color: color-mix(in srgb, var(--good) 30%, transparent); }
+.fit-strong .detail-score .score-value, .fit-strong .detail-score .score-label { color: var(--good); }
+.fit-good .detail-score { background: var(--accent-soft); border-color: color-mix(in srgb, var(--accent) 30%, transparent); }
+.fit-good .detail-score .score-value, .fit-good .detail-score .score-label { color: var(--accent); }
+.fit-fair .detail-score { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 25%, transparent); }
+.fit-fair .detail-score .score-value, .fit-fair .detail-score .score-label { color: var(--warn); }
+
+.detail-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-4) 0 var(--space-3); }
+.detail-actions .btn-apply { padding: 10px 28px; font-size: 0.92rem; font-weight: 620; border-radius: var(--radius-sm); }
+.detail-actions .stage-select { font-size: 0.85rem; }
+.detail-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.detail-section-label {
+  display: block;
+  font-size: 0.72rem;
+  font-weight: 640;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  margin: 0 0 6px;
+}
+
+.detail-notes { display: block; margin: var(--space-4) 0; }
+.detail-notes .notes { width: 100%; font-size: 0.85rem; resize: vertical; }
+.notes.saved { border-color: var(--good); }
+
+.detail-why { border-top: 1px solid var(--border); padding-top: var(--space-4); }
+.detail-why .factor { grid-template-columns: 160px 1fr; }
+
+/* Responsive ------------------------------------------------------------- */
+
+@media (max-width: 1100px) {
+  .panes { grid-template-columns: minmax(0, 44fr) minmax(0, 56fr); }
+  .detail-why .factor { grid-template-columns: 1fr; gap: 2px; }
+}
+
+@media (max-width: 899px) {
+  :root { --header-h: 0px; }
+
+  /* One column: the URL says whether you're looking at the list or at one
+     job, and the card links are what move between them. */
+  .panes { grid-template-columns: minmax(0, 1fr); }
+  .pane-detail { position: static; max-height: none; overflow: visible; }
+  .board:not(.job-open) .pane-detail { display: none; }
+  .board.job-open .pane-list { display: none; }
+  .detail-back { display: inline-block; }
+
+  .topbar-row { flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3); }
+  .searchbar { order: 3; flex: 1 1 100%; flex-wrap: wrap; max-width: none; }
+  .searchfield { flex: 1 1 100%; }
+  .btn-search { flex: 1 1 100%; justify-content: center; }
+  .board .filters { padding: var(--space-2) var(--space-3); gap: 5px; }
+  .board-main { padding: var(--space-3) var(--space-3) var(--space-6); }
+  .detail-card { padding: var(--space-4); }
+  .detail-role { font-size: 1.15rem; }
+
+  /* The older list styles above still target .posting for the pipeline
+     page; the board's cards keep their own two-column shape. */
+  .jobs .posting { grid-template-columns: none; }
+  .posting-link { grid-template-columns: 42px minmax(0, 1fr); gap: var(--space-2); padding: var(--space-3); }
+  .jobs .score { width: 42px; }
+}
+
+@media (max-width: 480px) {
+  .detail-head { flex-direction: row; }
+  .detail-actions .btn-apply { flex: 1 1 100%; justify-content: center; }
+  .detail-actions .btn-secondary, .detail-actions .stage-select { flex: 1 1 auto; justify-content: center; }
+  .chip select { max-width: 150px; }
+}
+
+@media print {
+  .topbar, .pane-list, .detail-actions, .notices { display: none; }
+  .pane-detail { position: static; max-height: none; }
+}
+
+/* The sort control sits with the result count, the way a job board puts
+   it — it belongs to the filter form through the form attribute. */
+.results-tools { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.chip-sort select { padding-top: 5px; padding-bottom: 5px; }
+
+/* A <select> is as wide as its widest option, which a data-driven list of
+   categories can make very wide. Cap it and let the label elide. */
+.chip select { max-width: 185px; text-overflow: ellipsis; }
+.board .filters { gap: 5px; }
+.detail-why .factor { grid-template-columns: 185px 1fr; }
+/* Hug the text: a full-width grey band reads as a banner, which is what
+   this deliberately stopped being. */
+.notice { display: inline-block; }
+.notice[open] { display: block; }
+
+/* --------------------------------------------------------------------------
+   Phone header
+
+   A sticky header that fills half the screen is worse than no sticky
+   header: the point of the page is the list. Below 900px the header
+   scrolls away and the chips become one swipeable row, which keeps the
+   overflow inside the strip instead of on the page.
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 899px) {
+  .board .topbar { position: static; }
+
+  .board .filters {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .board .filters::-webkit-scrollbar { display: none; }
+
+  .searchbar { gap: 6px; }
+  .searchfield { flex: 1 1 100%; }
+  .searchbar .searchfield + .searchfield { flex: 1 1 55%; }
+  .btn-search { flex: 1 1 35%; }
+  .results-head { gap: var(--space-2); }
+}

@@ -43,6 +43,7 @@ from flask import (
 
 from jobrank import config
 from jobrank import letters
+from jobrank import textmatch
 from jobrank import postings as posting_facts
 from jobrank import ranking
 from jobrank.config import companies
@@ -81,15 +82,36 @@ def _reject_cross_site_posts():
 # Helpers
 # =============================================================================
 
+# How many cards one page of results renders.
+#
+# The list used to render every match — 361 cards, 60,000 pixels of scroll.
+# Nobody reads card 200, and the browser pays for all of them. The COUNTS
+# stay truthful (they describe the whole result set); only the rendering is
+# paged, and the page number lives in the URL like every other filter.
+PAGE_SIZE = 25
+
 SIZE_LABELS = {"large": "Large company", "mid": "Mid-size", "startup": "Startup / small"}
 FACTOR_LABELS = {
     "skills": "Skills you have",
     "seniority": "Right level for you",
     "role": "Kind of role you want",
-    "preferences": "Matches your preferences",
     "freshness": "Still open",
     "semantic": "Résumé similarity",
 }
+
+
+# Words in a location that mean "you don't have to be there". This is a
+# display filter over the location string, not a scoring input — sources
+# don't publish a remote flag, they publish "Remote (US)".
+REMOTE_WORDS = ("remote", "anywhere", "virtual", "wfh")
+
+
+def _is_remote(posting) -> bool:
+    """Whether a posting's location reads as remote."""
+    where = posting.get("location") or ""
+    # Whole words: "remote" must not match inside a company's address, and
+    # textmatch is the only place in this project that builds a regex.
+    return any(textmatch.contains(where, word) for word in REMOTE_WORDS)
 
 
 def _profile_ids():
@@ -119,6 +141,11 @@ def _filtered(postings, new_ids, args):
     submitted = args.get("f") == "1"
 
     query = (args.get("q") or "").strip().lower()
+    # The location box, separate from the keyword box. Every job board has
+    # both, and folding location into the keyword search means "Austin"
+    # also matches a company called Austin Industries.
+    where = (args.get("l") or "").strip().lower()
+    remote_only = args.get("remote") == "1"
     category = args.get("category") or ""
     status = args.get("status") or ""
     show_low = args.get("show_low") == "1"
@@ -131,12 +158,10 @@ def _filtered(postings, new_ids, args):
     # ordinary case.
     tech_only = args.get("techonly") == "1"
 
-    if submitted:
-        hide_coop = args.get("nocoop") == "1"
-        hide_offseason = args.get("nowinter") == "1"
-    else:
-        hide_coop = config.DEFAULT_HIDE_COOP
-        hide_offseason = config.DEFAULT_HIDE_OFFSEASON
+    # One term filter replaces the old "Summer only" + "No co-ops" pair.
+    # They overlapped — most co-ops ARE summer terms — so the two boxes could
+    # contradict each other and hide rows neither label mentioned.
+    term = _effective_term(args)
 
     # Explicit "posted within N days" filter, independent of the global
     # cutoff.
@@ -186,11 +211,13 @@ def _filtered(postings, new_ids, args):
                 and (age is None or age > within)):
             continue
 
-        if hide_coop and posting["is_coop"] and not in_pipeline:
-            continue
-
-        if hide_offseason and posting["is_off_season"] and not in_pipeline:
-            continue
+        if term and not in_pipeline:
+            if term == "coop" and not posting["is_coop"]:
+                continue
+            if term == "summer" and (posting["is_coop"] or posting["is_off_season"]):
+                continue
+            if term == "offseason" and not posting["is_off_season"]:
+                continue
 
         if tier and posting["company_tier"] != tier:
             continue
@@ -219,6 +246,12 @@ def _filtered(postings, new_ids, args):
             if query not in haystack:
                 continue
 
+        if where and where not in (posting["location"] or "").lower():
+            continue
+
+        if remote_only and not _is_remote(posting):
+            continue
+
         results.append(posting)
 
     return results
@@ -235,18 +268,18 @@ def _effective_within(args):
     return "" if default is None else str(default)
 
 
-def _effective_hide_coop(args) -> bool:
-    """Whether the Hide co-ops box should render ticked."""
-    if args.get("f") == "1":
-        return args.get("nocoop") == "1"
-    return config.DEFAULT_HIDE_COOP
+def _effective_term(args) -> str:
+    """
+    Which term the list is restricted to: "", "summer", "coop" or "offseason".
 
-
-def _effective_hide_offseason(args) -> bool:
-    """Whether the Summer only box should render ticked."""
-    if args.get("f") == "1":
-        return args.get("nowinter") == "1"
-    return config.DEFAULT_HIDE_OFFSEASON
+    A single value rather than two independent checkboxes. The old pair could
+    both be ticked, and since most co-ops are summer terms that combination hid
+    postings neither label claimed to hide (invariant 18: a filter must do what
+    it says). Anything already in the application pipeline is exempt, because a
+    filter hides, it never deletes.
+    """
+    value = (args.get("term") or "").strip().lower()
+    return value if value in ("summer", "coop", "offseason") else ""
 
 
 # =============================================================================
@@ -357,8 +390,7 @@ def _age_window_counts(postings, new_ids, args):
         # used, and read one higher than the list it described.
         probe = MultiDict(args)
         probe["f"] = "1"
-        probe["nocoop"] = "1" if _effective_hide_coop(args) else ""
-        probe["nowinter"] = "1" if _effective_hide_offseason(args) else ""
+        probe["term"] = _effective_term(args)
         probe["within"] = "" if days is None else str(days)
         matched = _filtered(postings, new_ids, probe)
         matched, _, _, _ = _apply_caps(
@@ -371,6 +403,32 @@ def _age_window_counts(postings, new_ids, args):
             "count": count,
         })
     return windows
+
+
+def _decorate(postings, new_ids):
+    """Facts the list and the detail pane both display but nothing stores."""
+    for posting in postings:
+        posting["is_fresh"] = (posting["age_days"] is not None
+                               and posting["age_days"] <= config.FRESH_DAYS)
+        posting["is_new"] = posting["id"] in new_ids
+        posting["tier_label"] = SIZE_LABELS.get(posting["company_tier"], "")
+        posting["is_remote"] = _is_remote(posting)
+    return postings
+
+
+@app.template_global()
+def qurl(**overrides):
+    """
+    This page's URL with some query parameters changed.
+
+    Every filter, the page number and the selected job all live in the URL,
+    so a link that changes one has to carry the rest. Passing "" drops a
+    parameter, which is how the override links switch themselves back off.
+    """
+    args = request.args.to_dict(flat=True)
+    args.update(overrides)
+    args = {k: v for k, v in args.items() if v not in (None, "")}
+    return url_for("index", **args)
 
 
 def _selfcheck_banner():
@@ -504,10 +562,7 @@ def index():
 
     conn.close()
 
-    for posting in postings:
-        posting["is_fresh"] = posting["age_days"] is not None and posting["age_days"] <= config.FRESH_DAYS
-        posting["is_new"] = posting["id"] in new_ids
-        posting["tier_label"] = SIZE_LABELS.get(posting["company_tier"], "")
+    _decorate(postings, new_ids)
 
     hidden_by_age = sum(
         1 for p in postings
@@ -554,9 +609,52 @@ def index():
     # stays correct if you change INGEST_CATEGORIES in config.py.
     categories = sorted({p["category"] for p in postings})
 
+    # ONE PAGE OF CARDS, NOT ALL OF THEM.
+    #
+    # `result_count` is the whole filtered set and is what every count on
+    # the page reports; `page_rows` is only what gets rendered. Keeping the
+    # two separate is what lets the age-window counts stay truthful.
+    result_count = len(visible)
+    page_count = max(1, -(-result_count // PAGE_SIZE))
+
+    # A link to one job has to land on the page that job is on, or the
+    # highlighted card is nowhere to be seen.
+    selected_id = request.args.get("job") or ""
+    position = next((i for i, p in enumerate(visible)
+                     if p["id"] == selected_id), None)
+    if position is not None and not request.args.get("page"):
+        page = position // PAGE_SIZE + 1
+    else:
+        try:
+            page = int(request.args.get("page") or 1)
+        except ValueError:
+            page = 1
+    page = max(1, min(page, page_count))
+
+    page_rows = visible[(page - 1) * PAGE_SIZE: page * PAGE_SIZE]
+
+    # What the detail pane shows. Defaults to the first card, so the pane is
+    # never empty and the page reads the same with JavaScript off.
+    selected = next((p for p in page_rows if p["id"] == selected_id), None)
+    if selected is None and selected_id:
+        # Linked to a posting the current filters hide: still show it.
+        selected = next((p for p in postings if p["id"] == selected_id), None)
+        if selected is not None:
+            group = _quota_group(selected["company"])
+            selected["quota"] = quotas[group["name"]] if group else None
+    if selected is None:
+        selected = page_rows[0] if page_rows else None
+
     return render_template(
         "index.html",
-        postings=visible,
+        postings=page_rows,
+        selected=selected,
+        result_count=result_count,
+        page=page,
+        page_count=page_count,
+        page_size=PAGE_SIZE,
+        page_first=(page - 1) * PAGE_SIZE + 1 if page_rows else 0,
+        page_last=(page - 1) * PAGE_SIZE + len(page_rows),
         categories=categories,
         total_count=len(postings),
         new_count=len(new_ids),
@@ -585,9 +683,10 @@ def index():
         # an empty result is visible BEFORE you pick it rather than looking
         # like a broken page afterwards.
         age_windows=_age_window_counts(postings, new_ids, request.args),
-        hide_coop=_effective_hide_coop(request.args),
+        term=_effective_term(request.args),
         tech_only=request.args.get("techonly") == "1",
-        hide_offseason=_effective_hide_offseason(request.args),
+        remote_only=request.args.get("remote") == "1",
+        show_low=request.args.get("show_low") == "1",
         tiers={k: {"label": v} for k, v in SIZE_LABELS.items()},
         profile=ranked.profile,
         profiles=_profile_ids(),
@@ -597,6 +696,49 @@ def index():
         filters=request.args,
         config=config,
     )
+
+
+@app.route("/job/<path:posting_id>")
+def job_panel(posting_id):
+    """
+    One posting's detail pane, as an HTML fragment.
+
+    The list fetches this and swaps it in, so choosing a different job costs
+    one small request instead of re-rendering the whole page. It is the same
+    template the dashboard renders inline, so the JavaScript path and the
+    no-JavaScript path cannot drift apart.
+
+    A GET, and it reads only: no visit is registered here, or moving down
+    the list would quietly clear the NEW badges you are moving through.
+    """
+    conn = storage.connect()
+    ranked = ranking.rank(request.args.get("profile"), conn=conn)
+    if ranked is None:
+        conn.close()
+        return render_template("error.html", message="No profile yet."), 404
+
+    postings = ranked.rows
+    new_ids = storage.new_since_last_visit(
+        conn, storage.current_visit_basis(conn))
+    conn.close()
+
+    posting = next((p for p in postings if p["id"] == posting_id), None)
+    if posting is None:
+        return render_template("error.html", message="No such posting."), 404
+
+    _decorate([posting], new_ids)
+    quotas = _quota_state(postings)
+    group = _quota_group(posting["company"])
+    posting["quota"] = quotas[group["name"]] if group else None
+
+    body = render_template(
+        "_detail.html",
+        posting=posting,
+        stages=config.APPLICATION_STAGES,
+        factor_labels=FACTOR_LABELS,
+    )
+    # content_type, not mimetype: mimetype appends a second charset.
+    return Response(body, content_type="text/html; charset=utf-8")
 
 
 @app.route("/profile/active", methods=["POST"])
