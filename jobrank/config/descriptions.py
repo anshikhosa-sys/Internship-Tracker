@@ -76,6 +76,10 @@ PAGE_HOSTS = ["dreamworkhq.com"]
 REQUEST_TIMEOUT_SECONDS = 20
 DELAY_BETWEEN_REQUESTS_SECONDS = 0.35
 MAX_ATTEMPTS_PER_HOST = 3          # consecutive failures before a host is skipped
+# Times one posting is tried before it is left alone. Most misses are permanent
+# (the board renders in JavaScript, or the job has closed), and retrying them
+# every run is the difference between a few hundred requests and a few thousand.
+MAX_ATTEMPTS_PER_POSTING = 3
 USER_AGENT = "jobrank (+https://github.com/anshikhosa-sys/Internship-Tracker)"
 
 # A description shorter than this is boilerplate ("Apply here"), not content.

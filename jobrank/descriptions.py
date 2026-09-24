@@ -146,12 +146,22 @@ def _job_id_of(record: dict) -> set[str]:
     return found
 
 
+def _failure_key(target: Target) -> str:
+    """One employer's outage must not speak for another's."""
+    return f"{target.vendor}:{target.board}"
+
+
 class Fetcher:
     """
     Fetches descriptions, preferring one request per board over one per job.
 
-    A host that fails repeatedly is dropped for the rest of the run: a board
-    that is down or rate-limiting should cost us three requests, not 1,800.
+    A BOARD that fails repeatedly is dropped for the rest of the run: one that
+    is down or rate-limiting should cost three requests, not 1,800.
+
+    The unit is the board, not the vendor. Keying these failures by vendor
+    meant one bad Workday tenant disabled every Workday tenant: a single
+    employer's 404s abandoned 799 postings in one run, ~700 of which fetch
+    perfectly well. Employers are independent, and the counter has to be too.
     """
 
     def __init__(self, session: requests.Session | None = None, delay: float | None = None):
@@ -189,7 +199,7 @@ class Fetcher:
         spec = cfg.VENDORS[target.vendor]
         table: dict[str, str] = {}
         if spec["board_api"]:
-            response = self._get(spec["board_api"].format(board=target.board), target.vendor)
+            response = self._get(spec["board_api"].format(board=target.board), _failure_key(target))
             if response is not None:
                 try:
                     payload = response.json()
@@ -219,7 +229,7 @@ class Fetcher:
             tenant = target.board.split(".")[0]
             site, path = target.job.split("/job/", 1)
             response = self._get(f"https://{target.board}.myworkdayjobs.com"
-                                 f"/wday/cxs/{tenant}/{site}/job/{path}", "workday")
+                                 f"/wday/cxs/{tenant}/{site}/job/{path}", _failure_key(target))
             if response is not None:
                 try:
                     text = _extract(response.json().get("jobPostingInfo") or {},
@@ -230,7 +240,7 @@ class Fetcher:
             spec = cfg.VENDORS[target.vendor]
             if spec["job_api"]:
                 response = self._get(spec["job_api"].format(board=target.board, job=target.job),
-                                     target.vendor)
+                                     _failure_key(target))
                 if response is not None:
                     try:
                         text = _extract(response.json(), spec["content_keys"])

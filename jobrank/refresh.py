@@ -288,7 +288,8 @@ def fetch_descriptions(conn, limit: int | None = None, verbose: bool = True) -> 
     from jobrank import descriptions
     from jobrank.config import descriptions as descriptions_cfg
 
-    missing = storage.postings_without_description(conn)
+    missing = storage.postings_without_description(
+        conn, max_attempts=descriptions_cfg.MAX_ATTEMPTS_PER_POSTING)
     targets = [(pid, url) for pid, url in missing if descriptions.identify(url)]
     if limit:
         targets = targets[:limit]
@@ -307,6 +308,10 @@ def fetch_descriptions(conn, limit: int | None = None, verbose: bool = True) -> 
         if text:
             storage.set_description(conn, posting_id, text)
             saved += 1
+        else:
+            # Remember the miss. Otherwise the boards with no public endpoint
+            # are re-fetched in full on every single run.
+            storage.record_description_attempt(conn, posting_id)
     conn.commit()
     if verbose:
         print(f"  fetched {saved} job descriptions "

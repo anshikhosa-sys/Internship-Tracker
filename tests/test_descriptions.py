@@ -115,7 +115,7 @@ class TestFetcher:
         for _ in range(8):
             fetcher.description_for("https://jobs.lever.co/acme/"
                                     "5342e333-61b9-406d-bfea-61a687a94d1f")
-        assert fetcher._failures["lever"] <= cfg.MAX_ATTEMPTS_PER_HOST
+        assert fetcher._failures["lever:acme"] <= cfg.MAX_ATTEMPTS_PER_HOST
 
     def test_every_configured_endpoint_is_unauthenticated(self):
         """Invariant 6: nothing in this repo can spend money or need a key."""
@@ -124,3 +124,77 @@ class TestFetcher:
                 if template:
                     assert "key" not in template.lower() and "token=" not in template.lower()
                     assert template.startswith("https://")
+
+
+class TestAttemptTracking:
+    """
+    A posting whose board has no public endpoint must not be re-fetched on
+    every run. Roughly 800 of them here; without this the same permanent
+    failures cost the same hundreds of requests for ever.
+    """
+
+    def _db(self, tmp_path, monkeypatch):
+        from jobrank import config, storage
+        monkeypatch.setattr(config, "DATABASE_PATH", str(tmp_path / "i.db"))
+        conn = storage.connect()
+        from jobrank.sources.base import Posting
+        storage.save_postings(conn, [
+            Posting(company="Acme", role="Software Engineer Intern", category="", location="Remote",
+                    apply_url="https://careers.example.com/1", date_posted="2026-09-15")],
+            storage.now_iso())
+        return conn, storage
+
+    def test_a_posting_is_dropped_after_repeated_failures(self, tmp_path, monkeypatch):
+        conn, storage = self._db(tmp_path, monkeypatch)
+        from jobrank.config import descriptions as cfg
+        (posting_id, _), = storage.postings_without_description(conn, max_attempts=cfg.MAX_ATTEMPTS_PER_POSTING)
+
+        for _ in range(cfg.MAX_ATTEMPTS_PER_POSTING):
+            storage.record_description_attempt(conn, posting_id)
+        assert storage.postings_without_description(
+            conn, max_attempts=cfg.MAX_ATTEMPTS_PER_POSTING) == []
+
+        # ...but it is still genuinely missing a description.
+        assert len(storage.postings_without_description(conn)) == 1
+
+    def test_failures_can_be_forgotten_when_a_board_returns(self, tmp_path, monkeypatch):
+        conn, storage = self._db(tmp_path, monkeypatch)
+        (posting_id, _), = storage.postings_without_description(conn)
+        for _ in range(5):
+            storage.record_description_attempt(conn, posting_id)
+        storage.clear_description_attempts(conn)
+        assert len(storage.postings_without_description(conn, max_attempts=3)) == 1
+
+
+def test_one_bad_board_does_not_disable_its_whole_vendor():
+    """
+    Failures are counted per board, not per vendor. Keyed by vendor, a single
+    Workday tenant returning 404s abandoned all 799 Workday postings in one
+    run — roughly 700 of which fetch perfectly well. Employers are
+    independent, so their failure counters have to be too.
+    """
+    import requests as _requests
+
+    class OneBadTenant:
+        headers = {}
+        def __init__(self):
+            self.seen = []
+        def get(self, url, **kwargs):
+            self.seen.append(url)
+            if "broken" in url:
+                raise _requests.RequestException("404")
+            raise _requests.RequestException("also down")   # count, don't succeed
+
+    session = OneBadTenant()
+    fetcher = descriptions.Fetcher(session=session, delay=0)
+    broken = "https://broken.wd1.myworkdayjobs.com/en-US/S/job/City/Role_1"
+    healthy = "https://healthy.wd1.myworkdayjobs.com/en-US/S/job/City/Role_2"
+
+    for _ in range(5):
+        fetcher.description_for(broken)
+    attempts_on_broken = len(session.seen)
+
+    fetcher.description_for(healthy)
+    assert len(session.seen) > attempts_on_broken, "healthy tenant was never tried"
+    assert fetcher._failures["workday:broken.wd1"] >= cfg.MAX_ATTEMPTS_PER_HOST
+    assert fetcher._failures.get("workday:healthy.wd1", 0) == 1

@@ -1069,13 +1069,62 @@ def set_description(conn, posting_id: str, description: str) -> None:
     conn.execute("UPDATE postings SET description = ? WHERE id = ?", (description, posting_id))
 
 
-def postings_without_description(conn, limit: int | None = None) -> list[tuple[str, str]]:
-    """(id, apply_url) for active postings we have no description for."""
-    sql = ("SELECT id, apply_url FROM postings "
-           "WHERE is_active = 1 AND COALESCE(description, '') = '' AND COALESCE(apply_url, '') != ''")
+_DESCRIPTION_ATTEMPTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS description_attempts (
+    posting_id   TEXT PRIMARY KEY,
+    attempts     INTEGER NOT NULL DEFAULT 0,
+    last_tried   TEXT
+);
+"""
+
+
+def postings_without_description(conn, limit: int | None = None,
+                                 max_attempts: int | None = None) -> list[tuple[str, str]]:
+    """
+    (id, apply_url) for active postings we have no description for, skipping
+    the ones we have already failed on `max_attempts` times.
+
+    Without that exclusion every refresh re-fetches every posting whose board
+    has no public endpoint — roughly 800 of them here — so the same failures
+    cost the same hundreds of requests every run, for ever. A posting that has
+    refused three times is not going to yield on the fourth.
+    """
+    conn.executescript(_DESCRIPTION_ATTEMPTS_SCHEMA)
+    sql = ("SELECT p.id, p.apply_url FROM postings p "
+           "LEFT JOIN description_attempts a ON a.posting_id = p.id "
+           "WHERE p.is_active = 1 AND COALESCE(p.description, '') = '' "
+           "AND COALESCE(p.apply_url, '') != ''")
+    params: list = []
+    if max_attempts is not None:
+        sql += " AND COALESCE(a.attempts, 0) < ?"
+        params.append(int(max_attempts))
     if limit:
         sql += f" LIMIT {int(limit)}"
-    return [(row[0], row[1]) for row in conn.execute(sql)]
+    return [(row[0], row[1]) for row in conn.execute(sql, params)]
+
+
+def record_description_attempt(conn, posting_id: str) -> None:
+    """Count a failed description fetch, so it is not retried for ever."""
+    conn.executescript(_DESCRIPTION_ATTEMPTS_SCHEMA)
+    conn.execute(
+        """
+        INSERT INTO description_attempts (posting_id, attempts, last_tried)
+        VALUES (?, 1, ?)
+        ON CONFLICT(posting_id) DO UPDATE SET
+            attempts = description_attempts.attempts + 1,
+            last_tried = excluded.last_tried
+        """,
+        (posting_id, now_iso()),
+    )
+
+
+def clear_description_attempts(conn, posting_id: str | None = None) -> None:
+    """Forget past failures, so a board that has come back online is retried."""
+    conn.executescript(_DESCRIPTION_ATTEMPTS_SCHEMA)
+    if posting_id:
+        conn.execute("DELETE FROM description_attempts WHERE posting_id = ?", (posting_id,))
+    else:
+        conn.execute("DELETE FROM description_attempts")
 
 
 # =============================================================================
