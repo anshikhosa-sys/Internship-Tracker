@@ -91,10 +91,13 @@ def _reject_cross_site_posts():
 PAGE_SIZE = 25
 
 SIZE_LABELS = {"large": "Large company", "mid": "Mid-size", "startup": "Startup / small"}
+# Labels describe what is MEASURED, not what anyone wants. The role factor was
+# once labelled "Kind of role you want", which survived the removal of stated
+# preferences and made an evidence-based number read like a stated one.
 FACTOR_LABELS = {
-    "skills": "Skills you have",
+    "skills": "Skills your résumé proves",
     "seniority": "Right level for you",
-    "role": "Kind of role you want",
+    "role": "Work your résumé shows",
     "freshness": "Still open",
     "semantic": "Résumé similarity",
 }

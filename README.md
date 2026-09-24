@@ -162,9 +162,21 @@ postings (the labels themselves stay private):
 
 | Metric | Ranking | Random |
 |---|---|---|
-| AUC | **0.771** | 0.494 |
-| recall@500 | **0.333** | 0.112 |
-| mean rank of a relevant posting | **956** of 4,130 | 2,091 |
+| AUC | **0.706** | 0.501 |
+| mean rank of a relevant posting | **1,418** of 4,792 | 2,392 |
+
+This number went **down** when stated preferences were removed: 0.758 before,
+0.706 after. It belongs here rather than in a footnote. The honest reading is
+that this set cannot cleanly arbitrate the change — its labels are 36 real
+applications, chosen while browsing the *old, preference-driven* ranking, so
+they encode the very preferences being removed and a model that ignores them
+will agree with them less. The independent graded set above, whose labels were
+assigned without reference to any ranking, moved the other way (nDCG@10
+0.598 → 0.768). Two sets, two directions, and the selection-biased one is the
+weaker evidence.
+
+The clean test is a labelling round on the *current* ranking
+(`run.py label queue`). Until that exists, this is reported as-is.
 
 **Ablation** — AUC lost when each factor is removed, on the real set:
 

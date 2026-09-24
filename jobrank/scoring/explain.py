@@ -15,7 +15,7 @@ from jobrank.scoring.engine import ScoreResult
 LABELS = {
     "skills": "Skill overlap",
     "seniority": "Seniority fit",
-    "role": "Role affinity",
+    "role": "Role evidence",
     "freshness": "Freshness",
     "semantic": "Semantic similarity",
 }

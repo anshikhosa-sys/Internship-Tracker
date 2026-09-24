@@ -29,6 +29,22 @@ def isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(llm_cfg, "CACHE_PATH", str(tmp_path / "llm.db"))
     monkeypatch.setattr(llm_cfg, "BACKEND", "rules")
     monkeypatch.setattr(profile_cfg, "PROFILES_DIR", str(tmp_path / "profiles"))
+
+    # The vector store, the market cache and both databases, too. Without
+    # these a test run reads and writes the real .cache/ and the real
+    # internships.db — which fails outright the moment a dashboard or an
+    # evaluation run holds the write lock, and which is how a "database is
+    # locked" failure ends up looking like a code defect.
+    from jobrank import config as app_config
+    from jobrank.config import market as market_cfg
+    from jobrank.config import semantic as semantic_cfg
+
+    monkeypatch.setattr(semantic_cfg, "VECTOR_DB_PATH", str(tmp_path / "vectors.db"))
+    monkeypatch.setattr(semantic_cfg, "BACKEND", "hashing")
+    monkeypatch.setattr(market_cfg, "CACHE_PATH", str(tmp_path / "market.json"))
+    monkeypatch.setattr(app_config, "DATABASE_PATH", str(tmp_path / "internships.db"))
+    monkeypatch.setattr(app_config, "APPLICATIONS_PATH", str(tmp_path / "applications.db"))
+    monkeypatch.setattr(app_config, "APPLICATIONS_EXPORT", str(tmp_path / "applications.json"))
     llm.reset_probe()
     yield tmp_path
     llm.reset_probe()

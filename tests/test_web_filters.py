@@ -36,3 +36,24 @@ def test_coop_keywords_match_how_the_corpus_writes_them():
 
     # ...and an ordinary internship must not.
     assert not textmatch.find_all("Software Engineer Intern", settings.COOP_KEYWORDS)
+
+
+def test_no_factor_label_claims_to_read_a_preference():
+    """
+    Labels must describe what is measured. "Kind of role you want" outlived the
+    removal of stated preferences and made an evidence-based number read as a
+    stated one — the user reasonably concluded the platform still asked.
+    """
+    from jobrank.web import app as web_app
+    from jobrank.scoring import explain
+    for label in list(web_app.FACTOR_LABELS.values()) + list(explain.LABELS.values()):
+        assert "you want" not in label.lower()
+        assert "prefer" not in label.lower()
+
+
+def test_a_profile_cannot_carry_a_stated_wish():
+    """The storage format has nowhere to put one."""
+    from jobrank.models import Profile
+    fields = set(Profile.__dataclass_fields__)
+    for gone in ("preferences", "target_families", "factor_weights"):
+        assert gone not in fields

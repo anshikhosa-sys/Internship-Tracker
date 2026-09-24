@@ -40,7 +40,7 @@ def test_explain_shows_the_whole_calculation():
     assert "Acme — Infrastructure Engineer Intern" in text
     assert "rank 3 of 99" in text
     assert "× 100 =" in text
-    for label in ["Skill overlap", "Seniority fit", "Role affinity", "Freshness"]:
+    for label in ["Skill overlap", "Seniority fit", "Role evidence", "Freshness"]:
         assert label in text
     assert "(no data: neutral)" in text          # this posting names no skills
     assert "Biggest drag:" in text
@@ -52,7 +52,7 @@ def test_explain_names_the_weakest_factor():
     profile = make_profile(role_affinity={"infrastructure": 0.04})
     posting = make_posting(role="Infrastructure Engineer Intern")
     result = engine.score_all(profile, [posting], semantic=False, use_market=False)[0]
-    assert "Biggest drag: Role affinity" in explain(profile, posting, result)
+    assert "Biggest drag: Role evidence" in explain(profile, posting, result)
 
 
 @pytest.mark.parametrize("query,expected", [
