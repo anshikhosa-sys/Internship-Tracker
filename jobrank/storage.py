@@ -166,15 +166,25 @@ CREATE TABLE IF NOT EXISTS applications (
     status      TEXT DEFAULT '',
     applied_at  TEXT DEFAULT ''
 );
+"""
 
--- Append-only ledger for jobrank/workflow: every legal stage change, with
--- when it happened. `applications.status` above only ever holds the current
--- stage as a bare string, so it can't answer "how did this get here" and
--- nothing stops it being overwritten to something that skips steps. This
--- table doesn't replace it and nothing rewrites it after the insert; a bad
--- transition can add at most one wrong row, never touch the history behind
--- it. See jobrank/workflow/states.py.
-CREATE TABLE IF NOT EXISTS application_events (
+# Append-only ledger for jobrank/workflow: every legal stage change, with when
+# it happened. `applications.status` above only ever holds the current stage
+# as a bare string, so it can't answer "how did this get here" and nothing
+# stops it being overwritten to something that skips steps. This table
+# doesn't replace it and nothing ever rewrites a row after the insert; a bad
+# transition can add at most one wrong row, never touch the history behind
+# it. See jobrank/workflow/states.py.
+#
+# Deliberately NOT folded into APPLICATIONS_SCHEMA above: _attach_applications()
+# re-qualifies that string's one `applications` table as `appdb.applications`
+# with a literal find/replace, and doesn't know about any other table name in
+# it. An unqualified CREATE TABLE run over that same connection would default
+# to `main` — i.e. postings.db, the database this table must never land in
+# (invariant 13). _ensure_application_events() below qualifies it explicitly
+# instead, whichever of the two connections it's asked to run on.
+APPLICATION_EVENTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS {schema}.application_events (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     posting_id   TEXT NOT NULL,
     from_status  TEXT NOT NULL,
@@ -182,7 +192,7 @@ CREATE TABLE IF NOT EXISTS application_events (
     occurred_at  TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_application_events_posting
+CREATE INDEX IF NOT EXISTS {schema}.idx_application_events_posting
     ON application_events(posting_id, occurred_at);
 """
 
@@ -1066,3 +1076,120 @@ def postings_without_description(conn, limit: int | None = None) -> list[tuple[s
     if limit:
         sql += f" LIMIT {int(limit)}"
     return [(row[0], row[1]) for row in conn.execute(sql)]
+
+
+# =============================================================================
+# Application workflow events (jobrank/workflow) — an append-only ledger
+# =============================================================================
+#
+# Everything below only INSERTs into application_events, never UPDATEs or
+# DELETEs a row once written. jobrank.workflow.states is the only caller that
+# should reach these after checking a move is legal; calling them directly
+# skips that check.
+
+def _applications_schema(conn) -> str:
+    """
+    `appdb` if this connection came from connect() (postings.db with
+    applications.db ATTACHed), `main` if it came from connect_applications()
+    directly (the only database on the connection). Needed because an
+    unqualified CREATE TABLE run on the attached connection would silently
+    default to `main` — postings.db — which is exactly where application
+    data must never live (invariant 13).
+    """
+    names = {row[1] for row in conn.execute("PRAGMA database_list")}
+    return "appdb" if "appdb" in names else "main"
+
+
+def _ensure_application_events(conn) -> str:
+    """Create application_events in the same file as `applications` if it isn't there yet, and return which schema name it lives under on this connection."""
+    schema = _applications_schema(conn)
+    conn.executescript(APPLICATION_EVENTS_SCHEMA.format(schema=schema))
+    conn.commit()
+    return schema
+
+
+def record_application_event(
+    conn, posting_id: str, from_status: str, to_status: str, occurred_at: str | None = None
+) -> None:
+    """
+    Append one stage change. `occurred_at` defaults to now so a live
+    transition is timestamped automatically; migration passes an explicit
+    past time so a backfilled row doesn't claim to have just happened.
+    """
+    schema = _ensure_application_events(conn)
+    conn.execute(
+        f"INSERT INTO {schema}.application_events "
+        "(posting_id, from_status, to_status, occurred_at) VALUES (?, ?, ?, ?)",
+        (posting_id, from_status, to_status, occurred_at or now_iso()),
+    )
+    conn.commit()
+
+
+def application_event_history(conn, posting_id: str) -> list[dict]:
+    """Every recorded stage change for one posting, oldest first — the answer `applications.status` alone can't give."""
+    schema = _ensure_application_events(conn)
+    rows = conn.execute(
+        f"SELECT posting_id, from_status, to_status, occurred_at "
+        f"FROM {schema}.application_events WHERE posting_id = ? "
+        "ORDER BY occurred_at ASC, id ASC",
+        (posting_id,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def latest_application_events(conn) -> dict:
+    """posting_id -> its most recent recorded event, for every posting with at least one. One query instead of one per posting when scanning a whole pipeline."""
+    schema = _ensure_application_events(conn)
+    rows = conn.execute(
+        f"""
+        SELECT e.posting_id, e.from_status, e.to_status, e.occurred_at
+        FROM {schema}.application_events e
+        JOIN (
+            SELECT posting_id, MAX(id) AS max_id
+            FROM {schema}.application_events
+            GROUP BY posting_id
+        ) latest ON latest.max_id = e.id
+        """
+    ).fetchall()
+    return {row["posting_id"]: dict(row) for row in rows}
+
+
+def migrate_application_events(conn) -> int:
+    """
+    Seed application_events for applications that predate it.
+
+    Every application in `applications` with a status was set through the
+    existing set_status(), which never wrote a timestamped event. This adds
+    ONE synthetic event per such row — reading its current status and
+    applied_at, never touching the row itself — so jobrank.workflow.states
+    has somewhere to start instead of treating a pre-existing application as
+    though it were never applied to. Idempotent: a posting that already has
+    an event (real or previously migrated) is left alone, so calling this
+    again once real transitions exist is a no-op for those rows.
+    """
+    from jobrank.config import workflow as workflow_config
+
+    schema = _ensure_application_events(conn)
+    rows = conn.execute(
+        f"""
+        SELECT posting_id, status, applied_at, updated_at
+        FROM {schema}.applications
+        WHERE status != ''
+        AND posting_id NOT IN (SELECT DISTINCT posting_id FROM {schema}.application_events)
+        """
+    ).fetchall()
+
+    migrated = 0
+    for row in rows:
+        to_status = workflow_config.LEGACY_STATUS_MAP.get(row["status"])
+        if to_status is None:
+            continue
+        occurred_at = row["applied_at"] or row["updated_at"] or now_iso()
+        conn.execute(
+            f"INSERT INTO {schema}.application_events "
+            "(posting_id, from_status, to_status, occurred_at) VALUES (?, ?, ?, ?)",
+            (row["posting_id"], workflow_config.DISCOVERED, to_status, occurred_at),
+        )
+        migrated += 1
+    conn.commit()
+    return migrated

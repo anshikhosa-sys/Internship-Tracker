@@ -31,6 +31,13 @@ def register(builder: Callable[[argparse._SubParsersAction], None]) -> Callable:
     return builder
 
 
+# `jobrank/workflow` owns its own subcommand; this is the one line that
+# wires it in, using the registration hook above instead of editing
+# build_parser()'s body.
+from jobrank.workflow.followups import build_followups_parser  # noqa: E402
+register(build_followups_parser)
+
+
 # ---------------------------------------------------------------------------
 # profile
 # ---------------------------------------------------------------------------
