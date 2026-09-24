@@ -39,7 +39,6 @@ import pytest
 
 from jobrank import config, ranking, storage
 from jobrank.config import companies
-from jobrank.models import Preferences
 from jobrank.profile import store
 from jobrank.sources.base import Posting
 
@@ -106,7 +105,7 @@ def dashboard_client(tmp_path, monkeypatch, example_resume_text):
 
     from jobrank.resume import parser as resume_parser
     resume = resume_parser.parse_text(example_resume_text)
-    store.save("tester", resume, Preferences())
+    store.save("tester", resume)
 
     conn = storage.connect()
     storage.record_run(conn, storage.now_iso(), 0, 0)

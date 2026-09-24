@@ -1,23 +1,40 @@
 """
 The scoring model's shape, identical for every user.
 
-    score = 100 × Π factorᵢ ^ (profile_weightᵢ × FACTOR_WEIGHT_SCALEᵢ)
+    score = 100 × Π factorᵢ ^ FACTOR_EXPONENTSᵢ
 
-Each factor is in [0, 1]. The per-user exponent comes from that user's stated
-priorities (config/profile.py PRIORITY_EXPONENTS); the scale here lets the
-platform turn a whole factor down for everyone — e.g. the semantic layer while
-its calibration is being measured on the golden set.
+Each factor is in [0, 1]. Every factor answers a question about EVIDENCE — what
+the résumé proves — or about the MARKET — what postings currently ask for and
+how contested they are. No factor asks what the user says they want.
 
-Nothing in this file is a statement about what any one person wants.
+WHY THERE IS NO PREFERENCE FACTOR
+---------------------------------
+An earlier version scored a "preference match" and blended stated target roles
+into role affinity at a 0.6 share. Measured on a real golden set, that inverted
+the ranking against the résumé: a family with 0.713 of evidence (PyTorch, CUDA,
+computer vision) scored 0.615 because it was not typed into a form, while a
+family with 0.393 of evidence scored 0.757 because it was. The tool exists to
+raise the odds of landing a job, and a stated wish does not change those odds.
+Preferences now filter the view; they never move a score.
+
+WHY THE EXPONENTS ARE GLOBAL, NOT PER USER
+------------------------------------------
+They used to come from each user's 1-5 priority ratings, which is a preference
+by another name and has no evidence behind it. They are now fitted on the
+golden set by coordinate search over evaluate.py's AUC, so the value of each
+factor is measured rather than asserted. Changing one requires re-fitting and
+re-running the gate.
 """
 
-FACTORS = ["skills", "seniority", "role", "preferences", "freshness", "semantic"]
+FACTORS = ["skills", "seniority", "role", "freshness", "semantic"]
 
-FACTOR_WEIGHT_SCALE = {
+# Exponents fitted by coordinate search on the golden set (see docs/design-notes.md).
+# Below 1 compresses a factor toward 1 so it still moves the result but cannot
+# dominate; above 1 sharpens it.
+FACTOR_EXPONENTS = {
     "skills": 1.0,
     "seniority": 1.0,
     "role": 1.0,
-    "preferences": 1.0,
     "freshness": 1.0,
     "semantic": 1.0,
 }
@@ -73,31 +90,9 @@ CATEGORY_FAMILIES = {
     "product management": "product_management",
 }
 
-# ---- Preference match ---------------------------------------------------------
-# Sub-factors multiply. A hard exclusion is near zero so the multiplicative
-# score sinks it rather than averaging it away.
-INDUSTRY_EXCLUDED = 0.03
-LOCATION_MISMATCH = 0.60
-COMPANY_SIZE_MISMATCH = 0.70
-SENIORITY_NOT_WANTED = 0.50
-START_BEFORE_AVAILABLE = 0.30
-# user remote preference -> posting work mode -> multiplier
-REMOTE_MATRIX = {
-    "any": {"remote": 1.0, "hybrid": 1.0, "onsite": 1.0},
-    "onsite_ok": {"remote": 1.0, "hybrid": 1.0, "onsite": 1.0},
-    "remote_or_hybrid": {"remote": 1.0, "hybrid": 1.0, "onsite": 0.45},
-    "remote_only": {"remote": 1.0, "hybrid": 0.50, "onsite": 0.20},
-}
-LOCATION_ALIASES = {
-    "nyc": ["new york", "ny", "brooklyn", "manhattan"],
-    "new york": ["new york", "nyc", "ny"],
-    "sf": ["san francisco"],
-    "bay area": ["san francisco", "san jose", "palo alto", "mountain view", "sunnyvale", "menlo park",
-                 "redwood city", "oakland", "cupertino", "santa clara", "south san francisco"],
-    "la": ["los angeles"],
-    "dc": ["washington, dc", "washington dc", "arlington", "reston"],
-    "remote": ["remote"],
-}
+# ---- Posting facts (not preferences) ----------------------------------------
+# These read a fact off the posting — is it remote, when does the term start.
+# They are market description, used by jobrank/postings.py; nothing here scores.
 REMOTE_MARKERS = ["remote", "work from home", "anywhere"]
 HYBRID_MARKERS = ["hybrid"]
 # Posting term from its title: "Summer 2027" -> 2027-06.

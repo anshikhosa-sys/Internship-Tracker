@@ -27,7 +27,7 @@ import os
 import pytest
 
 from jobrank import config, letters
-from jobrank.models import Education, ParsedResume, Preferences
+from jobrank.models import Education, ParsedResume
 from jobrank.profile import store
 
 
@@ -146,7 +146,7 @@ def test_near_empty_profile_is_rejected_not_used(monkeypatch, tmp_path):
         education=[Education(institution="X", degree="BS", level="bachelor")],
         content_hash="h",
     )
-    store.save("thin", thin, Preferences())
+    store.save("thin", thin)
 
     with pytest.raises(letters.LetterError) as exc:
         letters.load_profile("thin")
@@ -161,7 +161,7 @@ def test_real_profile_loads_and_formats(monkeypatch, tmp_path, example_resume_te
 
     _point_at_temp_db(monkeypatch, tmp_path)
     resume = parser.parse_text(example_resume_text)
-    store.save("tester", resume, Preferences())
+    store.save("tester", resume)
 
     text = letters.load_profile("tester")
     assert len(text) >= 200, "a real résumé clears the content floor"

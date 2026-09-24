@@ -57,17 +57,17 @@ def load_profile(user_id: str | None = None) -> str:
         raise LetterError("No profile exists yet. Create one at /profile or with:\n"
                           "    python3 run.py profile create --id <id> --resume <file>")
     try:
-        resume, preferences = store.load_inputs(user_id)
+        resume = store.load_resume(user_id)
     except store.ProfileNotFound as exc:
         raise LetterError(str(exc)) from exc
-    text = format_resume(resume, preferences)
+    text = format_resume(resume)
     if len(text) < 200:
         raise LetterError(f"Profile '{user_id}' has almost no experience in it. These prompts are only "
                           "as specific as the résumé — upload a fuller one first.")
     return text
 
 
-def format_resume(resume, preferences=None) -> str:
+def format_resume(resume) -> str:
     lines = []
     if resume.education:
         lines.append("EDUCATION")
@@ -90,10 +90,7 @@ def format_resume(resume, preferences=None) -> str:
     if resume.skills or resume.other_skills:
         lines.append("\nSKILLS")
         lines.append(", ".join(resume.skills + resume.other_skills))
-    if preferences and preferences.target_roles:
-        lines.append("\nTARGET ROLES")
-        lines.append(", ".join(preferences.target_roles))
-    return "\n".join(lines).strip()
+    return "\n".join(lines)
 
 
 def _guidance(role_family: str) -> dict:

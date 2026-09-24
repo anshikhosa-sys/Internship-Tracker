@@ -1,10 +1,9 @@
 """
 Command-line interface: `python3 run.py ...`.
 
-    run.py profile create --id alex --resume resume.pdf [--prefs prefs.json]
+    run.py profile create --id alex --resume resume.pdf
     run.py profile show --id alex
     run.py profile list
-    run.py prefs --id alex [--file prefs.json]
     run.py label seed|add|remove|list|queue --profile alex
     run.py --explain <posting_id> [--profile alex]
     run.py --stats
@@ -20,8 +19,6 @@ import json
 import sys
 from typing import Callable
 
-from jobrank.models import Preferences
-from jobrank.profile import preferences as prefs_mod
 from jobrank.profile import store
 from jobrank.resume import parser as resume_parser
 
@@ -34,39 +31,23 @@ def register(builder: Callable[[argparse._SubParsersAction], None]) -> Callable:
     return builder
 
 
-def _load_prefs_file(path: str) -> Preferences:
-    with open(path, encoding="utf-8") as handle:
-        return prefs_mod.validate(json.load(handle))
-
-
 # ---------------------------------------------------------------------------
 # profile
 # ---------------------------------------------------------------------------
 
 def cmd_profile_create(args: argparse.Namespace) -> int:
+    """A résumé is the whole profile. Nothing is asked about what you want."""
     try:
         store.validate_user_id(args.id)
         resume = resume_parser.parse_file(args.resume)
-        if args.prefs:
-            preferences = _load_prefs_file(args.prefs)
-        elif sys.stdin.isatty():
-            print("No --prefs file given; answer a few questions (Enter keeps the default).")
-            preferences = prefs_mod.prompt()
-        else:
-            preferences = Preferences()
     except (resume_parser.ResumeReadError, resume_parser.ResumeParseError) as exc:
         print(f"Could not build a profile: {exc}", file=sys.stderr)
-        return 2
-    except prefs_mod.PreferenceError as exc:
-        print("Preferences are invalid:", file=sys.stderr)
-        for problem in exc.problems:
-            print(f"  - {problem}", file=sys.stderr)
         return 2
     except (ValueError, OSError) as exc:
         print(f"Could not build a profile: {exc}", file=sys.stderr)
         return 2
 
-    profile = store.save(args.id, resume, preferences)
+    profile = store.save(args.id, resume)
     print(f"Saved {store.path_for(args.id)} (extracted by {resume.extractor}).")
     _print_profile(profile, resume.warnings)
     return 0
@@ -75,7 +56,7 @@ def cmd_profile_create(args: argparse.Namespace) -> int:
 def cmd_profile_show(args: argparse.Namespace) -> int:
     try:
         profile = store.load(args.id)
-        resume, _ = store.load_inputs(args.id)
+        resume = store.load_resume(args.id)
     except (store.ProfileNotFound, ValueError) as exc:
         print(exc, file=sys.stderr)
         return 2
@@ -92,20 +73,6 @@ def cmd_profile_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_prefs(args: argparse.Namespace) -> int:
-    try:
-        _, existing = store.load_inputs(args.id)
-        preferences = _load_prefs_file(args.file) if args.file else prefs_mod.prompt(existing)
-    except (store.ProfileNotFound, ValueError, OSError) as exc:
-        problems = getattr(exc, "problems", None)
-        print("\n".join(f"  - {p}" for p in problems) if problems else exc, file=sys.stderr)
-        return 2
-    profile = store.update_preferences(args.id, preferences)
-    print(f"Updated preferences for {args.id}.")
-    _print_profile(profile, [])
-    return 0
-
-
 def _print_profile(profile, warnings: list[str]) -> None:
     s = profile.seniority
     print(f"\nProfile: {profile.user_id}")
@@ -116,7 +83,6 @@ def _print_profile(profile, warnings: list[str]) -> None:
     print(f"  Skills ({len(profile.skills)})   " + ", ".join(f"{k} {v:.2f}" for k, v in top_skills))
     top_roles = sorted(profile.role_affinity.items(), key=lambda kv: -kv[1])[:6]
     print("  Role affinity " + ", ".join(f"{k} {v:.2f}" for k, v in top_roles))
-    print("  Factor weights " + ", ".join(f"{k}^{v}" for k, v in profile.factor_weights.items()))
     unmatched = profile.evidence.get("role_affinity", {}).get("_unmatched_targets")
     for note in list(warnings) + ([f"Target roles not recognized: {', '.join(unmatched)}"] if unmatched else []):
         print(f"  ! {note}")
@@ -281,18 +247,12 @@ def build_parser() -> argparse.ArgumentParser:
     create = psub.add_parser("create", help="parse a résumé and save a profile")
     create.add_argument("--id", required=True)
     create.add_argument("--resume", required=True, help="PDF, DOCX, TXT or Markdown")
-    create.add_argument("--prefs", help="JSON preferences file (otherwise asked interactively)")
     create.set_defaults(func=cmd_profile_create)
     show = psub.add_parser("show", help="print a derived profile")
     show.add_argument("--id", required=True)
     show.add_argument("--json", action="store_true")
     show.set_defaults(func=cmd_profile_show)
     psub.add_parser("list", help="list profile ids").set_defaults(func=cmd_profile_list)
-
-    prefs = sub.add_parser("prefs", help="update a profile's preferences")
-    prefs.add_argument("--id", required=True)
-    prefs.add_argument("--file", help="JSON preferences file (otherwise asked interactively)")
-    prefs.set_defaults(func=cmd_prefs)
 
     label = sub.add_parser("label", help="manage golden relevance labels for evaluation")
     lsub = label.add_subparsers(dest="action", required=True)
@@ -317,9 +277,77 @@ def build_parser() -> argparse.ArgumentParser:
     queue.add_argument("-n", type=int, default=25)
     queue.set_defaults(func=cmd_label_queue)
 
+    describe = sub.add_parser("describe", help="fetch real job descriptions from job boards")
+    describe.add_argument("-n", type=int, default=None,
+                          help="stop after this many postings (default: every reachable one)")
+    describe.set_defaults(func=cmd_describe)
+
+    market = sub.add_parser("market", help="what the current corpus demands, and how you match it")
+    market.add_argument("--profile", default=None, help="score a profile against the market")
+    market.set_defaults(func=cmd_market)
+
     for builder in _registry:
         builder(sub)
     return parser
+
+
+def cmd_describe(args) -> int:
+    """
+    Sources give a title and a link; the description lives on the job board.
+    Without it the skills factor is matching a résumé against seven words.
+    """
+    from jobrank import refresh, storage
+
+    conn = storage.connect()
+    before = len(storage.postings_without_description(conn))
+    saved = refresh.fetch_descriptions(conn, limit=args.n)
+    after = len(storage.postings_without_description(conn))
+    total = len(storage.load_postings(conn))
+    print(f"Fetched {saved} descriptions ({before} missing before, {after} after).")
+    print(f"Coverage: {total - after}/{total} active postings = {100 * (total - after) / max(1, total):.1f}%")
+    return 0
+
+
+def cmd_market(args) -> int:
+    """What the live corpus asks for — the other half of the scoring model."""
+    from jobrank import market as market_model
+    from jobrank import storage
+    from jobrank.config import taxonomy
+
+    conn = storage.connect()
+    rows = storage.load_postings(conn)
+    model = market_model.build(rows)
+    print(f"{model.total_postings} active postings, {model.described_postings} with a real description "
+          f"({100 * model.described_postings / max(1, model.total_postings):.0f}%)\n")
+
+    print("Most in demand (share of postings naming it):")
+    ranked = sorted(model.skill_postings.items(), key=lambda kv: -kv[1])[:12]
+    for skill, count in ranked:
+        print(f"  {skill:<22} {count:5d}  {100 * count / model.total_postings:5.1f}%   rarity x{model.idf(skill):.2f}")
+
+    if args.profile:
+        from jobrank.profile import store
+        profile = store.load(args.profile)
+        if profile is None:
+            print(f"\nNo profile '{args.profile}'.")
+            return 2
+        affinity = model.affinity(profile.skills)
+        print(f"\nHow {args.profile}'s résumé covers what each role family demands:")
+        for family, value in sorted(affinity.items(), key=lambda kv: -kv[1])[:10]:
+            label = taxonomy.ROLE_FAMILIES[family]["label"]
+            evidence = profile.role_affinity.get(family, 0.0)
+            print(f"  {label:<34} market {value:.0%}   résumé evidence {evidence:.2f}")
+        gaps = sorted(
+            ((s, sh) for f in affinity for s, sh in model.demand(f).items()
+             if profile.skills.get(s, 0) == 0 and model.idf(s) > 1.0),
+            key=lambda kv: -kv[1])
+        seen, top = set(), []
+        for skill, share in gaps:
+            if skill not in seen:
+                seen.add(skill); top.append(skill)
+        if top:
+            print("\nMost valuable skills you do not have yet: " + ", ".join(top[:8]))
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

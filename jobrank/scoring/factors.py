@@ -13,7 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from jobrank import postings, textmatch
+from jobrank import postings
+from jobrank.config import market as market_cfg
 from jobrank.config import scoring as cfg
 from jobrank.config import taxonomy
 from jobrank.models import Profile
@@ -45,12 +46,22 @@ def posting_skills(posting, enrichment: dict | None) -> list[str]:
     return sorted(found)
 
 
-def skills(posting, profile: Profile, enrichment: dict | None = None) -> FactorResult:
+def skills(posting, profile: Profile, enrichment: dict | None = None, market=None) -> FactorResult:
+    """
+    How much of what this posting asks for the résumé can actually show.
+
+    Skills are weighted by how rare they are in the current corpus. Counting
+    them equally means mostly counting Python: almost every posting asks for
+    it, so matching it says nothing, while matching CUDA says a great deal.
+    Without a market model every weight is 1 and this is a plain average.
+    """
     wanted = posting_skills(posting, enrichment)
     if not wanted:
         return FactorResult("skills", cfg.SKILLS_NEUTRAL, ["Posting names no specific skills"], neutral=True)
     have = {s: profile.skills.get(s, 0.0) for s in wanted}
-    coverage = sum(have.values()) / len(wanted)
+    weights = {s: (market.idf(s) if market else 1.0) for s in wanted}
+    total = sum(weights.values()) or 1.0
+    coverage = sum(have[s] * weights[s] for s in wanted) / total
     value = cfg.SKILLS_FLOOR + (1 - cfg.SKILLS_FLOOR) * coverage
     matched = [s for s, w in have.items() if w > 0]
     missing = [s for s, w in have.items() if w == 0]
@@ -59,8 +70,13 @@ def skills(posting, profile: Profile, enrichment: dict | None = None) -> FactorR
         reasons.append("Your résumé shows: " + ", ".join(f"{s} ({have[s]:.2f})" for s in matched))
     if missing:
         reasons.append("Not on your résumé: " + ", ".join(missing))
-    return FactorResult("skills", _clamp(value), reasons, detail={"coverage": round(coverage, 3),
-                                                                    "matched": matched, "missing": missing})
+    if market and missing:
+        scarce = max(missing, key=lambda s: weights[s])
+        if weights[scarce] > 1.0:
+            reasons.append(f"The gap that costs most here is {scarce} — few candidates have it")
+    return FactorResult("skills", _clamp(value), reasons,
+                        detail={"coverage": round(coverage, 3), "matched": matched, "missing": missing,
+                                "idf_weighted": bool(market)})
 
 
 # ---------------------------------------------------------------------------
@@ -115,86 +131,54 @@ def seniority(posting, profile: Profile, enrichment: dict | None = None) -> Fact
 
 
 # ---------------------------------------------------------------------------
-# 3. Role affinity
+# 3. Role affinity — what the résumé proves the user does, not what they asked for
 # ---------------------------------------------------------------------------
 
-def role(posting, profile: Profile) -> FactorResult:
+def role(posting, profile: Profile, market=None, market_affinity: dict | None = None) -> FactorResult:
+    """
+    Whether the résumé is evidence for this kind of work.
+
+    Two sources, blended. Résumé evidence is direct proof — you held the title,
+    you used the tools the family is defined by. Market overlap is transfer:
+    what these postings actually demand, learned from the corpus, matched
+    against what the résumé shows. Evidence leads, because it is the stronger
+    claim, but transfer stops a hand-written keyword list from being the only
+    say. Data engineering's list was all specialist tools, so a Python-and-SQL
+    résumé floored at 0.05 and real applications sank to rank ~4,000.
+
+    Nothing here reads a stated target. A family the résumé proves outranks one
+    the user merely named.
+    """
     families = postings.role_families(posting)
     if not families:
         return FactorResult("role", cfg.ROLE_UNKNOWN, ["Role type not recognized from the title"], neutral=True,
                             detail={"families": []})
-    best = max(families, key=lambda f: profile.role_affinity.get(f, 0.0))
-    value = profile.role_affinity.get(best, cfg.ROLE_UNKNOWN)
+
+    def affinity_of(family: str) -> float:
+        evidence = profile.role_affinity.get(family, cfg.ROLE_UNKNOWN)
+        demand = (market_affinity or {}).get(family)
+        if demand is None:
+            return evidence
+        return market_cfg.EVIDENCE_SHARE * evidence + (1 - market_cfg.EVIDENCE_SHARE) * demand
+
+    best = max(families, key=affinity_of)
+    value = affinity_of(best)
     label = taxonomy.ROLE_FAMILIES[best]["label"]
-    stated = "a stated target" if best in profile.target_families else "not a stated target"
-    return FactorResult("role", _clamp(value), [f"{label}: your affinity {value:.2f} ({stated})"],
-                        detail={"families": families, "family": best})
+    evidence = (profile.evidence.get("role_affinity") or {}).get(best) or {}
+    proof = (evidence.get("titles") or []) + (evidence.get("topics") or [])
+    because = ("your résumé shows " + ", ".join(proof[:4])) if proof else "your résumé shows no direct evidence"
+    reasons = [f"{label}: affinity {value:.2f} — {because}"]
+    demand = (market_affinity or {}).get(best)
+    if demand is not None:
+        reasons.append(f"You cover {demand:.0%} of what {label.lower()} postings currently ask for")
+    return FactorResult("role", _clamp(value), reasons,
+                        detail={"families": families, "family": best,
+                                "evidence_affinity": round(profile.role_affinity.get(best, 0.0), 3),
+                                "market_affinity": round(demand, 3) if demand is not None else None})
 
 
 # ---------------------------------------------------------------------------
-# 4. Preference match
-# ---------------------------------------------------------------------------
-
-def _location_matches(location: str, wanted: list[str]) -> bool:
-    for place in wanted:
-        variants = cfg.LOCATION_ALIASES.get(place.strip().lower(), [place])
-        if textmatch.find_all(location, variants):
-            return True
-    return False
-
-
-def preferences(posting, profile: Profile, enrichment: dict | None = None,
-                volumes: dict | None = None) -> FactorResult:
-    prefs = profile.preferences
-    value = 1.0
-    reasons: list[str] = []
-    detail: dict = {}
-
-    industry = postings.industry(posting)
-    detail["industry"] = industry
-    if industry and industry in prefs.exclude_industries:
-        value *= cfg.INDUSTRY_EXCLUDED
-        reasons.append(f"Industry you excluded: {industry} (×{cfg.INDUSTRY_EXCLUDED})")
-
-    mode = postings.work_mode(posting, enrichment)
-    detail["work_mode"] = mode
-    if mode:
-        multiplier = cfg.REMOTE_MATRIX.get(prefs.remote, cfg.REMOTE_MATRIX["any"]).get(mode, 1.0)
-        if multiplier < 1.0:
-            value *= multiplier
-            reasons.append(f"{mode.capitalize()} role; you prefer {prefs.remote.replace('_', ' ')} (×{multiplier:.2f})")
-
-    location = postings.field(posting, "location") or ""
-    if prefs.locations and location.strip():
-        wants_remote = any(p.strip().lower() == "remote" for p in prefs.locations)
-        if not (_location_matches(location, prefs.locations) or (wants_remote and mode == "remote")):
-            value *= cfg.LOCATION_MISMATCH
-            reasons.append(f"{location} is not in your locations (×{cfg.LOCATION_MISMATCH:.2f})")
-
-    size = postings.company_size(posting, volumes)
-    detail["company_size"] = size
-    if prefs.company_sizes and size not in prefs.company_sizes:
-        value *= cfg.COMPANY_SIZE_MISMATCH
-        reasons.append(f"{size.capitalize()} company; you prefer {', '.join(prefs.company_sizes)} (×{cfg.COMPANY_SIZE_MISMATCH:.2f})")
-
-    level, _ = postings.seniority(posting, enrichment)
-    if prefs.seniority and level and level not in prefs.seniority:
-        value *= cfg.SENIORITY_NOT_WANTED
-        reasons.append(f"{level} level is not one you asked for (×{cfg.SENIORITY_NOT_WANTED:.2f})")
-
-    start = postings.term_start(posting)
-    detail["term_start"] = start
-    if prefs.earliest_start and start and start < prefs.earliest_start:
-        value *= cfg.START_BEFORE_AVAILABLE
-        reasons.append(f"Starts {start}, before you are available ({prefs.earliest_start}) (×{cfg.START_BEFORE_AVAILABLE:.2f})")
-
-    if not reasons:
-        reasons.append("Matches every stated preference it can be checked against")
-    return FactorResult("preferences", _clamp(value), reasons, detail=detail)
-
-
-# ---------------------------------------------------------------------------
-# 5. Freshness
+# 4. Freshness
 # ---------------------------------------------------------------------------
 
 def freshness(posting, today, volumes: dict | None = None) -> FactorResult:
@@ -211,7 +195,7 @@ def freshness(posting, today, volumes: dict | None = None) -> FactorResult:
 
 
 # ---------------------------------------------------------------------------
-# 6. Semantic similarity
+# 5. Semantic similarity
 # ---------------------------------------------------------------------------
 
 def semantic(cosine: float | None, model_name: str | None) -> FactorResult | None:

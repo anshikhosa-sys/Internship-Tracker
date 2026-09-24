@@ -4,7 +4,6 @@ Profiles on disk: `profiles/<user_id>.json`.
 One document per user holding the three layers separately —
 
     resume       what extraction produced (re-derivable from the résumé file)
-    preferences  what the user stated
     derived      what the scorer reads (re-derivable from the two above)
 
 Keeping the inputs means a change to derivation rules re-derives every profile
@@ -20,7 +19,7 @@ import re
 import tempfile
 
 from jobrank.config import profile as cfg
-from jobrank.models import ParsedResume, Preferences, Profile
+from jobrank.models import ParsedResume, Profile
 from jobrank.profile.derive import derive
 
 
@@ -38,14 +37,12 @@ def path_for(user_id: str, directory: str | None = None) -> str:
     return os.path.join(directory or cfg.PROFILES_DIR, f"{validate_user_id(user_id)}.json")
 
 
-def save(user_id: str, resume: ParsedResume, preferences: Preferences,
-         directory: str | None = None) -> Profile:
-    profile = derive(user_id, resume, preferences)
+def save(user_id: str, resume: ParsedResume, directory: str | None = None) -> Profile:
+    profile = derive(user_id, resume)
     document = {
         "schema_version": cfg.PROFILE_SCHEMA_VERSION,
         "user_id": user_id,
         "resume": resume.to_dict(),
-        "preferences": preferences.to_dict(),
         "derived": profile.to_dict(),
     }
     path = path_for(user_id, directory)
@@ -75,19 +72,13 @@ def load(user_id: str, directory: str | None = None, rederive: bool = True) -> P
     """
     document = load_document(user_id, directory)
     if rederive and document.get("resume"):
-        return derive(user_id, ParsedResume.from_dict(document["resume"]),
-                      Preferences.from_dict(document.get("preferences", {})))
+        return derive(user_id, ParsedResume.from_dict(document["resume"]))
     return Profile.from_dict(document["derived"])
 
 
-def load_inputs(user_id: str, directory: str | None = None) -> tuple[ParsedResume, Preferences]:
-    document = load_document(user_id, directory)
-    return ParsedResume.from_dict(document["resume"]), Preferences.from_dict(document.get("preferences", {}))
-
-
-def update_preferences(user_id: str, preferences: Preferences, directory: str | None = None) -> Profile:
-    resume, _ = load_inputs(user_id, directory)
-    return save(user_id, resume, preferences, directory)
+def load_resume(user_id: str, directory: str | None = None) -> ParsedResume:
+    """The résumé a profile was built from — the only input there is."""
+    return ParsedResume.from_dict(load_document(user_id, directory)["resume"])
 
 
 def list_ids(directory: str | None = None) -> list[str]:

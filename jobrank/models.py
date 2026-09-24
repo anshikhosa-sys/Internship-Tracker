@@ -86,25 +86,6 @@ class ParsedResume:
 
 
 @dataclass
-class Preferences:
-    target_roles: list[str] = field(default_factory=list)     # free-text titles as stated
-    seniority: list[str] = field(default_factory=list)        # taxonomy.SENIORITY_LEVELS
-    locations: list[str] = field(default_factory=list)        # "New York", "CA", "Remote"
-    remote: str = "any"                                        # config.profile.REMOTE_CHOICES
-    company_sizes: list[str] = field(default_factory=list)    # empty = no preference
-    exclude_industries: list[str] = field(default_factory=list)
-    earliest_start: str | None = None                          # "YYYY-MM"
-    priorities: dict[str, int] = field(default_factory=dict)  # factor -> 1..5
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Preferences":
-        return _from_dict(cls, data)
-
-
-@dataclass
 class SeniorityEstimate:
     level: str = "entry"
     years_experience: float = 0.0
@@ -116,15 +97,19 @@ class SeniorityEstimate:
 
 @dataclass
 class Profile:
-    """The derived profile: everything the scorer needs, computed for one user."""
+    """
+    The derived profile: everything the scorer needs, computed from one résumé.
+
+    There is deliberately nothing here about what the user *wants*. The score
+    answers whether an application is worth making, and a stated wish cannot
+    change that — it adds no skill and makes no posting less contested. The
+    platform asks for a résumé and nothing else.
+    """
 
     user_id: str
     skills: dict[str, float] = field(default_factory=dict)          # canonical -> 0..1
     seniority: SeniorityEstimate = field(default_factory=SeniorityEstimate)
     role_affinity: dict[str, float] = field(default_factory=dict)   # family -> 0..1
-    target_families: list[str] = field(default_factory=list)
-    factor_weights: dict[str, float] = field(default_factory=dict)  # factor -> exponent
-    preferences: Preferences = field(default_factory=Preferences)
     semantic_text: str = ""       # what gets embedded for similarity
     resume_hash: str = ""
     derived_at: str = ""
@@ -137,5 +122,4 @@ class Profile:
     def from_dict(cls, data: dict[str, Any]) -> "Profile":
         data = dict(data or {})
         data["seniority"] = _from_dict(SeniorityEstimate, data.get("seniority", {}))
-        data["preferences"] = Preferences.from_dict(data.get("preferences", {}))
         return _from_dict(cls, data)

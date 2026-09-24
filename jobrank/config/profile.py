@@ -47,30 +47,17 @@ AFFINITY_TITLE_MIN_WEIGHT = 0.4          # even a short stint counts this much
 AFFINITY_TOPIC_HIT_WEIGHT = 0.25         # each distinct evidence term found
 AFFINITY_SATURATION = 1.0
 
-# Stated target roles express desire; résumé evidence expresses track record.
-# Blend: affinity = STATED_SHARE * stated + (1 - STATED_SHARE) * evidence.
-# When the user states no targets, evidence alone decides.
-STATED_TARGET_SHARE = 0.6
-# A family the user did not name, when they did name others.
-UNSTATED_FAMILY_STATED_VALUE = 0.15
-# An unnamed family closely related to a named one (taxonomy.RELATED_FAMILIES).
-# Measured on a real golden set: treating related families as unstated put
-# data-engineering and infrastructure applications at rank ~2,000 of 4,165.
-RELATED_FAMILY_STATED_VALUE = 0.55
+# Affinity is evidence only. Stated target roles were once blended in at a 0.6
+# share; on a real golden set that scored a family with 0.393 of evidence above
+# one with 0.713, because the first had been typed into a form. Removed.
 # Nobody's affinity for a family drops below this; the scorer multiplies, and a
 # hard zero would hide roles the user never thought to name.
 AFFINITY_FLOOR = 0.05
 
-# ---- Preferences --------------------------------------------------------------
-# Users rate each scoring factor 1-5; the rating becomes that factor's exponent
-# in the multiplicative score. 3 is neutral (the default when unstated).
-PRIORITY_EXPONENTS = {1: 0.25, 2: 0.5, 3: 0.75, 4: 1.0, 5: 1.25}
-DEFAULT_PRIORITY = 3
-
-PRIORITY_FACTORS = ["skills", "seniority", "role", "preferences", "freshness", "semantic"]
-
-REMOTE_CHOICES = ["any", "remote_only", "remote_or_hybrid", "onsite_ok"]
-COMPANY_SIZE_CHOICES = ["startup", "mid", "large"]
+# ---- Preferences ------------------------------------------------------------
+# Preferences no longer reach the scorer at all; they are filters over an
+# already-objective ranking. A profile is complete with a résumé and nothing
+# else, so an unmodified résumé from anyone is scored the same way.
 
 # Bounds on free text from forms and CLI.
 MAX_LIST_ITEMS = 25

@@ -40,14 +40,6 @@ def example_resume_text():
         return handle.read()
 
 
-@pytest.fixture
-def example_prefs():
-    import json
-
-    with open(os.path.join(EXAMPLES, "preferences_example.json"), encoding="utf-8") as handle:
-        return json.load(handle)
-
-
 PLAIN_RESUME = """ALEX KIM
 alex@example.com | (555) 010-2000
 

@@ -1,9 +1,13 @@
 """
-Profile intake in the browser: upload a résumé, state preferences.
+Profile intake in the browser: upload a résumé. That is the whole form.
+
+The platform deliberately does not ask what kind of job you want. Scoring is
+built entirely from what the résumé proves and what the market currently
+demands, so a stated target would be a number with no evidence behind it —
+and, measured on a real golden set, it reordered results against the résumé.
 
 The uploaded file is read in memory and never written to disk; only the
-parsed, contact-free profile JSON is saved. Validation is the same function the
-CLI uses, and every problem is shown at once.
+parsed, contact-free profile JSON is saved.
 """
 
 from __future__ import annotations
@@ -11,33 +15,23 @@ from __future__ import annotations
 from flask import Blueprint, redirect, render_template, request, url_for
 
 from jobrank.config import profile as profile_cfg
-from jobrank.config import taxonomy
-from jobrank.models import Preferences
 from jobrank.profile import diff as profile_diff
-from jobrank.profile import preferences as prefs_mod
 from jobrank.profile import store
 from jobrank.resume import parser as resume_parser
 
 bp = Blueprint("profiles", __name__)
 
 
-def _form_context(user_id: str = "", preferences: Preferences | None = None, errors=None, profile=None,
+def _form_context(user_id: str = "", errors=None, profile=None,
                   resume=None, changes=None, parse_warning=None):
     return dict(
         changes=changes,
         parse_warning=parse_warning,
         user_id=user_id,
-        prefs=(preferences or Preferences()),
         errors=errors or [],
         profile=profile,
         resume=resume,
         profiles=store.list_ids(),
-        seniority_levels=taxonomy.SENIORITY_LEVELS,
-        remote_choices=profile_cfg.REMOTE_CHOICES,
-        size_choices=profile_cfg.COMPANY_SIZE_CHOICES,
-        industries=taxonomy.INDUSTRIES,
-        factors=profile_cfg.PRIORITY_FACTORS,
-        default_priority=profile_cfg.DEFAULT_PRIORITY,
         max_resume_bytes=profile_cfg.MAX_RESUME_BYTES,
     )
 
@@ -47,9 +41,8 @@ def profile_form():
     user_id = request.args.get("id", "")
     if user_id:
         try:
-            resume, preferences = store.load_inputs(user_id)
             return render_template("profile.html", **_form_context(
-                user_id, preferences, profile=store.load(user_id), resume=resume))
+                user_id, profile=store.load(user_id), resume=store.load_resume(user_id)))
         except (store.ProfileNotFound, ValueError) as exc:
             return render_template("profile.html", **_form_context(errors=[str(exc)])), 404
     return render_template("profile.html", **_form_context())
@@ -60,13 +53,13 @@ def resume_upload(user_id: str):
     """
     Replace a profile's résumé and report what changed.
 
-    Preferences are untouched: a new résumé restates what you have done, not
-    what you want. The derived profile is rebuilt from the new résumé plus the
-    preferences already on file.
+    The résumé is the only input, so replacing it rebuilds the profile whole.
+    Nothing is saved when the parse fails: a bad upload must not damage the
+    profile already on file.
     """
     try:
         store.validate_user_id(user_id)
-        previous_resume, preferences = store.load_inputs(user_id)
+        previous_resume = store.load_resume(user_id)
         before = store.load(user_id)
     except (store.ProfileNotFound, ValueError) as exc:
         return render_template("profile.html", **_form_context(errors=[str(exc)])), 404
@@ -74,20 +67,19 @@ def resume_upload(user_id: str):
     upload = request.files.get("resume")
     if not upload or not upload.filename:
         return render_template("profile.html", **_form_context(
-            user_id, preferences, ["Choose a résumé file to upload."], before, previous_resume)), 400
+            user_id, ["Choose a résumé file to upload."], before, previous_resume)), 400
     try:
         resume = resume_parser.parse_bytes(upload.read(profile_cfg.MAX_RESUME_BYTES + 1), upload.filename)
     except (resume_parser.ResumeReadError, resume_parser.ResumeParseError) as exc:
-        # Nothing is saved on a failed parse: the old profile stays intact.
         return render_template("profile.html", **_form_context(
-            user_id, preferences, [f"Résumé: {exc}"], before, previous_resume)), 400
+            user_id, [f"Résumé: {exc}"], before, previous_resume)), 400
 
-    after = store.save(user_id, resume, preferences)
+    after = store.save(user_id, resume)
     changes = profile_diff.compare(before, after, resume, previous_resume)
     warning = ("This résumé extracted far fewer skills than the previous one, which usually means it "
                "parsed badly. Check the list below — a text or Markdown export usually parses best.")
     return render_template("profile.html", **_form_context(
-        user_id, preferences, profile=after, resume=resume, changes=changes,
+        user_id, profile=after, resume=resume, changes=changes,
         parse_warning=warning if changes.looks_like_a_worse_parse() else None))
 
 
@@ -100,22 +92,6 @@ def profile_submit():
     except ValueError as exc:
         errors.append(str(exc))
 
-    raw = {
-        "target_roles": request.form.get("target_roles", ""),
-        "seniority": request.form.getlist("seniority"),
-        "locations": request.form.get("locations", ""),
-        "remote": request.form.get("remote", "any"),
-        "company_sizes": request.form.getlist("company_sizes"),
-        "exclude_industries": request.form.getlist("exclude_industries"),
-        "earliest_start": request.form.get("earliest_start", ""),
-        "priorities": {f: request.form.get(f"priority_{f}", "") for f in profile_cfg.PRIORITY_FACTORS},
-    }
-    preferences = None
-    try:
-        preferences = prefs_mod.validate(raw)
-    except prefs_mod.PreferenceError as exc:
-        errors.extend(exc.problems)
-
     upload = request.files.get("resume")
     resume = None
     if upload and upload.filename:
@@ -125,13 +101,12 @@ def profile_submit():
             errors.append(f"Résumé: {exc}")
     elif not errors:
         try:
-            resume, _ = store.load_inputs(user_id)
+            resume = store.load_resume(user_id)
         except store.ProfileNotFound:
             errors.append("Upload a résumé to create a new profile.")
 
     if errors:
-        shown = preferences or Preferences.from_dict({**raw, "priorities": {}})
-        return render_template("profile.html", **_form_context(user_id, shown, errors)), 400
+        return render_template("profile.html", **_form_context(user_id, errors)), 400
 
-    store.save(user_id, resume, preferences)
+    store.save(user_id, resume)
     return redirect(url_for("profiles.profile_form", id=user_id, saved=1))

@@ -25,7 +25,7 @@ def test_scoring_decisions_are_logged_with_a_run_id():
     assert len(records) == 2
     first = records[0]
     assert first["rank"] == 1 and first["profile"] == "t" and first["event"] == "score"
-    assert set(first["factors"]) == {"skills", "seniority", "role", "preferences", "freshness"}
+    assert set(first["factors"]) == {"skills", "seniority", "role", "freshness"}
     for factor in first["factors"].values():
         assert set(factor) >= {"v", "w", "c"}
     # Compact on purpose: prose reasons belong to --explain, not to 4,000 log lines.
@@ -40,7 +40,7 @@ def test_explain_shows_the_whole_calculation():
     assert "Acme — Infrastructure Engineer Intern" in text
     assert "rank 3 of 99" in text
     assert "× 100 =" in text
-    for label in ["Skill overlap", "Seniority fit", "Role affinity", "Preference match", "Freshness"]:
+    for label in ["Skill overlap", "Seniority fit", "Role affinity", "Freshness"]:
         assert label in text
     assert "(no data: neutral)" in text          # this posting names no skills
     assert "Biggest drag:" in text
@@ -48,11 +48,11 @@ def test_explain_shows_the_whole_calculation():
 
 
 def test_explain_names_the_weakest_factor():
-    profile = make_profile(preferences=__import__("jobrank.models", fromlist=["Preferences"]).Preferences(
-        exclude_industries=["quant_trading"]))
-    posting = make_posting(company="Jane Street", role="Infrastructure Engineer Intern")
-    result = engine.score_all(profile, [posting], semantic=False)[0]
-    assert "Biggest drag: Preference match" in explain(profile, posting, result)
+    """A product hides which term sank it, so the explanation has to say."""
+    profile = make_profile(role_affinity={"infrastructure": 0.04})
+    posting = make_posting(role="Infrastructure Engineer Intern")
+    result = engine.score_all(profile, [posting], semantic=False, use_market=False)[0]
+    assert "Biggest drag: Role affinity" in explain(profile, posting, result)
 
 
 @pytest.mark.parametrize("query,expected", [

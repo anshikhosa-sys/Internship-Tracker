@@ -109,7 +109,7 @@ def test_gate_passes_unchanged_and_fails_a_regression(example_eval, monkeypatch)
 
     # Break the model: make role affinity meaningless for every posting.
     from jobrank.scoring import factors
-    monkeypatch.setattr(factors, "role", lambda posting, profile: factors.FactorResult("role", 0.5))
+    monkeypatch.setattr(factors, "role", lambda *a, **k: factors.FactorResult("role", 0.5))
     worse = harness.evaluate("example", fixture=FIXTURE)
     report = harness.compare(worse, baseline)
     assert "auc" in report["regressions"]
@@ -130,7 +130,7 @@ def test_evaluate_cli_exit_codes(example_eval, capsys):
 def test_ablation_reports_every_active_factor(example_eval):
     rows = harness.ablation("example", fixture=FIXTURE, semantic=False)
     assert rows[0]["factor"] == "(all factors)"
-    assert {r["factor"] for r in rows[1:]} == {"skills", "seniority", "role", "preferences"}
+    assert {r["factor"] for r in rows[1:]} == {"skills", "seniority", "role"}
 
 
 def test_committed_example_files_contain_no_real_person():

@@ -43,7 +43,7 @@
   {% if changes %}
     <section class="derived change-report">
       <h2>What changed</h2>
-      <p class="sub">Extracted by {{ changes.extractor }}. Preferences were left as they were.</p>
+      <p class="sub">Extracted by {{ changes.extractor }}. Your résumé is the only input, so this is the whole change.</p>
       <div class="change-grid">
         <div>
           <div class="stat-label">Seniority</div>
@@ -87,7 +87,7 @@
     <section class="derived upload-card" id="resume">
       <h2>Upload a new résumé</h2>
       <p class="sub">Replaces the résumé this profile is scored from and shows what changed.
-        Your preferences stay as they are. PDF, DOCX, TXT or Markdown, up to
+        PDF, DOCX, TXT or Markdown, up to
         {{ (max_resume_bytes / 1000000)|round|int }} MB.</p>
       <form method="post" action="{{ url_for('profiles.resume_upload', user_id=user_id) }}"
             enctype="multipart/form-data" class="upload-form">
@@ -120,50 +120,9 @@
       {% endif %}
     </fieldset>
 
-    <fieldset>
-      <legend>What you want</legend>
-      <p class="muted small">These are about the job you are looking for, not about your résumé.</p>
-      <label>Target roles <small>comma-separated job titles</small>
-        <input name="target_roles" value="{{ prefs.target_roles|join(', ') }}" placeholder="Software Engineer, Data Engineer">
-      </label>
-      <div class="choices">Seniority
-        {% for level in seniority_levels %}
-          <label><input type="checkbox" name="seniority" value="{{ level }}" {{ 'checked' if level in prefs.seniority }}> {{ level }}</label>
-        {% endfor %}
-      </div>
-      <label>Locations <small>comma-separated; blank for anywhere</small>
-        <input name="locations" value="{{ prefs.locations|join(', ') }}" placeholder="New York, Remote">
-      </label>
-      <label>Remote
-        <select name="remote">
-          {% for choice in remote_choices %}<option value="{{ choice }}" {{ 'selected' if prefs.remote == choice }}>{{ choice.replace('_', ' ') }}</option>{% endfor %}
-        </select>
-      </label>
-      <div class="choices">Company size <small>none checked = any</small>
-        {% for size in size_choices %}
-          <label><input type="checkbox" name="company_sizes" value="{{ size }}" {{ 'checked' if size in prefs.company_sizes }}> {{ size }}</label>
-        {% endfor %}
-      </div>
-      <div class="choices">Exclude industries
-        {% for industry in industries %}
-          <label><input type="checkbox" name="exclude_industries" value="{{ industry }}" {{ 'checked' if industry in prefs.exclude_industries }}> {{ industry.replace('_', ' ') }}</label>
-        {% endfor %}
-      </div>
-      <label>Earliest start <small>YYYY-MM</small>
-        <input name="earliest_start" value="{{ prefs.earliest_start or '' }}" placeholder="2027-05">
-      </label>
-    </fieldset>
-
-    <fieldset>
-      <legend>How much each factor matters <small>1 barely · 5 decisive</small></legend>
-      {% for factor in factors %}
-        <label class="priority">{{ factor }}
-          <select name="priority_{{ factor }}">
-            {% for n in range(1, 6) %}<option value="{{ n }}" {{ 'selected' if prefs.priorities.get(factor, default_priority) == n }}>{{ n }}</option>{% endfor %}
-          </select>
-        </label>
-      {% endfor %}
-    </fieldset>
+    <p class="note">Your résumé is the whole profile. jobrank does not ask what kind of
+      role you want — the ranking comes from what your résumé proves and what employers
+      are actually asking for right now, so it reflects the jobs you are most likely to get.</p>
 
     <button type="submit" class="btn-refresh">Save profile</button>
   </form>

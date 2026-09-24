@@ -1,5 +1,5 @@
 """
-Parsed résumé + stated preferences -> derived Profile.
+Parsed résumé -> derived Profile. The résumé is the only input.
 
 This is where "tuned to one person" becomes "computed for any person". Every
 value the scorer reads is produced here from the user's own evidence, using
@@ -24,28 +24,35 @@ from datetime import date, datetime, timezone
 from jobrank import textmatch
 from jobrank.config import profile as cfg
 from jobrank.config import taxonomy
-from jobrank.models import ParsedResume, Preferences, Profile, SeniorityEstimate
+from jobrank.models import ParsedResume, Profile, SeniorityEstimate
 from jobrank.resume import dates
 from jobrank.resume.parser import canonical_skills
 from jobrank.roles import classify_title
 
 
-def derive(user_id: str, resume: ParsedResume, preferences: Preferences,
-           today: date | None = None) -> Profile:
+def derive(user_id: str, resume: ParsedResume, today: date | None = None) -> Profile:
+    """
+    A résumé becomes everything the scorer needs — and nothing else is asked.
+
+    The platform used to also take stated preferences: target roles, locations,
+    remote preference, company sizes, excluded industries and a 1-5 priority
+    per factor. All of it is gone. Measured on a real golden set, blending
+    stated targets into role affinity scored a family with 0.393 of evidence
+    above one with 0.713, purely because the first had been typed into a form.
+    Dropping the same résumé in for anyone now produces the same ranking it
+    would for its owner.
+    """
     today = today or date.today()
     now_ym = dates.today_ym(today)
     skills, skill_evidence = _skills(resume, now_ym)
     seniority, months = _seniority(resume, now_ym)
-    affinity, targets, affinity_evidence = _affinity(resume, preferences, skills, now_ym)
+    affinity, affinity_evidence = _affinity(resume, skills, now_ym)
     return Profile(
         user_id=user_id,
         skills=skills,
         seniority=seniority,
         role_affinity=affinity,
-        target_families=targets,
-        factor_weights=factor_weights(preferences),
-        preferences=preferences,
-        semantic_text=semantic_text(resume, preferences),
+        semantic_text=semantic_text(resume),
         resume_hash=resume.content_hash,
         derived_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
         evidence={"skills": skill_evidence, "experience_months": months, "role_affinity": affinity_evidence},
@@ -145,7 +152,7 @@ def _seniority(resume: ParsedResume, now_ym: str) -> tuple[SeniorityEstimate, di
     return estimate, months
 
 
-def _affinity(resume: ParsedResume, preferences: Preferences, skills: dict[str, float], now_ym: str):
+def _affinity(resume: ParsedResume, skills: dict[str, float], now_ym: str):
     corpus = "\n".join(
         [b for job in resume.experience for b in job.bullets]
         + [p.description + " " + " ".join(p.technologies) for p in resume.projects]
@@ -169,47 +176,21 @@ def _affinity(resume: ParsedResume, preferences: Preferences, skills: dict[str, 
         evidence_score[family] = 1 - math.exp(-score / cfg.AFFINITY_SATURATION)
         detail[family] = {"titles": titles, "topics": topics, "evidence": round(evidence_score[family], 3)}
 
-    targets: list[str] = []
-    unmatched: list[str] = []
-    for role in preferences.target_roles:
-        families = classify_title(role)
-        if not families:
-            unmatched.append(role)
-        for family in families[:1]:
-            if family not in targets:
-                targets.append(family)
-
-    affinity: dict[str, float] = {}
-    for family in taxonomy.ROLE_FAMILIES:
-        if targets:
-            if family in targets:
-                stated = 1.0
-            elif any(family in taxonomy.RELATED_FAMILIES.get(t, []) for t in targets):
-                stated = cfg.RELATED_FAMILY_STATED_VALUE
-            else:
-                stated = cfg.UNSTATED_FAMILY_STATED_VALUE
-            value = cfg.STATED_TARGET_SHARE * stated + (1 - cfg.STATED_TARGET_SHARE) * evidence_score[family]
-        else:
-            value = evidence_score[family]
-        affinity[family] = round(max(cfg.AFFINITY_FLOOR, min(1.0, value)), 3)
-        detail[family]["stated"] = family in targets
-    if unmatched:
-        detail["_unmatched_targets"] = unmatched
-    return affinity, targets, detail
+    affinity = {family: round(max(cfg.AFFINITY_FLOOR, min(1.0, evidence_score[family])), 3)
+                for family in taxonomy.ROLE_FAMILIES}
+    return affinity, detail
 
 
-def factor_weights(preferences: Preferences) -> dict[str, float]:
-    return {
-        factor: cfg.PRIORITY_EXPONENTS[preferences.priorities.get(factor, cfg.DEFAULT_PRIORITY)]
-        for factor in cfg.PRIORITY_FACTORS
-    }
+def semantic_text(resume: ParsedResume) -> str:
+    """
+    What the user *is* for embedding: their work, projects and skills.
 
-
-def semantic_text(resume: ParsedResume, preferences: Preferences) -> str:
-    """What the user 'is' for embedding: targets first, then work, projects, skills."""
+    Stated targets used to be prepended here. Embedding "Target roles: AI
+    Engineer" makes every posting with that title similar to the résumé
+    whether or not the résumé supports it — the stated-preference bug in
+    vector form.
+    """
     parts = []
-    if preferences.target_roles:
-        parts.append("Target roles: " + ", ".join(preferences.target_roles))
     for job in resume.experience:
         parts.append(f"{job.title}. " + " ".join(job.bullets))
     for project in resume.projects:

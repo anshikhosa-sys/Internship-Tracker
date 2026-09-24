@@ -9,21 +9,19 @@ import pytest
 
 from jobrank import config, ranking
 from jobrank.config import semantic as semantic_cfg
-from jobrank.models import Preferences
 from jobrank.profile import store
 from jobrank.profile.diff import compare
-from jobrank.profile.preferences import validate
 from jobrank.resume import parser
 
 
 @pytest.fixture
-def client(tmp_path, monkeypatch, example_resume_text, example_prefs):
+def client(tmp_path, monkeypatch, example_resume_text):
     monkeypatch.setattr(config, "DATABASE_PATH", str(tmp_path / "internships.db"))
     monkeypatch.setattr(config, "APPLICATIONS_PATH", str(tmp_path / "applications.db"))
     monkeypatch.setattr(config, "APPLICATIONS_EXPORT", str(tmp_path / "applications.json"))
     monkeypatch.setattr(semantic_cfg, "BACKEND", "hashing")
     monkeypatch.setattr(semantic_cfg, "VECTOR_DB_PATH", str(tmp_path / "vectors.db"))
-    store.save("alex", parser.parse_text(example_resume_text), validate(example_prefs))
+    store.save("alex", parser.parse_text(example_resume_text))
     ranking.clear_cache()
     from jobrank.web.app import app
     app.config["PROPAGATE_EXCEPTIONS"] = True
@@ -36,7 +34,7 @@ def upload(client, text: str, filename: str = "resume.md", user_id: str = "alex"
                        data={"resume": (io.BytesIO(text.encode()), filename)})
 
 
-def test_upload_replaces_the_resume_and_rescore_reflects_it(client, plain_resume_text, example_prefs):
+def test_upload_replaces_the_resume_and_rescore_reflects_it(client, plain_resume_text):
     before = store.load("alex")
     response = upload(client, plain_resume_text)
     assert response.status_code == 200
@@ -44,8 +42,6 @@ def test_upload_replaces_the_resume_and_rescore_reflects_it(client, plain_resume
     assert after.skills != before.skills
     assert "snowflake" in after.skills      # named only by the new résumé
     assert "go" not in after.skills         # named only by the old one
-    # Preferences are about the job wanted, not the résumé: they survive.
-    assert after.preferences.target_roles == validate(example_prefs).target_roles
 
 
 def test_page_reports_what_changed(client, plain_resume_text):
@@ -57,9 +53,16 @@ def test_page_reports_what_changed(client, plain_resume_text):
 
 
 def test_seniority_change_is_reported(client, plain_resume_text):
-    """The example résumé is a student; the replacement is a senior engineer."""
+    """
+    The example résumé is a student; the replacement has 4.25 credited years,
+    which is mid (senior starts at 5.5).
+
+    This once asserted `"senior" in page`, which passed on the substring inside
+    "Seniority levels you want" in the preferences form — not on the reported
+    level at all. The form is gone, so the assertion now names the transition.
+    """
     page = upload(client, plain_resume_text).data.decode()
-    assert "intern →" in page and "senior" in page
+    assert "intern →" in page and "<strong>mid</strong>" in page
 
 
 def test_a_bad_parse_changes_nothing(client):
@@ -105,20 +108,20 @@ def test_ranking_uses_the_new_resume_immediately(client, plain_resume_text):
 class TestDiff:
     def test_first_profile_lists_every_skill_as_added(self, example_resume_text):
         resume = parser.parse_text(example_resume_text)
-        profile = store.save("solo", resume, Preferences())
+        profile = store.save("solo", resume)
         changes = compare(None, profile, resume)
         assert changes.skills_added == sorted(profile.skills) and not changes.skills_removed
 
     def test_detects_a_likely_bad_parse(self, example_resume_text, plain_resume_text):
         rich = parser.parse_text(example_resume_text)
-        before = store.save("a", rich, Preferences())
+        before = store.save("a", rich)
         thin = parser.parse_text("## Skills\n\nPython\n\n## Experience\n\n### Acme — Engineer\n"
                                  "Jan 2020 - Jan 2021\n\n- Did work with Python for a while here\n")
-        after = store.save("a", thin, Preferences())
+        after = store.save("a", thin)
         changes = compare(before, after, thin, rich)
         assert changes.looks_like_a_worse_parse()
 
     def test_no_change_is_reported_as_no_change(self, example_resume_text):
         resume = parser.parse_text(example_resume_text)
-        profile = store.save("b", resume, Preferences())
+        profile = store.save("b", resume)
         assert compare(profile, profile, resume, resume).is_empty

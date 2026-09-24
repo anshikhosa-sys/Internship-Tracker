@@ -90,36 +90,6 @@
     "extractor": "rules",
     "warnings": []
   },
-  "preferences": {
-    "target_roles": [
-      "Infrastructure Engineer",
-      "Site Reliability Engineer",
-      "Backend Engineer"
-    ],
-    "seniority": [
-      "intern"
-    ],
-    "locations": [
-      "Chicago",
-      "New York",
-      "Remote"
-    ],
-    "remote": "any",
-    "company_sizes": [],
-    "exclude_industries": [
-      "defense",
-      "quant_trading"
-    ],
-    "earliest_start": "2027-05",
-    "priorities": {
-      "skills": 4,
-      "seniority": 5,
-      "role": 4,
-      "preferences": 2,
-      "freshness": 3,
-      "semantic": 3
-    }
-  },
   "derived": {
     "user_id": "example",
     "skills": {
@@ -154,70 +124,28 @@
       ]
     },
     "role_affinity": {
-      "software_engineering": 0.281,
-      "backend": 0.853,
-      "frontend": 0.09,
-      "fullstack": 0.178,
-      "mobile": 0.09,
-      "ai_engineering": 0.09,
-      "ml_engineering": 0.09,
-      "data_science": 0.178,
-      "data_engineering": 0.178,
-      "infrastructure": 0.93,
-      "security": 0.09,
-      "embedded_hardware": 0.09,
-      "forward_deployed": 0.09,
-      "product_management": 0.09,
-      "research": 0.09,
-      "quant": 0.09,
-      "qa_test": 0.09,
-      "it_support": 0.441
+      "software_engineering": 0.478,
+      "backend": 0.632,
+      "frontend": 0.05,
+      "fullstack": 0.221,
+      "mobile": 0.05,
+      "ai_engineering": 0.05,
+      "ml_engineering": 0.05,
+      "data_science": 0.221,
+      "data_engineering": 0.221,
+      "infrastructure": 0.826,
+      "security": 0.05,
+      "embedded_hardware": 0.05,
+      "forward_deployed": 0.05,
+      "product_management": 0.05,
+      "research": 0.05,
+      "quant": 0.05,
+      "qa_test": 0.05,
+      "it_support": 0.878
     },
-    "target_families": [
-      "infrastructure",
-      "backend"
-    ],
-    "factor_weights": {
-      "skills": 1.0,
-      "seniority": 1.25,
-      "role": 1.0,
-      "preferences": 0.5,
-      "freshness": 0.75,
-      "semantic": 0.75
-    },
-    "preferences": {
-      "target_roles": [
-        "Infrastructure Engineer",
-        "Site Reliability Engineer",
-        "Backend Engineer"
-      ],
-      "seniority": [
-        "intern"
-      ],
-      "locations": [
-        "Chicago",
-        "New York",
-        "Remote"
-      ],
-      "remote": "any",
-      "company_sizes": [],
-      "exclude_industries": [
-        "defense",
-        "quant_trading"
-      ],
-      "earliest_start": "2027-05",
-      "priorities": {
-        "skills": 4,
-        "seniority": 5,
-        "role": 4,
-        "preferences": 2,
-        "freshness": 3,
-        "semantic": 3
-      }
-    },
-    "semantic_text": "Target roles: Infrastructure Engineer, Site Reliability Engineer, Backend Engineer\nSoftware Engineer Intern. Built a Go service that batched shipment status updates from Kafka into PostgreSQL, cutting write load on the primary database by 40%. Added Prometheus metrics and Grafana dashboards for the ingestion path and wrote the on-call runbook for it. Containerized three legacy Python jobs with Docker and moved them onto the team's Kubernetes cluster.\nSystems Administrator (Part-time. Automated lab machine provisioning with Bash and Terraform for 200 Linux workstations. Maintained the department's CI runners on GitHub Actions.\nTiny Raft. Implemented the Raft consensus algorithm in Go with leader election, log replication and snapshotting; tested under injected network partitions.\nRate Limiter as a Service. Built a token-bucket rate limiter API on FastAPI backed by Redis and deployed it to AWS Lambda.\nSkills: python, java, go, sql, bash, fastapi, grpc, postgresql, redis, kafka, aws, docker, kubernetes, terraform, ci/cd, linux, git, observability",
+    "semantic_text": "Software Engineer Intern. Built a Go service that batched shipment status updates from Kafka into PostgreSQL, cutting write load on the primary database by 40%. Added Prometheus metrics and Grafana dashboards for the ingestion path and wrote the on-call runbook for it. Containerized three legacy Python jobs with Docker and moved them onto the team's Kubernetes cluster.\nSystems Administrator (Part-time. Automated lab machine provisioning with Bash and Terraform for 200 Linux workstations. Maintained the department's CI runners on GitHub Actions.\nTiny Raft. Implemented the Raft consensus algorithm in Go with leader election, log replication and snapshotting; tested under injected network partitions.\nRate Limiter as a Service. Built a token-bucket rate limiter API on FastAPI backed by Redis and deployed it to AWS Lambda.\nSkills: python, java, go, sql, bash, fastapi, grpc, postgresql, redis, kafka, aws, docker, kubernetes, terraform, ci/cd, linux, git, observability",
     "resume_hash": "10233df4f6c93b1ce86e5e99eee1125af3fdb78662d63482ee1a92e179c1d11d",
-    "derived_at": "2026-09-15T15:38:36+00:00",
+    "derived_at": "2026-09-23T23:31:38+00:00",
     "evidence": {
       "skills": {
         "python": [
@@ -290,8 +218,7 @@
           "topics": [
             "git"
           ],
-          "evidence": 0.478,
-          "stated": false
+          "evidence": 0.478
         },
         "backend": {
           "titles": [],
@@ -301,56 +228,48 @@
             "grpc",
             "redis"
           ],
-          "evidence": 0.632,
-          "stated": true
+          "evidence": 0.632
         },
         "frontend": {
           "titles": [],
           "topics": [],
-          "evidence": 0.0,
-          "stated": false
+          "evidence": 0.0
         },
         "fullstack": {
           "titles": [],
           "topics": [
             "postgresql"
           ],
-          "evidence": 0.221,
-          "stated": false
+          "evidence": 0.221
         },
         "mobile": {
           "titles": [],
           "topics": [],
-          "evidence": 0.0,
-          "stated": false
+          "evidence": 0.0
         },
         "ai_engineering": {
           "titles": [],
           "topics": [],
-          "evidence": 0.0,
-          "stated": false
+          "evidence": 0.0
         },
         "ml_engineering": {
           "titles": [],
           "topics": [],
-          "evidence": 0.0,
-          "stated": false
+          "evidence": 0.0
         },
         "data_science": {
           "titles": [],
           "topics": [
             "sql"
           ],
-          "evidence": 0.221,
-          "stated": false
+          "evidence": 0.221
         },
         "data_engineering": {
           "titles": [],
           "topics": [
             "kafka"
           ],
-          "evidence": 0.221,
-          "stated": false
+          "evidence": 0.221
         },
         "infrastructure": {
           "titles": [],
@@ -363,58 +282,49 @@
             "linux",
             "observability"
           ],
-          "evidence": 0.826,
-          "stated": true
+          "evidence": 0.826
         },
         "security": {
           "titles": [],
           "topics": [],
-          "evidence": 0.0,
-          "stated": false
+          "evidence": 0.0
         },
         "embedded_hardware": {
           "titles": [],
           "topics": [],
-          "evidence": 0.0,
-          "stated": false
+          "evidence": 0.0
         },
         "forward_deployed": {
           "titles": [],
           "topics": [],
-          "evidence": 0.0,
-          "stated": false
+          "evidence": 0.0
         },
         "product_management": {
           "titles": [],
           "topics": [],
-          "evidence": 0.0,
-          "stated": false
+          "evidence": 0.0
         },
         "research": {
           "titles": [],
           "topics": [],
-          "evidence": 0.0,
-          "stated": false
+          "evidence": 0.0
         },
         "quant": {
           "titles": [],
           "topics": [],
-          "evidence": 0.0,
-          "stated": false
+          "evidence": 0.0
         },
         "qa_test": {
           "titles": [],
           "topics": [],
-          "evidence": 0.0,
-          "stated": false
+          "evidence": 0.0
         },
         "it_support": {
           "titles": [
             "Systems Administrator (Part-time"
           ],
           "topics": [],
-          "evidence": 0.878,
-          "stated": false
+          "evidence": 0.878
         }
       }
     }

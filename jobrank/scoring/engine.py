@@ -1,13 +1,13 @@
 """
 The scoring engine: compose per-user factors multiplicatively.
 
-    score = 100 × Π factorᵢ ^ wᵢ        wᵢ = profile.factor_weights[i] × FACTOR_WEIGHT_SCALE[i]
+    score = 100 × Π factorᵢ ^ wᵢ        wᵢ = cfg.FACTOR_EXPONENTS[i]
 
 WHY MULTIPLY, NOT ADD
 ---------------------
 An application is worth making only when every condition holds at once: the
-user wants this kind of role, is at the right level for it, has the skills,
-and it is still open. Addition averages those — a role three levels too senior
+résumé is evidence for this kind of role, the user is at the right level for
+it, they have the skills it asks for, and it is still open. Addition averages those — a role three levels too senior
 still collects most of its points from a strong title match. Multiplication
 lets a near-zero on any critical factor sink the result, which is the
 behavior wanted: "junior-titled, requires 8 years" should not rank because the
@@ -21,9 +21,18 @@ WHY EXPONENTS FOR WEIGHTS
 In a product, a weight cannot be a coefficient (scaling a factor by a constant
 changes every score by the same ratio and reorders nothing). An exponent below
 1 compresses a factor toward 1, so it still moves the result but cannot
-dominate; above 1 sharpens it. Each user's 1-5 priority rating chooses the
-exponent, so "freshness matters most to me" changes the ranking without a
-single per-person constant in code.
+dominate; above 1 sharpens it. The exponents are fitted on the golden set by
+coordinate search, so each factor's influence is measured. They were once a
+per-user 1-5 priority rating, which is a preference wearing a weight's
+clothes: it moved the ranking with no evidence that it improved the odds.
+
+WHY NO PREFERENCES
+------------------
+Nothing here reads what the user said they want. The score estimates whether
+an application is worth making, and a stated wish does not change that: it
+cannot add a skill to a résumé or make a posting less contested. Preferences
+still filter the view (see invariant 16 — a display cutoff is never a
+deletion); they do not reorder it.
 
 WHY NOT A LEARNED RANKER
 ------------------------
@@ -47,6 +56,19 @@ from jobrank.models import Profile
 from jobrank.scoring import factors
 
 decision_log = get_logger("jobrank.scoring.decisions")
+
+
+def _corpus_fingerprint(all_postings: list) -> str:
+    """
+    Identifies the corpus the market model was built from, so the cache is
+    rebuilt when postings change and reused when they have not. Counts alone
+    would miss a refresh that replaced as many rows as it added, so the newest
+    posting id goes in too.
+    """
+    import hashlib
+    ids = sorted(postings.field(p, "id") or "" for p in all_postings)
+    digest = hashlib.sha256(f"{len(ids)}:{ids[-1] if ids else ''}:{ids[0] if ids else ''}".encode())
+    return digest.hexdigest()[:16]
 
 
 @dataclass
@@ -103,11 +125,17 @@ class Context:
     similarities: dict[str, float] = field(default_factory=dict)
     semantic_model: str | None = None
     disabled: frozenset = frozenset()
+    market: object | None = None              # MarketModel: what the corpus demands
+    market_affinity: dict = field(default_factory=dict)   # family -> résumé's coverage of it
 
 
 def effective_weights(profile: Profile) -> dict[str, float]:
-    return {name: profile.factor_weights.get(name, 1.0) * cfg.FACTOR_WEIGHT_SCALE.get(name, 1.0)
-            for name in cfg.FACTORS}
+    """
+    The same exponents for everybody. They are fitted on the golden set, not
+    stated by the user: a priority rating is a preference, and preferences do
+    not change whether an application succeeds.
+    """
+    return dict(cfg.FACTOR_EXPONENTS)
 
 
 def compose(results: dict[str, factors.FactorResult], weights: dict[str, float]) -> float:
@@ -126,10 +154,9 @@ def score_posting(posting, ctx: Context) -> ScoreResult:
     posting_id = postings.field(posting, "id")
     enrichment = (ctx.enrichments.get(posting_id) or {}).get("data")
     results: dict[str, factors.FactorResult] = {
-        "skills": factors.skills(posting, ctx.profile, enrichment),
+        "skills": factors.skills(posting, ctx.profile, enrichment, ctx.market),
         "seniority": factors.seniority(posting, ctx.profile, enrichment),
-        "role": factors.role(posting, ctx.profile),
-        "preferences": factors.preferences(posting, ctx.profile, enrichment, ctx.volumes),
+        "role": factors.role(posting, ctx.profile, ctx.market, ctx.market_affinity),
         "freshness": factors.freshness(posting, ctx.today, ctx.volumes),
     }
     semantic = factors.semantic(ctx.similarities.get(posting_id), ctx.semantic_model)
@@ -154,9 +181,18 @@ def score_posting(posting, ctx: Context) -> ScoreResult:
 
 def build_context(profile: Profile, all_postings: list, today: date | None = None,
                   enrichments: dict | None = None, semantic: bool = True,
-                  disabled: set[str] | None = None) -> Context:
+                  disabled: set[str] | None = None, use_market: bool = True,
+                  build_market: bool = True) -> Context:
     ctx = Context(profile=profile, today=today or date.today(), volumes=postings.company_volumes(all_postings),
                   enrichments=enrichments or {}, disabled=frozenset(disabled or ()))
+    if use_market and "market" not in ctx.disabled:
+        from jobrank import market as market_model
+        ctx.market = market_model.load(all_postings, fingerprint=_corpus_fingerprint(all_postings),
+                                       allow_build=build_market)
+        if not ctx.market.total_postings:
+            ctx.market = None                 # no model is no information, not zero demand
+        else:
+            ctx.market_affinity = ctx.market.affinity(profile.skills)
     if semantic and "semantic" not in ctx.disabled:
         from jobrank.semantic import similarities_for
         ctx.similarities, ctx.semantic_model = similarities_for(profile, all_postings, ctx.enrichments)
@@ -165,9 +201,11 @@ def build_context(profile: Profile, all_postings: list, today: date | None = Non
 
 def score_all(profile: Profile, all_postings: list, today: date | None = None, enrichments: dict | None = None,
               semantic: bool = True, disabled: set[str] | None = None, log_decisions: bool = False,
-              run_id: str | None = None) -> list[ScoreResult]:
+              run_id: str | None = None, use_market: bool = True,
+              build_market: bool = True) -> list[ScoreResult]:
     """Score and rank every posting for one profile, best first."""
-    ctx = build_context(profile, all_postings, today, enrichments, semantic, disabled)
+    ctx = build_context(profile, all_postings, today, enrichments, semantic, disabled, use_market,
+                        build_market)
     results = [score_posting(p, ctx) for p in all_postings]
     results.sort(key=lambda r: (-r.raw, r.posting_id))
     if log_decisions:

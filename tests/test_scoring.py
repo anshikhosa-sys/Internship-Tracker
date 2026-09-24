@@ -6,7 +6,7 @@ import pytest
 from jobrank import enrich, postings
 from jobrank.config import scoring as cfg
 from jobrank.config import semantic as semantic_cfg
-from jobrank.models import Preferences, Profile, SeniorityEstimate
+from jobrank.models import Profile, SeniorityEstimate
 from jobrank.scoring import engine, factors
 
 TODAY = date(2026, 9, 15)
@@ -20,9 +20,6 @@ def make_profile(**overrides) -> Profile:
                                     years_experience=0.5, is_student=True),
         role_affinity={"infrastructure": 0.95, "backend": 0.8, "software_engineering": 0.6,
                        "data_science": 0.1, "product_management": 0.05},
-        target_families=["infrastructure", "backend"],
-        factor_weights={f: 1.0 for f in cfg.FACTORS},
-        preferences=Preferences(),
         semantic_text="Infrastructure engineer intern. Go, Kubernetes.",
     )
     base.update(overrides)
@@ -53,16 +50,34 @@ def test_zero_factor_is_zero_even_with_zero_weight_elsewhere():
     assert engine.compose(results, {"a": 1.0, "b": 0.0}) == 0.0
 
 
-def test_exponent_changes_ranking_not_just_scale():
-    """A user who prioritizes freshness should get a different ORDER, not the same order rescaled."""
+def test_exponent_changes_ranking_not_just_scale(monkeypatch):
+    """
+    An exponent must genuinely reorder. In a product a coefficient cannot: it
+    rescales every score by the same ratio and leaves the order untouched.
+    """
     old_fit = make_posting(id="old", role="Infrastructure Engineer Intern", date_posted="2026-09-01")
     new_meh = make_posting(id="new", role="Software Engineer Intern", date_posted="2026-09-15")
     rows = [old_fit, new_meh]
-    fit_first = make_profile(factor_weights={**{f: 1.0 for f in cfg.FACTORS}, "role": 1.25, "freshness": 0.25})
-    fresh_first = make_profile(factor_weights={**{f: 1.0 for f in cfg.FACTORS}, "role": 0.25, "freshness": 1.25})
-    top = lambda p: engine.score_all(p, rows, today=TODAY, semantic=False)[0].posting_id  # noqa: E731
-    assert top(fit_first) == "old"
-    assert top(fresh_first) == "new"
+
+    def top(**exponents):
+        monkeypatch.setattr(cfg, "FACTOR_EXPONENTS", {**{f: 1.0 for f in cfg.FACTORS}, **exponents})
+        return engine.score_all(make_profile(), rows, today=TODAY, semantic=False, use_market=False)[0].posting_id
+
+    assert top(role=1.25, freshness=0.25) == "old"
+    assert top(role=0.25, freshness=1.25) == "new"
+
+
+def test_no_factor_reads_a_stated_preference():
+    """
+    The scorer must not consult what the user said they want. Two profiles
+    that differ only in their stated preferences must score identically.
+    """
+    silent = make_profile()
+    opinionated = make_profile()
+    rows = [make_posting(), make_posting(id="2", company="Jane Street", role="Quant Intern")]
+    scored = lambda p: [(r.posting_id, r.score) for r in   # noqa: E731
+                        engine.score_all(p, rows, today=TODAY, semantic=False, use_market=False)]
+    assert scored(silent) == scored(opinionated)
 
 
 def test_two_profiles_rank_the_same_postings_differently():
@@ -75,7 +90,7 @@ def test_two_profiles_rank_the_same_postings_differently():
 def test_result_explains_every_factor():
     result = engine.score_all(make_profile(), [make_posting()], today=TODAY, semantic=False)[0]
     data = result.to_dict()
-    assert set(data["factors"]) == {"skills", "seniority", "role", "preferences", "freshness"}
+    assert set(data["factors"]) == {"skills", "seniority", "role", "freshness"}
     product = np.prod([f["contribution"] for f in data["factors"].values()])
     assert round(product * 100) == result.score
     assert all(f["reasons"] for f in data["factors"].values())
@@ -140,35 +155,52 @@ def test_role_uses_derived_affinity_and_category_fallback():
     assert none.neutral and none.value == cfg.ROLE_UNKNOWN
 
 
-# --- preferences -------------------------------------------------------------------
+# --- market model: what the corpus demands ------------------------------------
 
-def test_excluded_industry_is_near_zero():
-    profile = make_profile(preferences=Preferences(exclude_industries=["quant_trading"]))
-    result = factors.preferences(make_posting(company="Jane Street"), profile)
-    assert result.value == pytest.approx(cfg.INDUSTRY_EXCLUDED)
-
-
-def test_location_alias_and_remote_rules():
-    profile = make_profile(preferences=Preferences(locations=["NYC"], remote="remote_only"))
-    in_nyc_onsite = factors.preferences(make_posting(location="New York, NY"), profile)
-    assert in_nyc_onsite.value == pytest.approx(cfg.REMOTE_MATRIX["remote_only"]["onsite"])
-    remote = factors.preferences(make_posting(location="Remote"), make_profile(
-        preferences=Preferences(locations=["Remote"], remote="remote_only")))
-    assert remote.value == 1.0
+def test_idf_weights_rare_skills_above_common_ones():
+    """
+    Matching Python says little — almost every posting asks for it. Matching
+    CUDA says a great deal. A plain average counts them the same.
+    """
+    from jobrank import market
+    model = market.build([make_posting(id=str(n), role="Software Engineer Intern, Python")
+                          for n in range(200)] +
+                         [make_posting(id="rare", role="Engineer Intern, CUDA")])
+    assert model.idf("cuda") > model.idf("python")
 
 
-def test_start_before_available():
-    profile = make_profile(preferences=Preferences(earliest_start="2027-05"))
-    early = factors.preferences(make_posting(role="Fall 2026 Infrastructure Intern"), profile)
-    ok = factors.preferences(make_posting(role="Summer 2027 Infrastructure Intern"), profile)
-    assert early.value == pytest.approx(cfg.START_BEFORE_AVAILABLE) and ok.value == 1.0
+def test_market_affinity_credits_transferable_skills():
+    """
+    The hand-written evidence list for data engineering is all specialist
+    tools, so a Python-and-SQL résumé floored at 0.05. The corpus knows those
+    postings ask for Python and SQL too.
+    """
+    from jobrank import market
+    rows = [make_posting(id=f"de{n}", role="Data Engineer Intern",
+                         description="We use Python and SQL every day.")
+            for n in range(40)]
+    model = market.build(rows)
+    affinity = model.affinity({"python": 1.0, "sql": 1.0})
+    assert affinity["data_engineering"] > 0.5
 
 
-def test_unknown_facts_do_not_penalize():
-    profile = make_profile(preferences=Preferences(locations=["Chicago"], company_sizes=["large"]))
-    result = factors.preferences(make_posting(location=""), profile)
-    # No location to compare; size is unknown-small by volume, which IS known, so only size applies.
-    assert result.value == pytest.approx(cfg.COMPANY_SIZE_MISMATCH)
+def test_market_model_is_ignored_when_the_sample_is_too_small():
+    """Too few postings is no information, not zero demand (invariant 7)."""
+    from jobrank import market
+    model = market.build([make_posting(id="1", role="Data Engineer Intern", description="Python")])
+    assert model.demand("data_engineering") == {}
+    assert model.affinity({"python": 1.0}).get("data_engineering") is None
+
+
+def test_role_blends_evidence_with_market_but_evidence_leads():
+    profile = make_profile(role_affinity={"infrastructure": 0.9})
+    posting = make_posting(role="Infrastructure Engineer Intern")
+    alone = factors.role(posting, profile).value
+    with_market = factors.role(posting, profile, market=object(),
+                               market_affinity={"infrastructure": 0.1}).value
+    assert alone == pytest.approx(0.9)
+    assert 0.1 < with_market < 0.9          # market drags it down, evidence still leads
+    assert with_market > 0.5
 
 
 # --- freshness -------------------------------------------------------------------
@@ -282,3 +314,25 @@ def test_non_software_disciplines_do_not_match_software_families(title, expected
     """"Infrastructure" is a word two unrelated professions share."""
     from jobrank.roles import classify_title
     assert classify_title(title) == expected
+
+
+@pytest.mark.parametrize("title,category,expected", [
+    ("Structural Design Intern", "Software Engineering", []),
+    ("Reservoir Engineer Intern", "Software Engineering", []),
+    ("Materials Engineer Intern", "Data Science, AI & Machine Learning", []),
+    ("Transportation Systems Analysis Intern", "Software Engineering", []),
+    # A title the veto says nothing about still takes the category.
+    ("Software Development Intern", "Software Engineering", ["software_engineering"]),
+    ("Summer Technology Intern", "Software Engineering", ["software_engineering"]),
+])
+def test_category_fallback_respects_the_discipline_veto(title, category, expected):
+    """
+    classify_title() vetoes a software family when the title names another
+    discipline, but the category fallback below it did not -- so a civil or
+    mechanical role that an aggregator had filed under "Software Engineering"
+    came back as software by the back door. 141 postings in the live database
+    took that path, and several reached the top 40 of the ranked list
+    ("Structural Design Intern", "Water Resources Design Intern").
+    """
+    from jobrank import postings as posting_facts
+    assert posting_facts.role_families({"role": title, "category": category}) == expected

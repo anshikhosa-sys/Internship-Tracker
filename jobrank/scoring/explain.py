@@ -16,7 +16,6 @@ LABELS = {
     "skills": "Skill overlap",
     "seniority": "Seniority fit",
     "role": "Role affinity",
-    "preferences": "Preference match",
     "freshness": "Freshness",
     "semantic": "Semantic similarity",
 }
@@ -66,6 +65,8 @@ def explain(profile: Profile, posting: dict, result: ScoreResult, rank: int | No
 
     family = result.role_family
     if family:
-        lines.append(f"Classified as {taxonomy.ROLE_FAMILIES[family]['label']}; "
-                     f"stated targets: {', '.join(profile.target_families) or 'none'}.")
+        detail = result.factors["role"].detail if "role" in result.factors else {}
+        market = detail.get("market_affinity")
+        note = f" You cover {market:.0%} of what these postings currently ask for." if market is not None else ""
+        lines.append(f"Classified as {taxonomy.ROLE_FAMILIES[family]['label']}.{note}")
     return "\n".join(lines)

@@ -67,7 +67,16 @@ def annotate(row: dict, result: ScoreResult) -> dict:
 
 
 def rank(user_id: str | None = None, conn=None, today: date | None = None, semantic: bool = True,
-         trigger: str = "dashboard") -> Ranking | None:
+         trigger: str = "dashboard", build_market: bool = False) -> Ranking | None:
+    """
+    Rank every posting for one user.
+
+    `build_market` is off by default because this is what a page load calls: a
+    full corpus scan takes seconds and takes a lock a concurrent refresh may
+    hold, which turns a slow page into a hung one. `refresh.py` builds the
+    model; the dashboard reads whatever is cached, and ranks without it if
+    nothing is.
+    """
     own = conn is None
     conn = conn or storage.connect()
     try:
@@ -90,7 +99,7 @@ def rank(user_id: str | None = None, conn=None, today: date | None = None, seman
         profile = store.load(user_id)
         raw_rows = storage.load_postings(conn)
         results = engine.score_all(profile, raw_rows, today=today, enrichments=enrichments, semantic=semantic,
-                                   log_decisions=True, run_id=run_id)
+                                   log_decisions=True, run_id=run_id, build_market=build_market)
         top = results[0] if results else None
         event(log, "ranking_computed", run_id=run_id, trigger=trigger, profile=user_id, postings=len(results),
               duration_ms=round((time.perf_counter() - started) * 1000, 1),
