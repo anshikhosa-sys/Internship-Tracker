@@ -28,6 +28,19 @@ def pattern_for(keyword: str, case_sensitive: bool = False) -> re.Pattern:
     return re.compile(rf"(?<![{_TOKEN_CHARS}.]){escaped}(?![{_TOKEN_CHARS}]|\.\w)", flags)
 
 
+@lru_cache(maxsize=4096)
+def _lowered(text: str) -> str:
+    """
+    text.lower(), memoised.
+
+    contains() is called on the order of a million times per scoring run, and
+    lowercasing its haystack each time cost seconds for a result that never
+    differs. The same few thousand titles and descriptions come round again
+    and again, so the cache hits almost every time.
+    """
+    return text.lower()
+
+
 def contains(text: str, keyword: str, case_sensitive: bool = False) -> bool:
     if not text or not keyword:
         return False
@@ -36,7 +49,7 @@ def contains(text: str, keyword: str, case_sensitive: bool = False) -> bool:
     if case_sensitive:
         if keyword.strip() not in text:
             return False
-    elif keyword.strip().lower() not in text.lower():
+    elif keyword.strip().lower() not in _lowered(text):
         return False
     return bool(pattern_for(keyword, case_sensitive).search(text))
 
@@ -45,7 +58,7 @@ def find_all(text: str, keywords, case_sensitive: bool = False) -> list[str]:
     """Keywords (in given order) that occur in text."""
     if not text:
         return []
-    haystack = text if case_sensitive else text.lower()
+    haystack = text if case_sensitive else _lowered(text)
     out = []
     for kw in keywords:
         needle = kw.strip() if case_sensitive else kw.strip().lower()
@@ -79,3 +92,23 @@ def expand_abbreviations(text: str, table: dict[str, str]) -> str:
     for short, full in table.items():
         out = pattern_for(short).sub(full, out)
     return _SPACE.sub(" ", out).strip()
+
+
+def mention_is_genuine(text: str, skill: str, rule: dict) -> bool:
+    """
+    Decide whether a matched word is the skill or the ordinary English word.
+
+    Some skill names are common words that no amount of whole-word matching or
+    casing can separate — "Spring 2027" is a season. A rule names what may not
+    follow the word, and what elsewhere in the text vouches for it.
+    """
+    if any(contains(text, phrase) for phrase in rule.get("qualified_by", [])):
+        return True
+    rejected = rule.get("rejected_after")
+    if not rejected:
+        return True
+    for match in pattern_for(skill).finditer(text):
+        tail = text[match.end():match.end() + 40]
+        if not re.match(rejected, tail, re.IGNORECASE):
+            return True          # at least one mention has no disqualifier after it
+    return False

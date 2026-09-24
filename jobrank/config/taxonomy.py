@@ -17,6 +17,29 @@ are listed under `case_sensitive` and only match with their original casing.
 # `category` groups skills for display and for role-family evidence; it is not
 # a weight. Canonical names are what profiles and postings store.
 
+# Skills whose name is also an ordinary English word, where case cannot
+# separate them. "Spring 2027" is a season, not the Java framework — measured
+# on the live corpus, 153 postings were credited with Spring for saying when
+# the internship starts, which inflated every Spring-on-résumé match and
+# distorted what the backend family appeared to demand.
+#
+# A mention is rejected when the disqualifying pattern follows it closely,
+# unless a qualifying phrase appears anywhere in the text.
+AMBIGUOUS_SKILLS = {
+    "spring": {
+        "rejected_after": r"\s*(?:/|-|,)?\s*(?:20\d\d|summer|winter|fall|autumn|semester|term|quarter|co-?op|intern|break|season)",
+        "qualified_by": ["spring boot", "spring framework", "spring mvc", "spring cloud", "java"],
+    },
+    "swift": {
+        "rejected_after": r"\s+(?:action|response|resolution|delivery|execution|decision)",
+        "qualified_by": ["ios", "xcode", "swiftui", "objective-c", "cocoa"],
+    },
+    "rust": {
+        "rejected_after": r"\s*(?:-|\s)?(?:proof|proofing|resistant|belt|removal|prevention)",
+        "qualified_by": ["cargo", "tokio", "systems programming", "c++", "memory safety"],
+    },
+}
+
 SKILLS = {
     # Languages
     "python": {"aliases": ["python", "python3"], "category": "language"},

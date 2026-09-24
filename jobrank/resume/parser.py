@@ -106,11 +106,29 @@ def canonical_skills(text: str) -> list[str]:
 
 @lru_cache(maxsize=65536)
 def _canonical_skills(text: str) -> tuple[str, ...]:
+    """
+    Every taxonomy skill named in the text, in taxonomy order.
+
+    The text is lowercased ONCE here rather than inside each of ~200 keyword
+    lookups. On job descriptions (~5 KB each) that repetition dominated
+    scoring: 3.4 million str.lower() calls and 4.3 s of a 15 s run, for a
+    result that is identical every time. The cheap substring test then rejects
+    nearly every skill before its regex is built.
+    """
+    lowered = text.lower()
     found = []
     for name, spec in taxonomy.SKILLS.items():
-        if textmatch.find_all(text, spec.get("aliases", [])) or \
-                textmatch.find_all(text, spec.get("case_sensitive", []), case_sensitive=True):
-            found.append(name)
+        aliases = spec.get("aliases", ())
+        cased = spec.get("case_sensitive", ())
+        if not (any(a in lowered for a in aliases) or any(c in text for c in cased)):
+            continue
+        if not (textmatch.find_all(text, aliases) or
+                textmatch.find_all(text, cased, case_sensitive=True)):
+            continue
+        rule = taxonomy.AMBIGUOUS_SKILLS.get(name)
+        if rule and not textmatch.mention_is_genuine(text, name, rule):
+            continue
+        found.append(name)
     return tuple(found)
 
 

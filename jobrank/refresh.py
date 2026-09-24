@@ -3,13 +3,14 @@ refresh.py — the command you run to update your listings.
 
     python3 refresh.py
 
-It does four things, in order:
+It does six things, in order:
 
     1. FETCH    ask each source for its postings
     2. STORE    save to SQLite, preserving first_seen and your applied marks
-    3. ENRICH   extract structured facts from new or changed posting text
-    4. SCORE    rank for the active profile (snapshot for notifications)
-    5. REPORT   print what's new since last time
+    3. DESCRIBE fetch each new posting's real description from its job board
+    4. ENRICH   extract structured facts from new or changed posting text
+    5. SCORE    rank for the active profile (snapshot for notifications)
+    6. REPORT   print what's new since last time
 
 Run this whenever you want fresh data (the source repo updates daily). Then
 run `python3 app.py` to browse the results.
@@ -167,7 +168,13 @@ def refresh(verbose: bool = True, notifications: bool = True) -> dict:
 
     storage.record_run(conn, run_time, result["total"], len(result["new_ids"]))
 
-    # -- 3. ENRICH ----------------------------------------------------------
+    # -- 3. DESCRIBE --------------------------------------------------------
+    # Sources publish a title and a link and nothing else, so the description
+    # is fetched from the board that actually serves the job. Best effort: a
+    # posting we cannot reach keeps an empty description and scores neutral.
+    described = fetch_descriptions(conn, verbose=verbose)
+
+    # -- 4. ENRICH ----------------------------------------------------------
     # Cached by text hash, so only new or changed postings are analyzed. A
     # local model is slow, so its calls are bounded per run; rules are not.
     active_rows = storage.load_postings(conn)
@@ -177,8 +184,10 @@ def refresh(verbose: bool = True, notifications: bool = True) -> dict:
         print(f"  enriched {enrich_stats['enriched']} postings "
               f"({enrich_stats['unchanged']} unchanged)")
 
-    # -- 4. SCORE -----------------------------------------------------------
-    ranked = ranking.rank(conn=conn, trigger="refresh")
+    # -- 5. SCORE -----------------------------------------------------------
+    # The pipeline is where the market model is (re)built: it is the only
+    # place that may spend seconds on a corpus scan. Readers use the cache.
+    ranked = ranking.rank(conn=conn, trigger="refresh", build_market=True)
     if ranked is None:
         if verbose:
             print("\n  No profile yet — create one at /profile or with "
@@ -265,3 +274,42 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def fetch_descriptions(conn, limit: int | None = None, verbose: bool = True) -> int:
+    """
+    Fetch descriptions for active postings that have none, and store them.
+
+    Only postings whose board we can reach are attempted, and board-level
+    endpoints are shared across an employer, so this costs far fewer requests
+    than postings. Any failure is silent by design: a missing description is a
+    neutral skills score, never a penalty (invariant 4).
+    """
+    from jobrank import descriptions
+    from jobrank.config import descriptions as descriptions_cfg
+
+    missing = storage.postings_without_description(conn)
+    targets = [(pid, url) for pid, url in missing if descriptions.identify(url)]
+    if limit:
+        targets = targets[:limit]
+    if not targets:
+        return 0
+
+    # Group by board so one request serves every posting behind it.
+    targets.sort(key=lambda row: (lambda t: (t.vendor, t.board))(descriptions.identify(row[1])))
+    fetcher = descriptions.Fetcher()
+    saved = 0
+    for posting_id, url in targets:
+        try:
+            text = fetcher.description_for(url)
+        except Exception:                     # noqa: BLE001 - never fail a refresh over this
+            text = ""
+        if text:
+            storage.set_description(conn, posting_id, text)
+            saved += 1
+    conn.commit()
+    if verbose:
+        print(f"  fetched {saved} job descriptions "
+              f"({fetcher.requests_made} requests, {len(targets)} reachable of {len(missing)} missing)")
+    return saved
+
