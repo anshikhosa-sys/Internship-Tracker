@@ -203,7 +203,10 @@ def build_context(profile: Profile, all_postings: list, today: date | None = Non
             ctx.market_affinity = ctx.market.affinity(profile.skills)
     if semantic and "semantic" not in ctx.disabled:
         from jobrank.semantic import similarities_for
-        ctx.similarities, ctx.semantic_model = similarities_for(profile, all_postings, ctx.enrichments)
+        # Embedding is pipeline work, for the same reason the market model is:
+        # it takes minutes and it takes a write lock.
+        ctx.similarities, ctx.semantic_model = similarities_for(
+            profile, all_postings, ctx.enrichments, allow_embed=build_market)
     return ctx
 
 
@@ -224,10 +227,54 @@ def score_all(profile: Profile, all_postings: list, today: date | None = None, e
 
 
 def fit_label(score: int) -> str:
+    """
+    A label for one score in isolation — used by notifications, which have no
+    ranking to compare against. Prefer fit_labels_for() wherever the whole
+    ranking is in hand.
+    """
     if score >= cfg.STRONG_FIT_THRESHOLD:
         return "strong"
     if score >= cfg.GOOD_FIT_THRESHOLD:
         return "good"
     if score >= cfg.LOW_FIT_THRESHOLD:
+        return "fair"
+    return "low"
+
+
+def fit_thresholds(scores: list[int]) -> dict[str, int]:
+    """
+    Turn a ranking's own score distribution into cut-offs for its labels.
+
+    The score is a product of factors that are each below 1, so it is bounded
+    well below 100 and its useful range shifts with the corpus and the résumé.
+    A percentile means the same thing in every one of those worlds; a fixed
+    number does not, and the fixed ones had drifted until three postings out
+    of 4,779 qualified as strong.
+
+    The absolute minimums stop a thin ranking from promoting its best rows:
+    being in the top 1% of a list you match nothing in is not a strong fit.
+    """
+    if not scores:
+        return {"strong": cfg.STRONG_FIT_MINIMUM, "good": cfg.GOOD_FIT_MINIMUM,
+                "fair": cfg.FAIR_FIT_MINIMUM}
+    ordered = sorted(scores)
+
+    def at(percentile: float) -> int:
+        index = min(len(ordered) - 1, int(len(ordered) * percentile / 100))
+        return ordered[index]
+
+    return {
+        "strong": max(at(cfg.STRONG_FIT_PERCENTILE), cfg.STRONG_FIT_MINIMUM),
+        "good": max(at(cfg.GOOD_FIT_PERCENTILE), cfg.GOOD_FIT_MINIMUM),
+        "fair": max(at(cfg.FAIR_FIT_PERCENTILE), cfg.FAIR_FIT_MINIMUM),
+    }
+
+
+def fit_labels_for(score: int, thresholds: dict[str, int]) -> str:
+    if score >= thresholds["strong"]:
+        return "strong"
+    if score >= thresholds["good"]:
+        return "good"
+    if score >= thresholds["fair"]:
         return "fair"
     return "low"

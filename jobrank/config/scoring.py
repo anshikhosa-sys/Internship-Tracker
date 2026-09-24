@@ -120,6 +120,28 @@ SEMANTIC_CALIBRATION = {
 SEMANTIC_MIN = 0.20
 
 # ---- Display --------------------------------------------------------------------
-STRONG_FIT_THRESHOLD = 42
-GOOD_FIT_THRESHOLD = 28
-LOW_FIT_THRESHOLD = 14
+# Fit labels are RELATIVE to the ranking they appear in, not absolute cutoffs.
+#
+# The score is a product of five factors, each below 1 for any real posting, so
+# it is bounded far below 100 by construction: a genuinely good match with no
+# published description scores around 42, and half the corpus sits at 2. Fixed
+# cutoffs against that distribution called three postings out of 4,779 "strong"
+# and everything else "low", which tells a reader nothing.
+#
+# A percentile self-calibrates: it means the same thing for any résumé and any
+# corpus, which fixed numbers tuned to one snapshot cannot.
+STRONG_FIT_PERCENTILE = 99      # top 1% of what is ranked for this person
+GOOD_FIT_PERCENTILE = 95
+FAIR_FIT_PERCENTILE = 75
+
+# ...but a percentile alone would promote the best of a bad list. A posting has
+# to clear an absolute floor as well before it is called a strong fit.
+STRONG_FIT_MINIMUM = 20
+GOOD_FIT_MINIMUM = 12
+FAIR_FIT_MINIMUM = 5
+
+# Kept for the notification path, which decides in isolation and has no
+# ranking to compare against.
+STRONG_FIT_THRESHOLD = 30
+GOOD_FIT_THRESHOLD = 20
+LOW_FIT_THRESHOLD = 10

@@ -113,7 +113,7 @@ class MarketModel:
         résumé gets real credit for data engineering, but a family that wants
         Kafka and Airflow still separates someone who has them.
         """
-        scores: dict[str, float] = {}
+        raw: dict[str, float] = {}
         for family in taxonomy.ROLE_FAMILIES:
             demanded = self.demand(family)
             if not demanded:
@@ -124,8 +124,19 @@ class MarketModel:
                 total += weight
                 earned += weight * min(1.0, user_skills.get(skill, 0.0))
             if total > 0:
-                scores[family] = round(earned / total, 4)
-        return scores
+                raw[family] = earned / total
+        if not raw:
+            return {}
+
+        # Rescale onto [0,1] against a FIXED observed range. A coverage ratio
+        # never approaches 1 — nobody has every skill a family asks for — so
+        # using it raw reads a good fit as a poor one and drags the whole
+        # product down. Normalising against this résumé's own maximum instead
+        # would be worse: it makes whatever someone is least-bad at score 1.0.
+        span = max(1e-6, cfg.MARKET_CALIBRATION_CEILING - cfg.MARKET_CALIBRATION_FLOOR)
+        return {family: round(max(cfg.MARKET_CALIBRATION_MIN,
+                                  min(1.0, (value - cfg.MARKET_CALIBRATION_FLOOR) / span)), 4)
+                for family, value in raw.items()}
 
     # -- persistence -------------------------------------------------------
     def to_dict(self) -> dict:

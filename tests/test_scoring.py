@@ -393,3 +393,35 @@ def test_market_cache_notices_new_descriptions():
     before = engine._corpus_fingerprint(rows)
     rows[0]["description"] = "We use Kubernetes, Terraform and Go every day."
     assert engine._corpus_fingerprint(rows) != before
+
+
+# --- fit labels --------------------------------------------------------------
+
+class TestFitLabels:
+    """
+    Labels are relative to the ranking they appear in. The score is a product
+    of five sub-1 factors, so its useful range shifts with the corpus and the
+    résumé; fixed cut-offs drifted until 3 of 4,779 postings read "strong".
+    """
+
+    def test_bands_come_from_the_distribution(self):
+        scores = list(range(0, 100))
+        bands = engine.fit_thresholds(scores)
+        assert bands["strong"] > bands["good"] > bands["fair"]
+        assert bands["strong"] >= 90          # top 1% of 0..99
+
+    def test_a_thin_ranking_does_not_promote_its_best_row(self):
+        """Top of a list you match nothing in is not a strong fit."""
+        bands = engine.fit_thresholds([0, 1, 1, 2, 3])
+        assert bands["strong"] == cfg.STRONG_FIT_MINIMUM
+        assert engine.fit_labels_for(3, bands) == "low"
+
+    def test_labels_are_ordered(self):
+        bands = engine.fit_thresholds(list(range(0, 100)))
+        assert engine.fit_labels_for(99, bands) == "strong"
+        assert engine.fit_labels_for(bands["good"], bands) == "good"
+        assert engine.fit_labels_for(bands["fair"], bands) == "fair"
+        assert engine.fit_labels_for(0, bands) == "low"
+
+    def test_an_empty_ranking_falls_back_to_the_minimums(self):
+        assert engine.fit_thresholds([])["strong"] == cfg.STRONG_FIT_MINIMUM

@@ -44,13 +44,14 @@ def _profile_mtime(user_id: str) -> float:
         return 0.0
 
 
-def annotate(row: dict, result: ScoreResult) -> dict:
+def annotate(row: dict, result: ScoreResult, thresholds: dict | None = None) -> dict:
     """Copy score facts onto a posting row for templates and reports."""
     row = dict(row)
     fresh = result.factors.get("freshness")
     row.update({
         "fit_score": result.score,
-        "fit": engine.fit_label(result.score),
+        "fit": (engine.fit_labels_for(result.score, thresholds) if thresholds
+                else engine.fit_label(result.score)),
         "factor_values": {name: round(f.value, 3) for name, f in result.factors.items()},
         "factors": result.to_dict()["factors"],
         "role_family": result.role_family,
@@ -91,7 +92,9 @@ def rank(user_id: str | None = None, conn=None, today: date | None = None, seman
             # Application status changes without a refresh; re-read the rows,
             # keep the (expensive) scores.
             fresh_rows = {r["id"]: r for r in storage.load_postings(conn)}
-            rows = [annotate(fresh_rows[r["id"]], cached.results[r["id"]]) for r in cached.rows if r["id"] in fresh_rows]
+            bands = engine.fit_thresholds([x.score for x in cached.results.values()])
+            rows = [annotate(fresh_rows[r["id"]], cached.results[r["id"]], bands)
+                    for r in cached.rows if r["id"] in fresh_rows]
             return Ranking(cached.profile, rows, cached.results, cached.ordered_ids)
 
         started = time.perf_counter()
@@ -106,7 +109,8 @@ def rank(user_id: str | None = None, conn=None, today: date | None = None, seman
               semantic_model=(top.factors["semantic"].detail["model"] if top and "semantic" in top.factors else None),
               top_score=top.score if top else None)
         by_id = {r.posting_id: r for r in results}
-        rows = [annotate(row, by_id[row["id"]]) for row in raw_rows]
+        bands = engine.fit_thresholds([r.score for r in results])
+        rows = [annotate(row, by_id[row["id"]], bands) for row in raw_rows]
         ranking = Ranking(profile, rows, by_id, [r.posting_id for r in results])
         _cache.clear()
         _cache[key] = ranking

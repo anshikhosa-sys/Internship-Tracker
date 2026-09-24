@@ -17,8 +17,18 @@ from jobrank.models import Profile
 log = get_logger(__name__)
 
 
-def similarities_for(profile: Profile, all_postings: list, enrichments: dict | None = None
-                     ) -> tuple[dict[str, float], str | None]:
+def similarities_for(profile: Profile, all_postings: list, enrichments: dict | None = None,
+                     allow_embed: bool = True) -> tuple[dict[str, float], str | None]:
+    """
+    Cosine similarity between the résumé and every posting.
+
+    `allow_embed=False` means "compare against the vectors that already exist".
+    Embedding is minutes of CPU: one describe run rewrote 692 posting texts,
+    and the next page load tried to re-embed all of them inside the request,
+    which is a two-minute page. Postings with no vector yet simply have no
+    semantic factor that day (invariant 6 — missing data is neutral), and the
+    pipeline fills them in on its next run.
+    """
     if not profile.semantic_text.strip():
         return {}, None
     try:
@@ -33,7 +43,7 @@ def similarities_for(profile: Profile, all_postings: list, enrichments: dict | N
                     p, ((enrichments or {}).get(postings.field(p, "id")) or {}).get("data"))
                 for p in all_postings
             }
-            embedded = index.upsert(texts)
+            embedded = index.upsert(texts) if allow_embed else 0
             sims = index.similarities(profile.semantic_text, list(texts))
         finally:
             index.close()

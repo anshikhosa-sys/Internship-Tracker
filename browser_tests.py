@@ -396,6 +396,25 @@ def _test_no_javascript_filtering(browser, base):
     context.close()
 
 
+def _wait_for_detail(page, expected_id, timeout=15000):
+    """
+    Block until the detail pane is showing `expected_id`.
+
+    Returns quietly on timeout so the check that follows reports the real
+    mismatch — a bare "timed out waiting for a locator" says nothing about
+    which job was shown.
+    """
+    try:
+        page.wait_for_function(
+            """(id) => {
+                const card = document.querySelector('.detail-card');
+                return !!card && card.dataset.id === id;
+            }""",
+            arg=expected_id, timeout=timeout)
+    except Exception:
+        pass
+
+
 def _test_detail_pane(browser, base):
     """
     Picking a job swaps the pane, changes the URL, and the back button
@@ -422,7 +441,12 @@ def _test_detail_pane(browser, base):
     first_detail = page.locator(".detail-card").get_attribute("data-id")
     target = cards.nth(1).get_attribute("data-id")
     cards.nth(1).click()
-    page.wait_for_timeout(600)
+    # Wait for the swap itself, not for a guessed number of milliseconds. The
+    # pane is filled by a fetch, so a fixed sleep only passes while the server
+    # happens to be fast: adding job descriptions made ranking slower and this
+    # started failing everywhere, with the endpoint returning a correct 200
+    # the whole time.
+    _wait_for_detail(page, target)
 
     check(page.locator(".detail-card").get_attribute("data-id") == target,
           "clicking a card shows that job in the detail pane")
@@ -434,7 +458,7 @@ def _test_detail_pane(browser, base):
           "exactly one card is marked as selected")
 
     page.go_back()
-    page.wait_for_timeout(600)
+    _wait_for_detail(page, first_detail)
     back_to = page.locator(".detail-card").get_attribute("data-id")
     check(back_to == first_detail,
           "the back button returns to the job you were looking at",
@@ -469,7 +493,13 @@ def _test_narrow_screen(browser, base):
     card = page.locator("a.posting-link").first
     if card.count():
         card.click()
-        page.wait_for_timeout(600)
+        # Waiting for the pane to hold this job would pass instantly: the
+        # first card is the one the pane already shows on load. What the tap
+        # has to change on a phone is which pane is VISIBLE.
+        try:
+            page.wait_for_selector(".detail-card", state="visible", timeout=15000)
+        except Exception:
+            pass
         check(page.locator(".detail-card").is_visible(),
               "tapping a card opens that job")
         check(page.locator(".pane-list").is_visible() is False,

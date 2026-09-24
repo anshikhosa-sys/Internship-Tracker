@@ -19,6 +19,15 @@
     </div>
     <div class="topbar-actions">
       <a class="btn-secondary" href="{{ url_for('index') }}">Back to list</a>
+      {# Marked from here because this is where the application is actually
+         sent. Having to return to the list to tick a box is how a sent
+         application ends up unrecorded. #}
+      <button type="button" id="applied-toggle" class="btn-secondary"
+              data-id="{{ posting.id }}"
+              data-applied="{{ '1' if already_applied else '0' }}"
+              aria-pressed="{{ 'true' if already_applied else 'false' }}">
+        {{ 'Applied ✓' if already_applied else 'Mark as applied' }}
+      </button>
       <a class="btn-refresh" href="{{ posting.apply_url }}"
          target="_blank" rel="noopener noreferrer">Open application</a>
     </div>
@@ -26,6 +35,16 @@
 </header>
 
 <main class="packet">
+
+<form id="applied-fallback" method="post" action="{{ url_for('applied_form_route') }}"
+      class="applied-fallback" {% if not profile_error %}hidden{% endif %}>
+  <input type="hidden" name="id" value="{{ posting.id }}">
+  <input type="hidden" name="applied" value="{{ '0' if already_applied else '1' }}">
+  <input type="hidden" name="next" value="{{ request.full_path }}">
+  <button type="submit" class="btn-secondary">
+    {{ 'Mark as not applied' if already_applied else 'Mark as applied' }}
+  </button>
+</form>
 
 {% if profile_error %}
   <div class="card"><pre class="error-message">{{ profile_error }}</pre></div>
@@ -196,6 +215,40 @@ document.querySelectorAll('.btn-copy').forEach(function (button) {
     flash('Selected — press Cmd+C', 6000);
   });
 });
+</script>
+
+<script>
+// Mark this posting applied without leaving the page. Falls back to the
+// no-JavaScript form below if fetch is unavailable or the call fails, so the
+// button is never a dead end when the record matters most.
+(function () {
+  var button = document.getElementById('applied-toggle');
+  if (!button) { return; }
+
+  button.addEventListener('click', function () {
+    var next = button.dataset.applied !== '1';
+    button.disabled = true;
+    fetch('/api/applied', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: button.dataset.id, applied: next })
+    }).then(function (response) {
+      if (!response.ok) { throw new Error('rejected'); }
+      return response.json();
+    }).then(function (data) {
+      if (!data.ok) { throw new Error(data.error || 'failed'); }
+      button.dataset.applied = data.applied ? '1' : '0';
+      button.setAttribute('aria-pressed', data.applied ? 'true' : 'false');
+      button.textContent = data.applied ? 'Applied \u2713' : 'Mark as applied';
+      button.disabled = false;
+    }).catch(function () {
+      button.disabled = false;
+      button.textContent = 'Could not save \u2014 use the button below';
+      var fallback = document.getElementById('applied-fallback');
+      if (fallback) { fallback.hidden = false; }
+    });
+  });
+})();
 </script>
 
 </body>

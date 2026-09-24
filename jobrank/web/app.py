@@ -859,6 +859,32 @@ def api_applied():
     return jsonify({"ok": True, "applied": applied, "applied_total": total})
 
 
+@app.route("/applied", methods=["POST"])
+def applied_form_route():
+    """
+    Mark a posting applied from a plain form, with no JavaScript.
+
+    The prep page's button uses /api/applied so the page does not reload, but
+    a record of an application you actually sent must not depend on fetch()
+    working. This is the same action as a form POST, redirecting back where
+    you were (invariant 19 keeps it a POST: a GET must never mutate).
+    """
+    posting_id = (request.form.get("id") or "").strip()
+    if not posting_id:
+        return render_template("error.html", message="No posting given."), 400
+
+    conn = storage.connect()
+    storage.set_applied(conn, posting_id, request.form.get("applied") == "1")
+    conn.close()
+
+    target = request.form.get("next") or ""
+    # Only ever bounce back inside this app; an open redirect would let a
+    # crafted link send someone off-site from a POST they trusted.
+    if not target.startswith("/") or target.startswith("//"):
+        target = url_for("index")
+    return redirect(target)
+
+
 @app.route("/mark-seen", methods=["POST"])
 def mark_seen_route():
     """Clear every NEW badge."""
@@ -912,6 +938,10 @@ def prompts_route(posting_id):
         experience_prompt=experience,
         profile_error=error,
         job_description=job_description,
+        # This page is where an application actually gets sent, so it is where
+        # it should be possible to say so — going back to the list to tick a
+        # box is how a sent application ends up never recorded.
+        already_applied=bool(posting.get("applied")),
     )
 
 
