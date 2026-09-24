@@ -4,6 +4,11 @@ A local recruiting platform that reads a résumé, derives a profile from it, an
 ranks live job postings by how worth applying to they are **for that person,
 today** — with a measurable answer for whether the ranking is any good.
 
+It asks for a résumé and **nothing else**. There is no "what kind of role do you
+want" form, because a stated wish cannot add a skill to a résumé or make a
+posting less contested. Ranking comes from what the résumé proves and what
+employers are currently asking for.
+
 ![The ranked list, with one posting's score broken down by factor](docs/dashboard.png)
 
 Every number on that card is explained: each factor's value, the exponent the
@@ -27,13 +32,15 @@ individual. This version derives everything from whoever uploads a résumé, and
 ```
                                        ┌──────────────────────────┐
   résumé (PDF/DOCX/TXT) ──► extract ──►│ derived profile          │
-  stated preferences ─────────────────►│  skills · seniority      │
-                                       │  role affinity · weights │
+      (the only input)                 │  skills · seniority      │
+                                       │  role affinity           │
                                        └────────────┬─────────────┘
-  8 job sources ──► parse ──► dedupe ──► enrich ──► │ ──► score ──► rank ──► dashboard
-                                          (cached)  │        │
-                                                    │        └──► logs/scoring.jsonl
-                                     embeddings ────┘             (per-factor record)
+  8 job sources ──► parse ──► dedupe ──► describe ──► enrich ──► │ ─► score ─► rank ─► dashboard
+                                        (job-board    (cached)   │       │
+                                         APIs)                   │       └──► logs/scoring.jsonl
+                     market model ───────────────────────────────┤            (per-factor record)
+                  (skill rarity, per-family demand)              │
+                                     embeddings ─────────────────┘
                                     (local ONNX)
                                                           golden labels ──► evaluate.py
 ```
@@ -47,8 +54,24 @@ is never analysed twice. Contact details are never extracted.
 **Profile derivation** (`jobrank/profile`) computes what the scorer reads:
 skills weighted by where they were demonstrated and how recently, seniority from
 dated experience (internships and part-time credited at a discount, never
-self-reported), role affinity from past titles and project evidence blended with
-stated targets, and per-factor weights from the user's 1–5 priority ratings.
+self-reported), and role affinity from past titles and project evidence. The
+résumé is the only input.
+
+**Descriptions** (`jobrank/descriptions.py`) fetch what each posting actually
+asks for. Aggregated sources publish a title, a company and a link — measured on
+the live database, **0 of 9,404 postings carried a description**, which is why
+skill overlap was indistinguishable from noise. Six job boards (Greenhouse,
+Lever, Ashby, SmartRecruiters, Workable, Workday) serve theirs from public,
+unauthenticated endpoints; board-level endpoints return a whole employer in one
+request, so **1,227 descriptions cost 952 requests**.
+
+**Market model** (`jobrank/market.py`) learns two things from the live corpus
+that no résumé can supply: how *diagnostic* each skill is (Python appears
+everywhere and separates nobody; CUDA separates a great deal), and what each
+role family actually demands. The hand-written evidence list for data
+engineering was all specialist tools — spark, kafka, airflow, dbt — so a résumé
+with Python, SQL, PostgreSQL and pandas scored the 0.05 floor for it. The corpus
+puts the same résumé at 0.52.
 
 **Scoring** (`jobrank/scoring`) composes six factors multiplicatively.
 
@@ -63,12 +86,25 @@ score = 100 × Π factorᵢ ^ wᵢ        factorᵢ ∈ [0, 1]
 
 | Factor | Question | Neutral when |
 |---|---|---|
-| skills | Does the posting want what the résumé proves? | the posting names no skills |
+| skills | Does the posting want what the résumé proves, weighted by how rare each skill is? | the posting names no skills |
 | seniority | Is this the right level, and is the user eligible? | the posting states no level |
-| role | Is this the kind of work the user wants? | the title matches no family |
-| preferences | Location, remote, company size, industry, start date | nothing stated to check |
+| role | Is the résumé evidence for this kind of work? | the title matches no family |
 | freshness | Is it still open? Half-life varies by employer size | the posting has no date |
 | semantic | Résumé-to-posting similarity, local embeddings | no embedding available |
+
+**Why there is no preference factor.** An earlier version scored a "preference
+match" and blended stated target roles into role affinity at a 0.6 share.
+Measured on a real golden set, that inverted the ranking against the résumé:
+
+| role family | résumé evidence | old score | |
+|---|---|---|---|
+| ML engineering | 0.713 | **0.615** | demoted — PyTorch, CUDA, computer vision |
+| forward deployed | 0.393 | **0.757** | nearly doubled, for being typed into a form |
+| data science | 0.528 | **0.301** | nearly halved |
+
+Typing a job title into a box outranked years of evidence. The tool exists to
+raise the odds of landing a job, and a wish does not change those odds.
+Preferences now filter the view; they never move a score.
 
 **Why multiply rather than add.** An application is worth making only when every
 condition holds at once. Addition averages a fatal flaw away: a role three
@@ -80,8 +116,9 @@ the top of the list filled with month-old postings that could not be won.
 **Why weights are exponents.** In a product, a coefficient does nothing — it
 scales every score by the same ratio and reorders nothing. An exponent below 1
 compresses a factor toward 1 so it still moves the result but cannot dominate;
-above 1 sharpens it. A user who rates freshness 5 and role 2 gets a genuinely
-different order, with no per-person constant anywhere in the code.
+above 1 sharpens it. The exponents are global and identical for everyone; they
+were once a per-user 1–5 priority rating, which is a preference wearing a
+weight's clothes — it reordered the list with no evidence it improved anything.
 
 **Why not a learned ranker.** There is no per-user training data, and a
 recruiting tool has to explain itself. Every factor here is inspectable
@@ -104,13 +141,21 @@ labels over a 200-posting public snapshot, reproducible on a fresh clone:
 $ python3 evaluate.py --profile example --fixture eval/fixtures/example_postings.jsonl
 ```
 
-| Metric | Ranking | Random | 
+| Metric | Ranking | Random |
 |---|---|---|
-| AUC | **0.875** | 0.502 |
-| precision@10 | **0.900** | 0.259 |
-| precision@20 | **0.800** | 0.247 |
-| nDCG@10 | **0.598** | 0.178 |
-| nDCG@20 | **0.697** | 0.197 |
+| AUC | **0.848** | 0.495 |
+| MRR | **1.000** | 0.491 |
+| precision@10 | **0.800** | 0.265 |
+| precision@20 | **0.750** | 0.256 |
+| nDCG@10 | **0.768** | 0.183 |
+| nDCG@20 | **0.772** | 0.200 |
+
+Against the previous, preference-driven model on the same set: nDCG@10 rose
+from 0.598 to **0.768** and nDCG@20 from 0.697 to **0.772**, while AUC fell
+slightly from 0.875 to 0.848. That trade is the point — nDCG rewards putting
+the *most* relevant postings highest, which is what a person acts on, whereas
+part of the old AUC came from agreeing with labels that were themselves chosen
+under the stated preferences being scored.
 
 Real-world set — 36 genuine applications as positive labels over 4,130 live
 postings (the labels themselves stay private):
@@ -125,18 +170,19 @@ postings (the labels themselves stay private):
 
 | Removed | AUC | Δ |
 |---|---|---|
-| (none) | 0.771 | — |
-| semantic | 0.710 | **+0.061** |
-| role affinity | 0.723 | **+0.048** |
-| seniority | 0.764 | +0.007 |
-| preferences | 0.764 | +0.007 |
-| skills | 0.785 | −0.014 |
+| (none) | 0.758 | — |
+| role affinity | 0.711 | **+0.047** |
+| semantic | 0.715 | **+0.043** |
+| seniority | 0.748 | +0.010 |
+| preferences | 0.753 | +0.006 |
+| skills | 0.766 | −0.007 |
 
-The semantic layer is the largest single contributor, which is the case for
-layering embeddings on top of keyword matching rather than replacing it. Skill
-overlap is within noise **on title-only data** — most sources publish no
-description, so there is usually nothing to match against; it earns its keep
-when a description is present.
+This ablation is from the **previous** model and is kept because of what it
+shows. Two factors carried the ranking; preference match contributed +0.006,
+inside the noise, for a whole form of questions. Skill overlap was *negative* —
+removing it helped — because it was matching a résumé against a seven-word
+title on postings that carried no description. Those two findings are what
+motivated deleting preferences and building description fetching.
 
 ### Honest limitations
 
@@ -146,9 +192,13 @@ when a description is present.
   which is what turns precision into a measurement.
 - **Selection bias.** Those applications were chosen while browsing an earlier
   ranking, so they over-represent what that ranking surfaced.
-- **A ceiling from the data.** ~1,000 postings are some variant of "Software
-  Engineer Intern" with no description. Nothing in the model can separate them,
-  and the numbers above reflect that honestly.
+- **A ceiling from the data, now partly lifted.** ~1,000 postings are some
+  variant of "Software Engineer Intern". With only a title there is nothing to
+  tell them apart. Description fetching has raised coverage from **0% to 26%**
+  of active postings; the remaining 74% are on boards that render in JavaScript
+  or expose no public endpoint, and they still hit that ceiling.
+- **Metrics are measured with freshness excluded**, because it changes daily
+  and would make a saved baseline meaningless.
 - **The example labels are synthetic**, assigned to a fictional profile to make
   the harness reproducible. They are not a user study.
 
@@ -167,6 +217,7 @@ git clone https://github.com/anshikhosa-sys/Internship-Tracker.git jobrank
 cd jobrank
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
+# A résumé is the whole setup. Nothing asks what kind of job you want.
 .venv/bin/python run.py profile create --id me --resume /path/to/resume.pdf
 .venv/bin/python refresh.py          # fetch, dedupe, enrich, score
 .venv/bin/python app.py              # dashboard on http://127.0.0.1:5000
@@ -176,6 +227,8 @@ Everything else:
 
 ```bash
 python3 run.py --explain <posting_id>   # why this posting scored what it did
+python3 run.py describe                 # fetch real job descriptions from job boards
+python3 run.py market --profile me      # what the market wants, and the gaps in your résumé
 python3 run.py --stats                  # extraction usage, cache hits, coverage, timings
 python3 run.py label seed --profile me  # golden labels from your own applications
 python3 evaluate.py --profile me --compare   # regression gate: exits 1 on a drop
@@ -188,10 +241,11 @@ nothing else changes.
 
 ## Testing
 
-**187 tests** across extraction, profile derivation, every scoring factor, the
-evaluation harness, storage and migrations, dedupe, the dashboard, and résumé
-upload — plus **26 browser checks** driving real Chromium, because two
-clipboard bugs once shipped while every Python test passed. Tests never touch
+**228 tests** across extraction, profile derivation, every scoring factor, the
+market model, description fetching, the evaluation harness, storage and
+migrations, dedupe, the dashboard, and résumé upload — plus **47 browser
+checks** driving real Chromium, because two clipboard bugs once shipped while
+every Python test passed. Tests never touch
 the real database, profiles, caches, logs, or the network.
 
 ## What would change at 100× scale
@@ -215,8 +269,10 @@ the real database, profiles, caches, logs, or the network.
 jobrank/
   config/     data only: taxonomy, company facts, scoring shape, settings
   resume/     PDF/DOCX/text readers, date parsing, rule-based extraction
-  profile/    preference intake, derivation, storage, résumé diffing
+  profile/    derivation from a résumé, storage, résumé diffing
   scoring/    factor functions, multiplicative engine, explanations
+  market.py   skill rarity and per-family demand, learned from the live corpus
+  descriptions.py  real job descriptions from free public job-board APIs
   semantic/   local embeddings, SQLite vector store
   eval/       golden labels, retrieval metrics, harness and gate
   sources/    one module per job source, behind a shared Posting contract

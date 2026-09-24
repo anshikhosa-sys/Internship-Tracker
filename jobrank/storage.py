@@ -166,6 +166,24 @@ CREATE TABLE IF NOT EXISTS applications (
     status      TEXT DEFAULT '',
     applied_at  TEXT DEFAULT ''
 );
+
+-- Append-only ledger for jobrank/workflow: every legal stage change, with
+-- when it happened. `applications.status` above only ever holds the current
+-- stage as a bare string, so it can't answer "how did this get here" and
+-- nothing stops it being overwritten to something that skips steps. This
+-- table doesn't replace it and nothing rewrites it after the insert; a bad
+-- transition can add at most one wrong row, never touch the history behind
+-- it. See jobrank/workflow/states.py.
+CREATE TABLE IF NOT EXISTS application_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    posting_id   TEXT NOT NULL,
+    from_status  TEXT NOT NULL,
+    to_status    TEXT NOT NULL,
+    occurred_at  TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_application_events_posting
+    ON application_events(posting_id, occurred_at);
 """
 
 

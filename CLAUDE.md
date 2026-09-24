@@ -12,7 +12,9 @@ needs its backstory.
 .venv/bin/python browser_tests.py    # real Chromium through the UI; required for template JS changes
 .venv/bin/python evaluate.py --profile example           # ranking metrics on the golden set
 .venv/bin/python evaluate.py --profile example --compare # regression gate vs saved baseline
-.venv/bin/python run.py --help       # refresh, profile, prefs, explain, apply, label, stats
+.venv/bin/python run.py --help       # refresh, profile, explain, apply, label, stats
+.venv/bin/python run.py describe     # fetch real job descriptions from job boards
+.venv/bin/python run.py market --profile me   # what the market wants, and your gaps
 .venv/bin/python app.py              # dashboard on http://127.0.0.1:5000
 .venv/bin/python healthcheck.py      # every subsystem, PASS/WARN/FAIL
 ```
@@ -33,6 +35,8 @@ jobrank/
   profile/       preference intake, profile derivation, profile store
   scoring/       factor functions, multiplicative engine, explanations
   semantic/      local embeddings + SQLite vector store
+  descriptions.py fetch a posting's real description from its job board (free APIs)
+  market.py      what the live corpus demands: skill rarity, per-family demand
   enrich.py      optional posting enrichment (cached by content hash)
   ingest/        Source interface, registry, async pipeline, fuzzy dedupe, sources/
   eval/          golden labels, retrieval metrics, harness
@@ -55,36 +59,48 @@ docs/            design notes and history
    user is derived from their profile, never written as a constant.
 3. **Factors multiply.** `score = Π factorᵢ^wᵢ × 100`, each factor in [0, 1].
    A near-zero on a critical factor must sink the result; addition averages it
-   away. Exponents (wᵢ) come from the user's stated priorities.
-4. **Missing data is neutral, not negative.** A posting with no listed skills
+   away. Exponents (wᵢ) are global and fitted on the golden set, never stated
+   by a user — a priority rating is a preference wearing a weight's clothes.
+4. **Preferences filter; they never score.** Nothing the user *says they want*
+   may reach a factor. Scoring answers "is this application worth making",
+   which depends on evidence and on the market, not on a wish. Stated targets
+   are recorded for filtering only. A test asserts two profiles differing only
+   in preferences score identically.
+5. **Role affinity is evidence, then market transfer.** What the résumé proves
+   leads; what the corpus says a family demands fills the gap. Hand-written
+   evidence lists are a starting point, never the only say.
+6. **Missing data is neutral, not negative.** A posting with no listed skills
    or pay gets the configured neutral value, never a penalty.
-5. **Keyword and semantic matching are layered.** Keywords catch hard
+7. **Keyword and semantic matching are layered.** Keywords catch hard
    requirements, embeddings catch paraphrase. Never replace one with the other.
-6. **Zero cost, always.** No paid API, SDK, or key anywhere. LLM work goes
+8. **Zero cost, always.** No paid API, SDK, or key anywhere. LLM work goes
    through `jobrank/llm`, whose backends are local-only (Ollama) or rule-based.
    A test asserts this.
-7. **Every external dependency degrades.** No Ollama → rule-based extraction.
+9. **Every external dependency degrades.** No Ollama → rule-based extraction.
    No embedding model → hashed-token vectors. Never hard-fail on either.
-8. **LLM output is structured and cached.** JSON-schema validated, keyed by a
+10. **LLM output is structured and cached.** JSON-schema validated, keyed by a
    content hash. The same résumé or posting is never analyzed twice.
-9. **Whole-word matching, never substrings.** "ai" is inside "maintain",
-   "exa" inside "Texas". Use `textmatch`, which also handles `c++` and `.net`.
-10. **Posting identity is hash(normalized company, normalized role).** It files
+11. **Whole-word matching, never substrings**, and context where a skill's
+    name is an ordinary word. "ai" is inside "maintain", "exa" inside "Texas",
+    and "Spring 2027" is a season — that one credited 153 live postings with
+    the Java framework. Use `textmatch`; ambiguous names go in
+    `taxonomy.AMBIGUOUS_SKILLS`.
+12. **Posting identity is hash(normalized company, normalized role).** It files
     the user's applications. Changing it orphans them silently.
-11. **Dedupe under-merges.** A wrong merge hides a real job invisibly; a missed
+13. **Dedupe under-merges.** A wrong merge hides a real job invisibly; a missed
     merge shows a visible duplicate. Merge only on same company AND high title
     similarity AND no conflicting discriminator (C++ vs Python, I vs II).
-12. **Freshness is never stored.** It changes daily; compute at read time.
-13. **Two databases.** Postings are rebuildable; applications are not. Never
+14. **Freshness is never stored.** It changes daily; compute at read time.
+15. **Two databases.** Postings are rebuildable; applications are not. Never
     write application state into the postings DB.
-14. **Application state moves only through legal transitions**, each
+16. **Application state moves only through legal transitions**, each
     timestamped. No Discovered → Offer.
-15. **Tailoring never invents.** Suggestions are validated against the parsed
+17. **Tailoring never invents.** Suggestions are validated against the parsed
     résumé; any technology, number, or employer not in it is rejected.
-16. **A display cutoff is never a deletion.** Filters hide; an override shows.
-17. **Probes don't mutate.** Health checks hit `/healthz`, never `/`, which
+18. **A display cutoff is never a deletion.** Filters hide; an override shows.
+19. **Probes don't mutate.** Health checks hit `/healthz`, never `/`, which
     registers a visit and clears NEW badges.
-18. **A filter's count equals what it renders.** Counts and lists share code.
+20. **A filter's count equals what it renders.** Counts and lists share code.
 
 ## Conventions
 
@@ -105,8 +121,12 @@ docs/            design notes and history
   implement `urls` and `parse(text)`, add it to `jobrank/config/sources.py`.
   No pipeline edits.
 - **Scoring factor:** a pure function in `scoring/factors.py` returning
-  `FactorResult(value, reasons)`, a weight in `config/scoring.py`, a golden-set
-  comparison with `evaluate.py --compare` before merging.
+  `FactorResult(value, reasons)`, an exponent in `config/scoring.py`, a
+  golden-set comparison with `evaluate.py --compare` before merging. It must
+  read evidence or the market — never a stated preference.
+- **Description source:** a vendor entry in `config/descriptions.py` with a
+  public, unauthenticated endpoint. Prefer a board-level one: it serves a whole
+  employer in a single request.
 - **Company grouping or quota:** `config/companies.py` only.
 
 ## Never commit

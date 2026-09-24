@@ -122,15 +122,14 @@ STALE_APPLICATION_DAYS = 21
 # Co-ops are full-time during a school term. Off by default: whether someone
 # can take a term off is a fact about them, and a platform default should not
 # decide it.
-DEFAULT_HIDE_COOP = False
 
 
 # Words that mean "full-time during a school term", i.e. you take a semester
 # off rather than working over the summer.
 #
 # These only BADGE a posting, they don't hide it — plenty of listings say
-# "Intern/Co-op" and are perfectly normal summer internships. Use the
-# dashboard's co-op filter to hide them when you want a clean summer-only
+# "Intern/Co-op" and are perfectly normal summer internships. The
+# dashboard's term filter separates them.
 # list.
 COOP_KEYWORDS = ["co-op", "coop", "cooperative education"]
 
@@ -149,7 +148,6 @@ OFF_SEASON_KEYWORDS = [
 
 # Off by default for the same reason; a user's earliest start date
 # (preferences) already sinks roles that begin too soon.
-DEFAULT_HIDE_OFFSEASON = False
 
 
 # =============================================================================
