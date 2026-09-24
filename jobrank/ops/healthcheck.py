@@ -56,7 +56,7 @@ def check_profile():
         return
     try:
         profile = store.load(user_id)
-        resume, _ = store.load_inputs(user_id)
+        resume = store.load_resume(user_id)
     except Exception as exc:  # noqa: BLE001 - report, don't crash the check
         report(FAIL, "profile", f"'{user_id}' unreadable: {exc}")
         return
@@ -183,11 +183,37 @@ def check_database():
            f"the page shows at most {companies.MAX_PER_COMPANY} each")
 
 
+def _host_resolves(host: str = "raw.githubusercontent.com") -> bool:
+    """Whether this machine can resolve the host every source is served from."""
+    import socket
+    try:
+        socket.getaddrinfo(host, 443)
+        return True
+    except OSError:
+        return False
+
+
 def check_sources():
+    """
+    Ask each source for its postings.
+
+    An offline machine is reported ONCE, as a warning, rather than as one
+    failure per source. On 2026-09-20 this check recorded "8 check(s) failing"
+    and sent an alert; all eight were the same DNS lookup failing while the
+    laptop was asleep. Nothing was broken, and eight identical failures for one
+    absent network is exactly how a health check teaches you to ignore it.
+    A source that is genuinely gone still fails, loudly.
+    """
     print("\nSOURCES (network)")
     # Imported from refresh.py so this can never drift out of date when a
     # source is added — there is one list, and it lives there.
     from jobrank.refresh import SOURCES
+
+    if not _host_resolves():
+        report(WARN, "network", "offline — cannot resolve raw.githubusercontent.com, "
+                                f"so none of the {len(SOURCES)} sources can be checked")
+        return
+
     total = 0
     for source in SOURCES:
         try:

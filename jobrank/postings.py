@@ -15,6 +15,7 @@ from functools import lru_cache
 
 from jobrank import textmatch
 from jobrank.config import companies, scoring, taxonomy
+from jobrank.config import semantic as semantic_cfg
 from jobrank.config import settings as display
 from jobrank.roles import classify_title, title_seniority
 
@@ -123,12 +124,23 @@ def seniority(posting, enrichment: dict | None = None) -> tuple[str | None, str]
 
 
 def role_families(posting) -> list[str]:
-    families = classify_title(field(posting, "role") or "")
+    title = field(posting, "role") or ""
+    families = classify_title(title)
     if families:
         return families
     category = (field(posting, "category") or "").strip().lower()
     mapped = scoring.CATEGORY_FAMILIES.get(category)
-    return [mapped] if mapped else []
+    if not mapped:
+        return []
+    # A source's category is a bucket it dropped the row into, not a reading
+    # of the title, and the aggregators file plenty of non-software work under
+    # "Software Engineering". The discipline veto has to apply here too, or
+    # "Structural Design Intern" and "Reservoir Engineer Intern" come back as
+    # software roles by the back door -- which is the exact thing
+    # FAMILY_DISQUALIFIERS exists to stop, reached from the other side.
+    if textmatch.find_all(title, taxonomy.FAMILY_DISQUALIFIERS.get(mapped, [])):
+        return []
+    return [mapped]
 
 
 def days_old(posting, today: date | None = None) -> int | None:
@@ -168,7 +180,7 @@ def text_for_embedding(posting, enrichment: dict | None = None) -> str:
              field(posting, "category") or ""]
     description = (field(posting, "description") or "").strip()
     if description:
-        parts.append(description[:2000])
+        parts.append(description[:semantic_cfg.EMBED_DESCRIPTION_CHARS])
     if enrichment and enrichment.get("tech_stack"):
         parts.append("Tech: " + ", ".join(enrichment["tech_stack"]))
     return "\n".join(p for p in parts if p)

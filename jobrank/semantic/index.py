@@ -69,7 +69,10 @@ class VectorIndex:
                 [(k, model, _hash(t), vectors.shape[1], vectors[i].astype(np.float32).tobytes())
                  for i, (k, t) in enumerate(batch)],
             )
-        self.conn.commit()
+            # Commit each batch rather than once at the end. Embedding the
+            # whole corpus takes minutes, and a single transaction held open
+            # that long blocks every reader — a slow page becomes a hung one.
+            self.conn.commit()
         return len(stale)
 
     def vectors(self, keys: list[str]) -> dict[str, np.ndarray]:

@@ -51,11 +51,24 @@ def enrichment_coverage() -> dict:
 
 
 def embedding_coverage() -> dict[str, int]:
+    """
+    How many vectors exist per model, or {} when the store cannot be read.
+
+    Opened read-only and briefly: embedding the corpus takes minutes, and a
+    long-lived dashboard process can hold the write lock the whole time. A
+    statistic is not worth a 500 — reporting "unknown" is the honest answer,
+    and this page is also what a health probe hits.
+    """
     if not os.path.exists(semantic_cfg.VECTOR_DB_PATH):
         return {}
-    conn = sqlite3.connect(semantic_cfg.VECTOR_DB_PATH)
+    try:
+        conn = sqlite3.connect(f"file:{semantic_cfg.VECTOR_DB_PATH}?mode=ro", uri=True, timeout=2.0)
+    except sqlite3.Error:
+        return {}
     try:
         return dict(conn.execute("SELECT model, COUNT(*) FROM vectors GROUP BY model"))
+    except sqlite3.Error:
+        return {}
     finally:
         conn.close()
 
